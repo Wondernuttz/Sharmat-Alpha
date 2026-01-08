@@ -1,0 +1,48 @@
+# Summary
+
+Integration with ostim. NPCs should be aware of player ostim scenes, and also can perform adult actions.
+
+By default, actions are not available, will be progressively available when sex_disposal NPC property raises. This property is autocalculated
+based on speech mood analysis (seducing game), and relaxing status. 
+
+NPCs can start animations direclty, or start an idle scene. They can also change current animation based on chat.
+
+* Will use extended NPC data to store NPC status
+* sex_prompt: Prompt offered when NPC is on ostim scene
+* sex_speech_style: Speech style offered when NPC is on ostim scene
+
+# Main stored data
+"aiagent_nsfw_intimacy_data": {
+    "level": 0, // 0-non scene, 1:ostim idle scene, 2:ostim scene started
+    "is_naked": 1, // 0:no 1:yes. Only tracks state based on own PutOffClothes/PutOnClothes action
+    "orgasmed": false, // has orgamed in last session
+    "sex_disposal": 23, // above 10, sex actions will staart to be offered
+    "orgasm_generated": true,   // This fields are intented to hold a precache climax speech.
+    "orgasm_generated_text": "",
+    "orgasm_generated_text_original": "",
+    "adult_entertainment_services_autodetected": false // Mark, true if NPC is a sexual worker. Check importing rules to set it auto based on mods.
+  },
+
+# Importing rules sample
+* All females from mod "Ancient Profession" will be assigned to profile 6. 
+id	description	        match_name	match_race	match_gender	match_base	match_mods	        action	                                profile	priority	enabled
+2   Ancient Profession	.*	        .*	        female	        .*	        {prostitutes.esp}	{"metadata": {"rule_applied": true}}	6       1           TRUE
+
+At profile 6, we have this metadata property.
+
+AIAGENT_NSFW_DEFAULT_AROUSAL:20
+
+This means, all NPC under this profile will have a base arousal of 20, which means all sex actions are available to NPC. Also use "Profile Prompt"
+to provide some context to this group. E.G.
+
+#HERIKA_NAME# is a sex worker. Will offer adult entertaiment services for gold.
+massage: 50 gold
+manual: 100 gold
+pectoral job: 150 gold
+mouth job: 200 gold
+love: 500 gold
+
+TO-DO
+
+* Work on multi NPC scenes.
+* Work on non-player scenes.

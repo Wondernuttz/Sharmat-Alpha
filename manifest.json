@@ -1,0 +1,11 @@
+{
+    "name": "aiagent_nsfw",
+    "description": "OStim integration. Extended intimacy actions",
+    "version": "0.1.2",
+    "config_url": "/HerikaServer/ext/aiagent_nsfw/config_manager.php",
+    "config_url_target": "_blank",
+    "git_repo": "maister-sk/aiagent_nsfw",
+    "mod_download_url": "https://github.com/maister-sk/aiagent_nsfw/releases/download/<version>/AIAgentNSFW.zip",
+    "schema_version": 2
+}
+
