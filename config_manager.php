@@ -4847,6 +4847,7 @@ PROMPT;
             <img src="images/ChimNSFW2Logo.png" alt="SHARMAT" class="header-logo header-logo-settings" style="opacity: 0; transition: opacity 0.5s ease-in-out;">
             <img src="images/ChimNSFWLogo4.png" alt="SHARMAT" class="header-logo header-logo-info" style="opacity: 0; transition: opacity 0.5s ease-in-out;">
             <img src="images/ChimNSFW5Logo.png" alt="SHARMAT" class="header-logo header-logo-prompts" style="opacity: 0; transition: opacity 0.5s ease-in-out;">
+            <img src="images/ChimNSFWLogo6.png" alt="SHARMAT" class="header-logo header-logo-logs" style="opacity: 0; transition: opacity 0.5s ease-in-out;">
             <div class="header-text">
                 <h1 style="margin-bottom: 0;">SHARMAT</h1>
                 <p style="font-style: italic; color: #B8A8C8; letter-spacing: 3px; font-size: 12px; text-transform: lowercase; margin: 0; padding: 0; line-height: 1; text-shadow: 0 0 10px rgba(139, 92, 246, 0.5);">— the forbidden dream —</p>
@@ -7558,13 +7559,15 @@ The effects will fade over time.</textarea>
             const settingsLogo = document.querySelector('.header-logo-settings');
             const infoLogo = document.querySelector('.header-logo-info');
             const promptsLogo = document.querySelector('.header-logo-prompts');
-            if (defaultLogo && npcLogo && settingsLogo && infoLogo && promptsLogo) {
+            const logsLogo = document.querySelector('.header-logo-logs');
+            if (defaultLogo && npcLogo && settingsLogo && infoLogo && promptsLogo && logsLogo) {
                 // Reset all to hidden
                 defaultLogo.style.opacity = '0';
                 npcLogo.style.opacity = '0';
                 settingsLogo.style.opacity = '0';
                 infoLogo.style.opacity = '0';
                 promptsLogo.style.opacity = '0';
+                logsLogo.style.opacity = '0';
 
                 if (tabName === 'speakstyles') {
                     // NPC Settings: man and woman leaning over soul gem
@@ -7579,8 +7582,8 @@ The effects will fade over time.</textarea>
                     // Prompts: couple flanking soul gem shield
                     promptsLogo.style.opacity = '1';
                 } else if (tabName === 'logs') {
-                    // Logs: use info logo for now
-                    infoLogo.style.opacity = '1';
+                    // Logs: proposal scene with soul gem
+                    logsLogo.style.opacity = '1';
                     // Initialize logs when tab is opened
                     initLogsTab();
                 } else {
