@@ -34,6 +34,29 @@ function _getNsfwPromptSetting($key, $default = '') {
         : $default;
 }
 
+// Load NSFW general settings (token limits, etc.) from database
+$_nsfwGeneralSettings = null;
+function _getNsfwSetting($key, $default = null) {
+    global $_nsfwGeneralSettings;
+
+    // Lazy load settings from database
+    if ($_nsfwGeneralSettings === null) {
+        $_nsfwGeneralSettings = [];
+        if (isset($GLOBALS["db"])) {
+            try {
+                $row = $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_settings'");
+                if ($row && !empty($row['value'])) {
+                    $_nsfwGeneralSettings = json_decode($row['value'], true) ?: [];
+                }
+            } catch (Exception $e) {
+                // Silently fail, use defaults
+            }
+        }
+    }
+
+    return isset($_nsfwGeneralSettings[$key]) ? $_nsfwGeneralSettings[$key] : $default;
+}
+
 // Helper to parse multi-line cues (one per line) into array
 function _parseNsfwCues($setting, $defaults) {
     if (empty($setting)) {
@@ -69,11 +92,15 @@ $_chatnfSlDefaults = [
 ];
 $_chatnfSlCues = _parseNsfwCues(_getNsfwPromptSetting('chatnf_sl_cues', ''), $_chatnfSlDefaults);
 
+// Get configurable token limit (default 100)
+$_sexSceneTokenLimit = _getNsfwSetting('TOKEN_LIMIT_SEX_SCENE', 100);
+
 $GLOBALS["PROMPTS"]["chatnf_sl"] = [
     "cue" => array_map(function($cue) {
         return _wrapNsfwXml('response_instruction', $cue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
     }, $_chatnfSlCues),
-    "player_request" => ["The Narrator: "]
+    "player_request" => ["The Narrator: "],
+    "extra" => ["force_tokens_max" => $_sexSceneTokenLimit]
 ];
 
 // Non-explicit version (same structure, no explicit words)
@@ -90,18 +117,42 @@ $GLOBALS["PROMPTS"]["chatnf_sl_nr"] = [
     "cue" => array_map(function($cue) {
         return _wrapNsfwXml('response_instruction', $cue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
     }, $_chatnfSlNrCues),
-    "player_request" => [$GLOBALS["gameRequest"][3] ?? ""]
+    "player_request" => [$GLOBALS["gameRequest"][3] ?? ""],
+    "extra" => ["force_tokens_max" => $_sexSceneTokenLimit]
 ];
 
-// Climax/Orgasm moment
-$_climaxDefault = "(#NPC_NAME# is orgasming!!!! CLIMAX!, Focus on intimate scene participants, #NPC_NAME# SHOUTS using moans and groans) VERY SHORT sentence (3 words)";
-$_climaxCue = _getNsfwPromptSetting('climax', $_climaxDefault);
+// Climax/Orgasm moment - falls back to NPC's speak style climax_prompt
+$_climaxCue = _getNsfwPromptSetting('climax', '');
 // Replace #NPC_NAME# placeholder with actual NPC name
 $_climaxCue = str_replace('#NPC_NAME#', $GLOBALS["HERIKA_NAME"] ?? "", $_climaxCue);
 
+// If no global climax cue set, use NPC's speak style climax_prompt
+// First check if nsfw_ostim_handler already stored it (bypasses Narrator path)
+if (empty(trim($_climaxCue)) && !empty($GLOBALS["AIAGENTNSFW_CLIMAX_PROMPT"])) {
+    $_climaxCue = $GLOBALS["AIAGENTNSFW_CLIMAX_PROMPT"];
+    $_climaxCue = str_replace('#PARTNER#', $GLOBALS["PLAYER_NAME"] ?? 'your partner', $_climaxCue);
+}
+// Fallback: load from NPC's speak style directly
+if (empty(trim($_climaxCue))) {
+    require_once(__DIR__."/nsfw_data.php");
+    $_npcName = $GLOBALS["HERIKA_NAME"] ?? '';
+    if (!empty($_npcName)) {
+        $_extendedData = NsfwNpcData::get($_npcName);
+        if (!empty($_extendedData["sex_speech_style"])) {
+            $_speakStyleData = NsfwData::getSpeakStyle($_extendedData["sex_speech_style"]);
+            $_climaxCue = $_speakStyleData['climax_prompt'] ?? '';
+            $_climaxCue = str_replace('#PARTNER#', $GLOBALS["PLAYER_NAME"] ?? 'your partner', $_climaxCue);
+        }
+    }
+}
+
+// Get configurable climax token limit (default 50 - very short)
+$_climaxTokenLimit = _getNsfwSetting('TOKEN_LIMIT_CLIMAX', 50);
+
 $GLOBALS["PROMPTS"]["chatnf_sl_climax"] = [
     "cue" => [_wrapNsfwXml('climax_instruction', $_climaxCue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")],
-    "player_request" => "YEEAH!"
+    "player_request" => "YEEAH!",
+    "extra" => ["force_tokens_max" => $_climaxTokenLimit]
 ];
 
 // Post-sex pillow talk
@@ -141,6 +192,33 @@ $GLOBALS["PROMPTS"]["ext_nsfw_scene"] = [
     "player_request" => [$GLOBALS["gameRequest"][3] ?? ""]
 ];
 
+// ext_nsfw_npc_invite - NPC-to-NPC invite phase (dom approaching sub)
+// This fires BEFORE the scene starts when one NPC approaches another
+$_npcInviteDefault = "(You are approaching #PARTNER_NAME# with romantic/sexual intent. React based on your relationship with them. You may accept, hesitate, or show enthusiasm depending on your feelings toward them.)";
+$_npcInviteCue = _getNsfwPromptSetting('npc_invite', $_npcInviteDefault);
+
+$GLOBALS["PROMPTS"]["ext_nsfw_npc_invite"] = [
+    "cue" => [_wrapNsfwXml('npc_invite_instruction', $_npcInviteCue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")],
+    "player_request" => [$GLOBALS["gameRequest"][3] ?? ""]
+];
+
+// chatnf_npc_sl - NPC-to-NPC scene speech (no player involved)
+// Used when two NPCs are in a scene together without the player
+$_npcSceneDefaults = [
+    "(Focus on your partner #PARTNER_NAME#. Describe the sensation. Moans and gasps, explicit words. SHORT speech.)",
+    "(React to #PARTNER_NAME#. Express pleasure or desire. Moans, explicit. 1-2 sentences.)",
+    "(Tell #PARTNER_NAME# how they make you feel. Moans and gasps. SHORT.)",
+    "(Moan, gasp, respond to #PARTNER_NAME#. Explicit words. Brief.)"
+];
+$_npcSceneCues = _parseNsfwCues(_getNsfwPromptSetting('chatnf_npc_sl_cues', ''), $_npcSceneDefaults);
+
+$GLOBALS["PROMPTS"]["chatnf_npc_sl"] = [
+    "cue" => array_map(function($cue) {
+        return _wrapNsfwXml('npc_scene_instruction', $cue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
+    }, $_npcSceneCues),
+    "player_request" => ["The Narrator: "]
+];
+
 // ext_nsfw_sexcene - OStim scene events (legacy name with typo, kept for compatibility)
 // This is sent by AIAgentNSFW.psc when OStim scenes update
 // Scene description is injected by common.php into gameRequest[3]
@@ -156,15 +234,67 @@ $GLOBALS["PROMPTS"]["ext_nsfw_action"] = [
     "player_request" => [$GLOBALS["gameRequest"][3] ?? ""]
 ];
 
-// Contextual orgasm
-$_orgasmDefault = "(CUMMING! Express your climax. #NPC_NAME# SHOUTS, moans, cries, a few words. Be in the moment. VERY SHORT - 3-5 words max.)";
-$_orgasmCue = _getNsfwPromptSetting('orgasm', $_orgasmDefault);
+// Contextual orgasm - falls back to NPC's speak style climax_prompt
+$_orgasmCue = _getNsfwPromptSetting('orgasm', '');
 $_orgasmCue = str_replace('#NPC_NAME#', $GLOBALS["HERIKA_NAME"] ?? "", $_orgasmCue);
+
+// If no global orgasm cue set, use NPC's speak style climax_prompt
+// First check if nsfw_ostim_handler already stored it (bypasses Narrator path)
+if (empty(trim($_orgasmCue)) && !empty($GLOBALS["AIAGENTNSFW_CLIMAX_PROMPT"])) {
+    $_orgasmCue = $GLOBALS["AIAGENTNSFW_CLIMAX_PROMPT"];
+    $_orgasmCue = str_replace('#PARTNER#', $GLOBALS["PLAYER_NAME"] ?? 'your partner', $_orgasmCue);
+}
+// Fallback: load from NPC's speak style directly
+if (empty(trim($_orgasmCue))) {
+    require_once(__DIR__."/nsfw_data.php");
+    $_npcName = $GLOBALS["HERIKA_NAME"] ?? '';
+    if (!empty($_npcName)) {
+        $_extendedData = NsfwNpcData::get($_npcName);
+        if (!empty($_extendedData["sex_speech_style"])) {
+            $_speakStyleData = NsfwData::getSpeakStyle($_extendedData["sex_speech_style"]);
+            $_orgasmCue = $_speakStyleData['climax_prompt'] ?? '';
+            $_orgasmCue = str_replace('#PARTNER#', $GLOBALS["PLAYER_NAME"] ?? 'your partner', $_orgasmCue);
+        }
+    }
+}
 
 $GLOBALS["PROMPTS"]["ext_nsfw_orgasm"] = [
     "cue" => [_wrapNsfwXml('climax_instruction', $_orgasmCue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")],
-    "player_request" => [""]
+    "player_request" => [""],
+    "extra" => ["force_tokens_max" => $_climaxTokenLimit]
 ];
+
+// ext_nsfw_npc_scene - NPC-to-NPC scene update (no player)
+// Uses the npc_scene_active prompt from config
+$_npcSceneActiveDefault = "(You are currently in an intimate/sexual scene with #PARTNER#. React naturally to the ongoing action. Express pleasure, desire, or other appropriate emotions. Keep responses SHORT.)";
+$_npcSceneActiveCue = _getNsfwPromptSetting('npc_scene_active', $_npcSceneActiveDefault);
+
+$GLOBALS["PROMPTS"]["ext_nsfw_npc_scene"] = [
+    "cue" => [_wrapNsfwXml('npc_scene_instruction', $_npcSceneActiveCue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")],
+    "player_request" => [$GLOBALS["gameRequest"][3] ?? ""]
+];
+
+// ext_nsfw_npc_orgasm - NPC orgasm in NPC-to-NPC scene
+// Uses the npc_orgasm prompt from config (third-person perspective)
+$_npcOrgasmDefault = "(#NPC_NAME# is reaching climax with #PARTNER#. Express the peak of pleasure - moans, gasps, cries. VERY SHORT - 3-5 words max.)";
+$_npcOrgasmCue = _getNsfwPromptSetting('npc_orgasm', $_npcOrgasmDefault);
+$_npcOrgasmCue = str_replace('#NPC_NAME#', $GLOBALS["HERIKA_NAME"] ?? "", $_npcOrgasmCue);
+
+$GLOBALS["PROMPTS"]["ext_nsfw_npc_orgasm"] = [
+    "cue" => [_wrapNsfwXml('npc_climax_instruction', $_npcOrgasmCue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")],
+    "player_request" => [""],
+    "extra" => ["force_tokens_max" => $_climaxTokenLimit]
+];
+
+// NPC Affair prompt - injected when NPC is intimate with someone other than spouse
+// Placeholders: #NPC_NAME#, #SPOUSE#, #PARTNER#
+$_npcAffairDefault = "(#NPC_NAME# is married to #SPOUSE#, but #NPC_NAME# is being intimate with #PARTNER# instead. This is an affair. React according to your personality - guilt, thrill, justification, or indifference.)";
+$_npcAffairCue = _getNsfwPromptSetting('npc_affair', $_npcAffairDefault);
+// Note: #NPC_NAME#, #SPOUSE#, and #PARTNER# are replaced at runtime in prerequest.php
+// when affair conditions are detected
+
+// Store the affair prompt globally for prerequest.php to access
+$GLOBALS["NSFW_AFFAIR_PROMPT"] = $_npcAffairCue;
 
 // Scene start - anticipation
 $_sceneStartDefault = "(Sex is starting. React with anticipation. You might feel: eager, nervous, excited, playful, seductive, or hesitant. Express ONE emotion. Keep it SHORT.)";
@@ -195,6 +325,14 @@ $_physicsTouch = _getNsfwPromptSetting('physics_touch', $_physicsTouchDefault);
 $_physicsTouch = str_replace('#NPC_NAME#', $GLOBALS["HERIKA_NAME"] ?? "", $_physicsTouch);
 $_physicsTouch = str_replace('#PLAYER_NAME#', $GLOBALS["PLAYER_NAME"] ?? "the player", $_physicsTouch);
 
+// DEBUG: Log physics prompt building
+if (($GLOBALS["gameRequest"][0] ?? '') == "ext_nsfw_physics") {
+    error_log("[AIAGENTNSFW-DEBUG] prompts.php: Building ext_nsfw_physics prompt");
+    error_log("[AIAGENTNSFW-DEBUG] HERIKA_NAME=" . ($GLOBALS["HERIKA_NAME"] ?? "NULL"));
+    error_log("[AIAGENTNSFW-DEBUG] gameRequest[3]=" . substr($GLOBALS["gameRequest"][3] ?? "NULL", 0, 100));
+    error_log("[AIAGENTNSFW-DEBUG] _physicsTouch=" . substr($_physicsTouch, 0, 100));
+}
+
 // Physics blocked touch - React to blocked touch attempt (chastity devices, etc)
 $_physicsBlockedDefault = "(#NPC_NAME# felt someone try to touch them but was blocked. React to this - you might feel frustrated, relieved, embarrassed, or teasing. Keep response SHORT - 1 sentence.)";
 $_physicsBlocked = _getNsfwPromptSetting('physics_blocked', $_physicsBlockedDefault);
@@ -203,10 +341,28 @@ $_physicsBlocked = str_replace('#NPC_NAME#', $GLOBALS["HERIKA_NAME"] ?? "", $_ph
 // IMPORTANT: player_request uses $gameRequest[3] to PRESERVE the physics event message
 // (e.g., "<SEXUAL_GROPE>Bannon groped Eris's Breasts</SEXUAL_GROPE>")
 // set by processInfoPhysics() - do NOT overwrite with empty string!
+$_physicsCue = _wrapNsfwXml('physics_touch_instruction', $_physicsTouch) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
+$_physicsPlayerReq = $GLOBALS["gameRequest"][3] ?? "";
+
 $GLOBALS["PROMPTS"]["ext_nsfw_physics"] = [
-    "cue" => [_wrapNsfwXml('physics_touch_instruction', $_physicsTouch) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")],
-    "player_request" => [$GLOBALS["gameRequest"][3] ?? ""]
+    "cue" => [$_physicsCue],
+    "player_request" => [$_physicsPlayerReq]
 ];
+
+// chatnf_physics - Used when preprocessing rewrites ext_nsfw_physics_raw
+// This triggers dialogue via main.php's chatnf handling (line ~2061 checks strpos "chatnf")
+$GLOBALS["PROMPTS"]["chatnf_physics"] = [
+    "cue" => [$_physicsCue],
+    "player_request" => [$_physicsPlayerReq]
+];
+
+// DEBUG: Log the final prompt after building
+if (($GLOBALS["gameRequest"][0] ?? '') == "ext_nsfw_physics") {
+    error_log("[AIAGENTNSFW-DEBUG] prompts.php: Final ext_nsfw_physics prompt:");
+    error_log("[AIAGENTNSFW-DEBUG] cue length=" . strlen($_physicsCue));
+    error_log("[AIAGENTNSFW-DEBUG] cue first 200 chars=" . substr($_physicsCue, 0, 200));
+    error_log("[AIAGENTNSFW-DEBUG] player_request=" . substr($_physicsPlayerReq, 0, 100));
+}
 
 // This prompt handles blocked touch attempts (chastity devices, armor)
 // Also preserves $gameRequest[3] for the blocked touch message

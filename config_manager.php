@@ -1,4 +1,9 @@
 <?php
+    // Debug: Log ALL requests with action parameter
+    if (isset($_GET['action'])) {
+        error_log("[AIAGENTNSFW] Request received: action=" . $_GET['action'] . " method=" . $_SERVER['REQUEST_METHOD']);
+    }
+
     // Common Includes
     $enginePath = __DIR__ . DIRECTORY_SEPARATOR . ".." . DIRECTORY_SEPARATOR . ".." . DIRECTORY_SEPARATOR;
     require_once $enginePath . "conf" . DIRECTORY_SEPARATOR . "conf.php";
@@ -87,6 +92,43 @@
         handleGetBatchNpcList();
     } elseif ($action === 'searchNpcsForSpouse') {
         handleSearchNpcsForSpouse();
+    } elseif ($action === 'get_ai_prompt_template') {
+        handleGetAiPromptTemplate();
+    } elseif ($action === 'save_ai_prompt_template') {
+        handleSaveAiPromptTemplate();
+    } elseif ($action === 'reset_ai_prompt_template') {
+        handleResetAiPromptTemplate();
+    } elseif ($action === 'getScene') {
+        handleGetScene();
+    }
+
+    // Get single scene data for editing
+    function handleGetScene() {
+        try {
+            $stageId = $_GET['stage'] ?? '';
+            if (empty($stageId)) {
+                throw new Exception('Stage ID is required');
+            }
+
+            $scene = NsfwData::getScene($stageId);
+
+            echo json_encode([
+                'success' => true,
+                'scene' => $scene ?: [
+                    'stage' => $stageId,
+                    'description' => '',
+                    'description_es' => '',
+                    'description_en' => '',
+                    'i_desc' => ''
+                ]
+            ]);
+        } catch (Exception $e) {
+            echo json_encode([
+                'success' => false,
+                'error' => $e->getMessage()
+            ]);
+        }
+        exit;
     }
 
     // Helper function to ensure speak styles table exists and is seeded with defaults
@@ -451,20 +493,21 @@ SQL;
                 'frost atronach', 'storm atronach', 'dremora'
             ];
 
-            // Include extended_data to check is_child flag
-            $query   = "SELECT id, npc_name, extended_data FROM core_npc_master ORDER BY npc_name";
+            // Get NPC list from core_npc_master
+            $query   = "SELECT id, npc_name FROM core_npc_master ORDER BY npc_name";
             $results = $GLOBALS["db"]->fetchAll($query);
+
+            // Load NsfwNpcData helper for is_child checks
+            require_once __DIR__ . '/nsfw_data.php';
 
             // Filter out blocked NPCs
             $filteredResults = array_filter($results, function($npc) use ($childrenBlocklist, $animalBlocklist) {
                 $nameLower = strtolower(trim($npc['npc_name']));
 
-                // CRITICAL: Check is_child flag in extended_data - NEVER show NPCs marked as children
-                if (!empty($npc['extended_data'])) {
-                    $extendedData = json_decode($npc['extended_data'], true);
-                    if (!empty($extendedData['is_child'])) {
-                        return false;
-                    }
+                // CRITICAL: Check is_child flag in nsfw_npc_data - NEVER show NPCs marked as children
+                $nsfwData = NsfwNpcData::get($npc['npc_name']);
+                if (!empty($nsfwData['is_child'])) {
+                    return false;
                 }
 
                 // Check exact match against children blocklist
@@ -548,13 +591,17 @@ SQL;
             // - sex_speech_style: Generated sex speech style text
             $npcMaster = new NpcMaster();
             $currentNpcData = $npcMaster->getById($_POST["npc_id"]);
-            $extended_data=$npcMaster->getExtendedData($currentNpcData);
+            $npcName = $currentNpcData['npc_name'];
+
+            // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+            require_once __DIR__ . '/nsfw_data.php';
+            $extended_data = NsfwNpcData::get($npcName);
 
             $extended_data["sex_prompt"]=$_POST["sex_prompt"];
             $extended_data["sex_speech_style"]=$_POST["sex_speech_style"];
 
-            $currentNpcData=$npcMaster->setExtendedData($currentNpcData,$extended_data);
-            $npcMaster->updateByArray($currentNpcData);
+            // Save to nsfw_npc_data table
+            NsfwNpcData::save($npcName, $extended_data);
 
             echo json_encode([
                 'success' => true,
@@ -585,6 +632,12 @@ SQL;
                 'TRACK_FERTILITY_INFO' => false,
                 'ENABLE_SEX_DISPOSAL' => true,  // Arousal gating enabled by default
                 'ENABLE_AFFINITY_GATING' => true,  // Affinity gating enabled by default
+                // Token limits - control response length during scenes
+                'TOKEN_LIMIT_SEX_SCENE' => 100,  // Regular sex scene dialogue
+                'TOKEN_LIMIT_CLIMAX' => 50,  // Orgasm/climax responses (very short)
+                // Cooldowns - prevent event spam
+                'COOLDOWN_SEX_SCENE' => 15,  // Seconds between chatnf_sl events
+                'COOLDOWN_CLIMAX' => 30,  // Seconds between orgasm events
             ];
 
             if ($settingsRow && !empty($settingsRow['value'])) {
@@ -624,6 +677,12 @@ SQL;
                 'TRACK_FERTILITY_INFO' => isset($_POST['TRACK_FERTILITY_INFO']) ? filter_var($_POST['TRACK_FERTILITY_INFO'], FILTER_VALIDATE_BOOLEAN) : false,
                 'ENABLE_SEX_DISPOSAL' => isset($_POST['ENABLE_SEX_DISPOSAL']) ? filter_var($_POST['ENABLE_SEX_DISPOSAL'], FILTER_VALIDATE_BOOLEAN) : true,
                 'ENABLE_AFFINITY_GATING' => isset($_POST['ENABLE_AFFINITY_GATING']) ? filter_var($_POST['ENABLE_AFFINITY_GATING'], FILTER_VALIDATE_BOOLEAN) : true,
+                // Token limits
+                'TOKEN_LIMIT_SEX_SCENE' => isset($_POST['TOKEN_LIMIT_SEX_SCENE']) ? intval($_POST['TOKEN_LIMIT_SEX_SCENE']) : 100,
+                'TOKEN_LIMIT_CLIMAX' => isset($_POST['TOKEN_LIMIT_CLIMAX']) ? intval($_POST['TOKEN_LIMIT_CLIMAX']) : 50,
+                // Cooldowns
+                'COOLDOWN_SEX_SCENE' => isset($_POST['COOLDOWN_SEX_SCENE']) ? intval($_POST['COOLDOWN_SEX_SCENE']) : 15,
+                'COOLDOWN_CLIMAX' => isset($_POST['COOLDOWN_CLIMAX']) ? intval($_POST['COOLDOWN_CLIMAX']) : 30,
             ];
 
             $jsonSettings = json_encode($settings);
@@ -660,25 +719,26 @@ SQL;
                 throw new Exception('NPC name is required');
             }
 
-            $npcManager = new NpcMaster();
+            // First, check nsfw_npc_data - this handles orphaned NPCs (Paradox wipes core_npc_master)
+            require_once __DIR__ . '/nsfw_data.php';
+            $extendedData = NsfwNpcData::get($npcName);
 
-            // Try exact match first
+            // Then try to get additional info from core_npc_master (for race, etc)
+            $npcManager = new NpcMaster();
             $npcData = $npcManager->getByName($npcName);
 
             // If not found, try alternate formats (underscore <-> space)
             if (!$npcData) {
-                // Try converting underscores to spaces (e.g., vivienne_onis -> Vivienne Onis)
                 $altName = ucwords(str_replace('_', ' ', $npcName));
                 $npcData = $npcManager->getByName($altName);
             }
             if (!$npcData) {
-                // Try converting spaces to underscores and lowercase
                 $altName = strtolower(str_replace(' ', '_', $npcName));
                 $npcData = $npcManager->getByName($altName);
             }
 
-            if (!$npcData) {
-                // Return default settings for new NPC
+            // If NPC not in core_npc_master AND not in nsfw_npc_data, return defaults
+            if (!$npcData && empty($extendedData)) {
                 echo json_encode([
                     'success' => true,
                     'data' => [
@@ -696,16 +756,13 @@ SQL;
                 exit;
             }
 
-            // Get extended data
-            $extendedData = [];
-            if (!empty($npcData['extended_data'])) {
-                $extendedData = json_decode($npcData['extended_data'], true) ?: [];
-            }
-
             // Extract NSFW-specific settings - using Tyler's field names for compatibility
             // Ensure profanity_level is always a string for JS compatibility
             $profLevel = $extendedData['nsfw_profanity_level'] ?? '2';
             if (is_int($profLevel)) $profLevel = (string)$profLevel;
+
+            // Race: prefer core_npc_master, fall back to stored race in nsfw_npc_data
+            $race = $npcData['race'] ?? $extendedData['race'] ?? null;
 
             $nsfwSettings = [
                 'speak_style' => $extendedData['sex_speech_style'] ?? 'auto',
@@ -720,7 +777,7 @@ SQL;
                 'pricing' => $extendedData['prostitute_pricing'] ?? null,
                 'slave_speak_styles' => $extendedData['slave_speak_styles'] ?? null,
                 'source' => $extendedData['nsfw_source'] ?? null,
-                'race' => $npcData['race'] ?? null,
+                'race' => $race,
                 // Marriage & relationship fields
                 'spousal_status' => $extendedData['spousal_status'] ?? 'single',
                 'spouse_names' => $extendedData['spouse_names'] ?? '',
@@ -787,13 +844,11 @@ SQL;
                 if ($npcData) $actualNpcName = $altName;
             }
 
-            // Get current extended data or start fresh
-            $extendedData = [];
-            if ($npcData && !empty($npcData['extended_data'])) {
-                $extendedData = json_decode($npcData['extended_data'], true) ?: [];
-            }
+            // Get current NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+            require_once __DIR__ . '/nsfw_data.php';
+            $extendedData = NsfwNpcData::get($actualNpcName);
 
-            // CRITICAL: Check is_child flag in extended_data - NEVER allow saving if flagged
+            // CRITICAL: Check is_child flag in nsfw_npc_data - NEVER allow saving if flagged
             if (!empty($extendedData['is_child'])) {
                 throw new Exception('ERROR: Cannot save NSFW settings for NPCs marked as children');
             }
@@ -848,31 +903,30 @@ SQL;
                 unset($extendedData['slave_speak_styles']);
             }
 
-            // Save back
-            $extendedJson = json_encode($extendedData);
-
-            error_log("[NSFW Save] Saving NPC: {$npcName}, source: " . ($extendedData['nsfw_source'] ?? 'unknown'));
-            error_log("[NSFW Save] Extended data: " . substr($extendedJson, 0, 500));
-
-            if ($npcData) {
-                // Update existing NPC in core_npc_master using the actual name found
-                $escapedJson = pg_escape_string($extendedJson);
-                $escapedName = pg_escape_string($actualNpcName);
-                $query = "UPDATE core_npc_master SET extended_data = '{$escapedJson}' WHERE npc_name = '{$escapedName}'";
-                error_log("[NSFW Save] Running UPDATE for: {$actualNpcName}");
-                $GLOBALS["db"]->execQuery($query);
-                error_log("[NSFW Save] UPDATE completed");
-            } else {
-                // Insert minimal NPC record with NSFW data using lowercase_underscore format
-                $normalizedName = strtolower(str_replace(' ', '_', $npcName));
-                error_log("[NSFW Save] Running INSERT for new NPC: {$normalizedName}");
-                $GLOBALS["db"]->insert('core_npc_master', [
-                    'npc_name' => $normalizedName,
-                    'extended_data' => $extendedJson,
-                    'md5' => md5($normalizedName)
-                ]);
-                error_log("[NSFW Save] INSERT completed");
+            // Store race from core_npc_master (survives Paradox wipes for portrait display)
+            if ($npcData && !empty($npcData['race'])) {
+                $extendedData['race'] = $npcData['race'];
             }
+            // Also store gender while we're at it
+            if ($npcData && !empty($npcData['gender'])) {
+                $extendedData['gender'] = $npcData['gender'];
+            }
+
+            // Save to nsfw_npc_data table (NOT core_npc_master.extended_data)
+            error_log("[NSFW Save] Saving NPC: {$npcName}, source: " . ($extendedData['nsfw_source'] ?? 'unknown'));
+            error_log("[NSFW Save] Extended data: " . substr(json_encode($extendedData), 0, 500));
+
+            // Always use the actual NPC name (either found or normalized)
+            $saveNpcName = $actualNpcName;
+            if (!$npcData) {
+                // For new NPCs, use normalized name format
+                $saveNpcName = strtolower(str_replace(' ', '_', $npcName));
+                error_log("[NSFW Save] New NPC - using normalized name: {$saveNpcName}");
+            }
+
+            // Save to nsfw_npc_data table
+            NsfwNpcData::save($saveNpcName, $extendedData);
+            error_log("[NSFW Save] Saved to nsfw_npc_data for: {$saveNpcName}");
 
             echo json_encode([
                 'success' => true,
@@ -895,17 +949,13 @@ SQL;
                 throw new Exception('NPC name is required');
             }
 
-            $npcManager = new NpcMaster();
-            $npcData = $npcManager->getByName($npcName);
+            // Don't require NPC to exist in core_npc_master - Paradox can wipe that table
+            // Just work directly with nsfw_npc_data
+            require_once __DIR__ . '/nsfw_data.php';
+            $extendedData = NsfwNpcData::get($npcName);
 
-            if (!$npcData) {
-                throw new Exception('NPC not found: ' . $npcName);
-            }
-
-            // Get current extended data
-            $extendedData = [];
-            if (!empty($npcData['extended_data'])) {
-                $extendedData = json_decode($npcData['extended_data'], true) ?: [];
+            if (empty($extendedData)) {
+                throw new Exception('No NSFW settings found for: ' . $npcName);
             }
 
             // Remove NSFW settings - Tyler's field names
@@ -917,14 +967,11 @@ SQL;
             unset($extendedData['is_prostitute']);
             unset($extendedData['prostitute_price']);
             unset($extendedData['nsfw_source']);
+            unset($extendedData['race']);
+            unset($extendedData['gender']);
 
-            // Save back to core_npc_master (use same pattern as save handler)
-            $extendedJson = json_encode($extendedData);
-            $escapedJson = $GLOBALS["db"]->escape($extendedJson);
-            $escapedName = $GLOBALS["db"]->escape($npcName);
-            $GLOBALS["db"]->execQuery(
-                "UPDATE core_npc_master SET extended_data = '{$escapedJson}' WHERE npc_name = '{$escapedName}'"
-            );
+            // Save back to nsfw_npc_data table (clears the NSFW fields but keeps row)
+            NsfwNpcData::save($npcName, $extendedData);
 
             echo json_encode([
                 'success' => true,
@@ -942,8 +989,9 @@ SQL;
     /**
      * Check if an NPC should be blocked from NSFW processing
      * Returns: [blocked => bool, reason => string|null]
+     * Note: Reads is_child flag from nsfw_npc_data table directly
      */
-    function isNpcBlockedFromNsfw($npcName, $npcData = null) {
+    function isNpcBlockedFromNsfw($npcName) {
         // Children blocklist - NEVER process these
         $childrenBlocklist = [
             'babette', 'erith', 'blaise', 'clinton lylvieve', 'lucia', 'mila valentia',
@@ -1000,14 +1048,11 @@ SQL;
             }
         }
 
-        // Check is_child flag in extended_data
-        if ($npcData && !empty($npcData['extended_data'])) {
-            $extendedData = is_string($npcData['extended_data'])
-                ? json_decode($npcData['extended_data'], true)
-                : $npcData['extended_data'];
-            if (!empty($extendedData['is_child'])) {
-                return ['blocked' => true, 'reason' => 'is_child_flag'];
-            }
+        // Check is_child flag in nsfw_npc_data (NOT core_npc_master.extended_data)
+        require_once __DIR__ . '/nsfw_data.php';
+        $nsfwData = NsfwNpcData::get($npcName);
+        if (!empty($nsfwData['is_child'])) {
+            return ['blocked' => true, 'reason' => 'is_child_flag'];
         }
 
         return ['blocked' => false, 'reason' => null];
@@ -1039,9 +1084,9 @@ SQL;
                 LIMIT 1
             ");
 
-            // Double-check with extended_data from database
+            // Double-check against blocklist
             if ($npcBio) {
-                $blockCheck = isNpcBlockedFromNsfw($npcName, $npcBio);
+                $blockCheck = isNpcBlockedFromNsfw($npcName);
                 if ($blockCheck['blocked']) {
                     throw new Exception('This NPC cannot have NSFW content generated');
                 }
@@ -1077,14 +1122,12 @@ SQL;
             }
 
             // Check if NPC has existing NSFW settings (might be a prostitute)
+            // Get from nsfw_npc_data table (NOT core_npc_master.extended_data)
+            require_once __DIR__ . '/nsfw_data.php';
+            $existingNsfwData = NsfwNpcData::get($npcName);
             $existingSettings = null;
-            $npcMaster = new NpcMaster();
-            $npcData = $npcMaster->getByName($npcName);
-            if ($npcData) {
-                $extData = $npcMaster->getExtendedData($npcData);
-                if (isset($extData['nsfw_settings'])) {
-                    $existingSettings = $extData['nsfw_settings'];
-                }
+            if (!empty($existingNsfwData['is_prostitute']) || !empty($existingNsfwData['is_slave'])) {
+                $existingSettings = $existingNsfwData;
             }
 
             // Load speak styles from JSONB (single source of truth)
@@ -1097,75 +1140,18 @@ SQL;
                 }
             }
 
-            // Example kinks - normal preferences
-            $normalKinksStr = 'rough sex, doggy style, riding, oral, outdoors, public, hair pulling, biting, spanking, dirty talk, praise kink, exhibition, voyeur, gentle, passionate, roleplay';
-            // Example secret kinks - darker/deeper desires
-            $secretKinksStr = 'breeding, creampie, facials, deepthroat, choking, bondage, degradation, humiliation, anal, titfucking, domination, submission, gangbang, cuckolding';
+            // Load custom or default prompt template
+            $templateRow = $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_ai_prompt_template'");
+            $promptTemplate = '';
+            if ($templateRow && !empty($templateRow['value'])) {
+                $promptTemplate = $templateRow['value'];
+            } else {
+                $promptTemplate = getDefaultAiPromptTemplate();
+            }
 
-            $prompt = <<<PROMPT
-You are generating an NSFW character profile for a Skyrim NPC based on their full biography and personality data from the game.
-
-NPC BIOGRAPHY DATA:
-{$npcContext}
-
-Based on this character's personality, occupation, speech style, and background, generate a complete NSFW profile.
-
-Return this EXACT JSON structure:
-{
-  "sex_prompt": "A 2-4 sentence description in SECOND PERSON (use 'You' not the NPC's name) of how this character behaves during intimate encounters. If SLAVE, reflect their enslaved mentality. If PROSTITUTE, reflect their professional approach.",
-  "speak_style": "one_of_the_valid_options",
-  "profanity_level": 3,
-  "kinks": ["kink1", "kink2", "kink3"],
-  "secret_kinks": ["secret1", "secret2", "secret3"],
-  "is_slave": false,
-  "slave_speak_style": null,
-  "slave_obedience": null,
-  "slave_resentment": null,
-  "is_prostitute": false,
-  "prostitute_type": null,
-  "prostitute_price_modifier": null,
-  "prostitute_services": null,
-  "spousal_status": "single",
-  "spouse_names": "",
-  "sexual_orientation": "heterosexual",
-  "relationship_preference": "monogamous"
-}
-
-SPEAK STYLE - You MUST pick EXACTLY ONE of these values (use the exact word before the colon):
-{$speakStylesWithDesc}
-
-PROFANITY LEVEL - You MUST pick a number 1, 2, 3, or 4:
-1 = Soft/tasteful (no crude words)
-2 = Moderate (some explicit terms)
-3 = Hard (crude, vulgar language)
-4 = Extreme (maximum explicitness)
-
-KINKS: Pick exactly 3 normal kinks that fit this character's personality.
-Examples: {$normalKinksStr}. Create custom ones if they fit better.
-
-SECRET KINKS: Pick exactly 3 secret kinks - darker/deeper desires.
-Examples: {$secretKinksStr}. Create custom ones if they fit better.
-
-SLAVE DETECTION (check bio/relationships/occupation for slavery indicators):
-- is_slave: true if NPC is enslaved, owned, or in bondage to another
-- slave_speak_style: If slave, pick from speak styles above (often "submissive" but could be "bratty" or "victim" if resentful)
-- slave_obedience: If slave, rate 1-10 how obedient they are (10=totally broken, 1=rebellious)
-- slave_resentment: If slave, rate 1-10 how resentful they are (10=hates master, 1=loves their position)
-
-PROSTITUTE DETECTION:
-- is_prostitute: true if occupation involves selling sexual services
-- prostitute_type: "streetwalker", "courtesan", "escort", "tavern_worker", "temple_prostitute", or "camp_follower"
-- prostitute_price_modifier: 0.5 to 2.0 (1.0 = standard, 2.0 = expensive, 0.5 = cheap)
-- prostitute_services: Array like ["standard", "oral", "anal"] - what they offer
-
-RELATIONSHIP STATUS:
-- spousal_status: "single", "married", or "widowed"
-- spouse_names: List spouse name(s) if married
-- sexual_orientation: "heterosexual", "homosexual", "bisexual", or "asexual"
-- relationship_preference: "monogamous", "polyamorous", "uncommitted", or "not_interested"
-
-Output ONLY valid JSON. No markdown, no explanation, no code blocks.
-PROMPT;
+            // Replace placeholders in the template
+            $prompt = str_replace('{NPC_CONTEXT}', $npcContext, $promptTemplate);
+            $prompt = str_replace('{SPEAK_STYLES}', $speakStylesWithDesc, $prompt);
 
             // Get connector settings
             $settingsRow = $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_settings'");
@@ -1298,13 +1284,14 @@ PROMPT;
                 error_log("[NSFW Config] AI returned kinks: " . json_encode($generatedData['kinks'] ?? []));
                 error_log("[NSFW Config] AI returned secret_kinks: " . json_encode($generatedData['secret_kinks'] ?? []));
 
-                // AUTO-SAVE: If auto_save parameter is set (from prerequest.php), save directly to JSONB
+                // AUTO-SAVE: If auto_save parameter is set (from prerequest.php), save directly to nsfw_npc_data
                 $autoSave = ($_POST['auto_save'] ?? '') === 'true';
-                if ($autoSave && $npcData) {
+                if ($autoSave && $npcName) {
                     error_log("[NSFW Config] Auto-saving NSFW profile for: {$npcName}");
 
-                    // Get current extended_data and merge in new NSFW settings
-                    $extData = $npcMaster->getExtendedData($npcData);
+                    // Get current NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+                    require_once __DIR__ . '/nsfw_data.php';
+                    $extData = NsfwNpcData::get($npcName);
 
                     $extData['sex_prompt'] = $generatedData['sex_prompt'] ?? '';
                     $extData['sex_speech_style'] = $generatedData['speak_style'] ?? 'default';
@@ -1335,8 +1322,8 @@ PROMPT;
                     $extData['nsfw_source'] = 'ai'; // Mark as AI-generated so it won't be regenerated
                     $extData['nsfw_generated_at'] = time();
 
-                    $npcMaster->setExtendedData($npcData, $extData);
-                    $npcMaster->save($npcData);
+                    // Save to nsfw_npc_data table (NOT core_npc_master.extended_data)
+                    NsfwNpcData::save($npcName, $extData);
 
                     error_log("[NSFW Config] Auto-save complete for: {$npcName}");
                 }
@@ -1400,7 +1387,7 @@ PROMPT;
                 $npcName = $npc['npc_name'];
 
                 // Check if NPC is blocked (children/animals)
-                $blockCheck = $this->isNpcBlockedFromNsfw($npcName, $npc);
+                $blockCheck = isNpcBlockedFromNsfw($npcName);
                 if ($blockCheck['blocked']) {
                     $skippedNpcs[] = [
                         'name' => $npcName,
@@ -1411,15 +1398,12 @@ PROMPT;
 
                 // If missing_only, check if NPC already has NSFW settings
                 if ($missingOnly) {
-                    $extData = [];
-                    if (!empty($npc['extended_data'])) {
-                        $extData = json_decode($npc['extended_data'], true) ?: [];
-                    }
+                    // Check nsfw_npc_data table for existing NSFW data
+                    require_once __DIR__ . '/nsfw_data.php';
+                    $extData = NsfwNpcData::get($npcName);
 
-                    // Check if nsfw_settings exists and has a sex_prompt
-                    if (isset($extData['nsfw_settings']) &&
-                        isset($extData['nsfw_settings']['sex_prompt']) &&
-                        !empty($extData['nsfw_settings']['sex_prompt'])) {
+                    // Check if has sex_prompt (indicates existing NSFW profile)
+                    if (!empty($extData['sex_prompt'])) {
                         // Already has NSFW profile, skip
                         continue;
                     }
@@ -1551,6 +1535,7 @@ PROMPT;
                 'init_prompt' => $style['init_prompt'] ?? '',
                 'masturbation_prompt' => $style['masturbation_prompt'] ?? '',
                 'climax_prompt' => $style['climax_prompt'] ?? '',
+                'partner_climax_prompt' => $style['partner_climax_prompt'] ?? '',
                 'pillow_talk_prompt' => $style['pillow_talk_prompt'] ?? '',
             ]);
         } catch (Exception $e) {
@@ -1572,6 +1557,7 @@ PROMPT;
             $initPrompt = $_POST['init_prompt'] ?? '';
             $masturbationPrompt = $_POST['masturbation_prompt'] ?? '';
             $climaxPrompt = $_POST['climax_prompt'] ?? '';
+            $partnerClimaxPrompt = $_POST['partner_climax_prompt'] ?? '';
             $pillowTalkPrompt = $_POST['pillow_talk_prompt'] ?? '';
 
             if (empty($styleName)) {
@@ -1604,6 +1590,7 @@ PROMPT;
                 'init_prompt' => $initPrompt,
                 'masturbation_prompt' => $masturbationPrompt,
                 'climax_prompt' => $climaxPrompt,
+                'partner_climax_prompt' => $partnerClimaxPrompt,
                 'pillow_talk_prompt' => $pillowTalkPrompt
             ];
 
@@ -1690,11 +1677,13 @@ PROMPT;
                 }
             }
 
-            $result = $GLOBALS["db"]->fetchAll("SELECT npc_name, extended_data FROM core_npc_master WHERE extended_data IS NOT NULL AND extended_data::text != '' AND extended_data::text != '{}'");
+            // Query from nsfw_npc_data table (NOT core_npc_master.extended_data)
+            require_once __DIR__ . '/nsfw_data.php';
+            $result = $GLOBALS["db"]->fetchAll("SELECT npc_name, extended_data FROM nsfw_npc_data WHERE extended_data IS NOT NULL AND extended_data::text != '{}'");
 
             foreach ($result as $row) {
                 $extendedData = json_decode($row['extended_data'], true);
-                // Check for Tyler's field names
+                // Check for NSFW fields
                 if ($extendedData && (
                     isset($extendedData['sex_speech_style']) ||
                     isset($extendedData['sex_prompt']) ||
@@ -1718,7 +1707,9 @@ PROMPT;
                         'secret_kinks_unlock_tier' => $extendedData['nsfw_secret_kinks_unlock_tier'] ?? 76,
                         'profanity_level' => $profLevel,
                         'source' => $extendedData['nsfw_source'] ?? 'manual',
-                        'is_prostitute' => $extendedData['is_prostitute'] ?? false
+                        'is_prostitute' => $extendedData['is_prostitute'] ?? false,
+                        'race' => $extendedData['race'] ?? null,
+                        'gender' => $extendedData['gender'] ?? null
                     ];
                 }
             }
@@ -1900,6 +1891,142 @@ PROMPT;
             echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
         exit;
+    }
+
+    function handleGetAiPromptTemplate()
+    {
+        try {
+            $row = $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_ai_prompt_template'");
+            $template = '';
+            if ($row && !empty($row['value'])) {
+                $template = $row['value'];
+            } else {
+                // Return default template
+                $template = getDefaultAiPromptTemplate();
+            }
+            echo json_encode(['success' => true, 'template' => $template]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+        exit;
+    }
+
+    function handleSaveAiPromptTemplate()
+    {
+        try {
+            $rawInput = file_get_contents('php://input');
+            $input = json_decode($rawInput, true);
+            $template = $input['template'] ?? '';
+
+            // Escape for SQL (same pattern as other saves in this file)
+            $escaped = pg_escape_string($template);
+
+            file_put_contents('/tmp/nsfw_save_debug.log', date('Y-m-d H:i:s') . " - Saving template, length: " . strlen($template) . "\n", FILE_APPEND);
+
+            // Check if row exists
+            $existing = $GLOBALS["db"]->fetchOne("SELECT id FROM conf_opts WHERE id = 'aiagent_nsfw_ai_prompt_template'");
+
+            if ($existing) {
+                $GLOBALS["db"]->execQuery("UPDATE conf_opts SET value = '{$escaped}' WHERE id = 'aiagent_nsfw_ai_prompt_template'");
+                file_put_contents('/tmp/nsfw_save_debug.log', date('Y-m-d H:i:s') . " - Updated existing row\n", FILE_APPEND);
+            } else {
+                $GLOBALS["db"]->execQuery("INSERT INTO conf_opts (id, value) VALUES ('aiagent_nsfw_ai_prompt_template', '{$escaped}')");
+                file_put_contents('/tmp/nsfw_save_debug.log', date('Y-m-d H:i:s') . " - Inserted new row\n", FILE_APPEND);
+            }
+
+            // Verify it saved
+            $verify = $GLOBALS["db"]->fetchOne("SELECT id FROM conf_opts WHERE id = 'aiagent_nsfw_ai_prompt_template'");
+            file_put_contents('/tmp/nsfw_save_debug.log', date('Y-m-d H:i:s') . " - Verify exists: " . ($verify ? 'YES' : 'NO') . "\n", FILE_APPEND);
+
+            echo json_encode(['success' => true]);
+        } catch (Exception $e) {
+            file_put_contents('/tmp/nsfw_save_debug.log', date('Y-m-d H:i:s') . " - ERROR: " . $e->getMessage() . "\n", FILE_APPEND);
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+        exit;
+    }
+
+    function handleResetAiPromptTemplate()
+    {
+        try {
+            $template = getDefaultAiPromptTemplate();
+
+            // Delete custom template so it uses default
+            $GLOBALS["db"]->execQuery("DELETE FROM conf_opts WHERE id = 'aiagent_nsfw_ai_prompt_template'");
+
+            echo json_encode(['success' => true, 'template' => $template]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+        exit;
+    }
+
+    function getDefaultAiPromptTemplate()
+    {
+        return <<<'PROMPT'
+You are generating an NSFW character profile for a Skyrim NPC based on their full biography and personality data from the game.
+
+NPC BIOGRAPHY DATA:
+{NPC_CONTEXT}
+
+Based on this character's personality, occupation, speech style, and background, generate a complete NSFW profile.
+
+Return this EXACT JSON structure:
+{
+  "sex_prompt": "2-4 sentences describing how THIS NPC behaves during sex. Write as INSTRUCTIONS TO THE NPC using 'You' (e.g. 'You approach your partner with fierce passion, taking control...' or 'You moan softly as you wrap your legs around them...'). NEVER write from partner's POV (WRONG: 'You feel her touch on your skin'). Describe what THE NPC does, not what happens to the partner. If SLAVE, reflect enslaved mentality. If PROSTITUTE, reflect professional approach.",
+  "speak_style": "one_of_the_valid_options",
+  "profanity_level": 3,
+  "kinks": ["kink1", "kink2", "kink3"],
+  "secret_kinks": ["secret1", "secret2", "secret3"],
+  "is_slave": false,
+  "slave_speak_style": null,
+  "slave_obedience": null,
+  "slave_resentment": null,
+  "is_prostitute": false,
+  "prostitute_type": null,
+  "prostitute_price_modifier": null,
+  "prostitute_services": null,
+  "spousal_status": "single",
+  "spouse_names": "",
+  "sexual_orientation": "heterosexual",
+  "relationship_preference": "monogamous"
+}
+
+SPEAK STYLE - You MUST pick EXACTLY ONE of these values (use the exact word before the colon):
+{SPEAK_STYLES}
+
+PROFANITY LEVEL - You MUST pick a number 1, 2, 3, or 4:
+1 = Soft/tasteful (no crude words)
+2 = Moderate (some explicit terms)
+3 = Hard (crude, vulgar language)
+4 = Extreme (maximum explicitness)
+
+KINKS: Pick exactly 3 normal kinks that fit this character's personality.
+Examples: rough sex, doggy style, riding, oral, outdoors, public, hair pulling, biting, spanking, dirty talk, praise kink, exhibition, voyeur, gentle, passionate, roleplay. Create custom ones if they fit better.
+
+SECRET KINKS: Pick exactly 3 secret kinks - darker/deeper desires.
+Examples: breeding, creampie, facials, deepthroat, choking, bondage, degradation, humiliation, anal, titfucking, domination, submission, gangbang, cuckolding. Create custom ones if they fit better.
+
+SLAVE DETECTION (check bio/relationships/occupation for slavery indicators):
+- is_slave: true if NPC is enslaved, owned, or in bondage to another
+- slave_speak_style: If slave, pick from speak styles above (often "submissive" but could be "bratty" or "victim" if resentful)
+- slave_obedience: If slave, rate 1-10 how obedient they are (10=totally broken, 1=rebellious)
+- slave_resentment: If slave, rate 1-10 how resentful they are (10=hates master, 1=loves their position)
+
+PROSTITUTE DETECTION:
+- is_prostitute: true if occupation involves selling sexual services
+- prostitute_type: "streetwalker", "courtesan", "escort", "tavern_worker", "temple_prostitute", or "camp_follower"
+- prostitute_price_modifier: 0.5 to 2.0 (1.0 = standard, 2.0 = expensive, 0.5 = cheap)
+- prostitute_services: Array like ["standard", "oral", "anal"] - what they offer
+
+RELATIONSHIP STATUS:
+- spousal_status: "single", "married", or "widowed"
+- spouse_names: List spouse name(s) if married
+- sexual_orientation: "heterosexual", "homosexual", "bisexual", or "asexual"
+- relationship_preference: "monogamous", "polyamorous", "uncommitted", or "not_interested"
+
+Output ONLY valid JSON. No markdown, no explanation, no code blocks.
+PROMPT;
     }
 
     function handleSearchNpcs()
@@ -2158,6 +2285,12 @@ PROMPT;
                 // Prostitution Group Pricing
                 'prostitution_group_pricing' => $_POST['prostitution_group_pricing'] ?? '',
 
+                // Section 2C: NPC-to-NPC Scenes
+                'npc_invite' => $_POST['npc_invite'] ?? '',
+                'npc_scene_active' => $_POST['npc_scene_active'] ?? '',
+                'npc_orgasm' => $_POST['npc_orgasm'] ?? '',
+                'npc_affair' => $_POST['npc_affair'] ?? '',
+
                 // Section 4: Alcohol & Drugs
                 'alcohol_effect' => $_POST['alcohol_effect'] ?? '',
                 'drug_effect' => $_POST['drug_effect'] ?? '',
@@ -2178,6 +2311,13 @@ PROMPT;
                 'fmr_baby_death' => $_POST['fmr_baby_death'] ?? '',
                 'fmr_mother_death' => $_POST['fmr_mother_death'] ?? '',
 
+                // Refusal and Arousal Gating Prompts
+                'refusal_confirm' => $_POST['refusal_confirm'] ?? '',
+                'non_consent' => $_POST['non_consent'] ?? '',
+                'enable_non_consent_prompt' => isset($_POST['enable_non_consent_prompt']) ? (bool)$_POST['enable_non_consent_prompt'] : true,
+                'arousal_low' => $_POST['arousal_low'] ?? '',
+                'arousal_gating_threshold' => isset($_POST['arousal_gating_threshold']) ? (int)$_POST['arousal_gating_threshold'] : 10,
+
                 // Pricing Modifiers: empty string = no button selected (no pricing prompt), integer = value
                 'pricing_mod_bonded' => isset($_POST['pricing_mod_bonded']) && $_POST['pricing_mod_bonded'] !== '' ? (int)$_POST['pricing_mod_bonded'] : '',
                 'pricing_mod_devoted' => isset($_POST['pricing_mod_devoted']) && $_POST['pricing_mod_devoted'] !== '' ? (int)$_POST['pricing_mod_devoted'] : '',
@@ -2190,6 +2330,11 @@ PROMPT;
                 'pricing_mod_resentful' => isset($_POST['pricing_mod_resentful']) && $_POST['pricing_mod_resentful'] !== '' ? (int)$_POST['pricing_mod_resentful'] : '',
                 'pricing_mod_hateful' => isset($_POST['pricing_mod_hateful']) && $_POST['pricing_mod_hateful'] !== '' ? (int)$_POST['pricing_mod_hateful'] : '',
                 'pricing_mod_hostile' => isset($_POST['pricing_mod_hostile']) && $_POST['pricing_mod_hostile'] !== '' ? (int)$_POST['pricing_mod_hostile'] : '',
+
+                // Price Templates (budget/standard/luxury) - stored as JSON objects
+                'price_template_budget' => isset($_POST['price_template_budget']) ? json_decode($_POST['price_template_budget'], true) : null,
+                'price_template_standard' => isset($_POST['price_template_standard']) ? json_decode($_POST['price_template_standard'], true) : null,
+                'price_template_luxury' => isset($_POST['price_template_luxury']) ? json_decode($_POST['price_template_luxury'], true) : null,
             ];
 
             $json = json_encode($settings);
@@ -2254,6 +2399,13 @@ PROMPT;
             'tier_fond' => '#PARTNER# has initiated sexual/intimate stance with you before any action has started. You have real affection for #PARTNER#. You are tender and passionate with them. Emotionally present and connected. Your heart is involved.',
             'tier_devoted' => '#PARTNER# has initiated sexual/intimate stance with you before any action has started. You are deeply in love with #PARTNER#. Complete vulnerability and trust. Deep emotional connection. You give yourself fully to them.',
             'tier_bonded' => '#PARTNER# has initiated sexual/intimate stance with you before any action has started. You are soulbound to #PARTNER#. Complete surrender, no boundaries remain between you. Anything goes. Total devotion and trust.',
+
+            // Refusal and Arousal Gating Prompts
+            'refusal_confirm' => 'You have refused #PARTNER#\'s advances. Express your refusal clearly - you can be polite, cold, or hostile depending on your relationship. Make it clear this is not happening. The scene ends here for you.',
+            'non_consent' => 'You refused #PARTNER#\'s advances but they are forcing themselves on you anyway. This is non-consensual. React with fear, anger, disgust, resistance, or traumatic dissociation as fits your character. You did not want this.',
+            'enable_non_consent_prompt' => true,
+            'arousal_low' => '#PARTNER# has initiated intimacy, but you\'re not in the mood right now. Your arousal is #AROUSAL# (needs to be higher). You may like #PARTNER#, but this isn\'t the right time. Politely decline or suggest trying again later when you\'re more receptive.',
+            'arousal_gating_threshold' => 10,
 
             // Section 2A: Marriage (Spouse + Spouse) Tier Prompts (11 tiers)
             'marriage_spouse_hostile' => 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -2373,6 +2525,41 @@ PROMPT;
             'pricing_mod_resentful' => 35,
             'pricing_mod_hateful' => '',
             'pricing_mod_hostile' => '',
+
+            // Price Templates (for "Apply Template" buttons in NPC prostitute pricing)
+            'price_template_budget' => [
+                'foreplay_kissing' => 5, 'foreplay_cuddling' => 8, 'foreplay_groping' => 10, 'foreplay_stripping' => 12,
+                'manual_handjob' => 15, 'manual_fingering' => 15, 'manual_mutual' => 25,
+                'oral_giving' => 30, 'oral_receiving' => 25, 'oral_mutual' => 50,
+                'full_vaginal' => 50, 'full_anal' => 75, 'full_both' => 100,
+                'solo_masturbate' => 20, 'solo_watch' => 35,
+                'finish_body' => 10, 'finish_face' => 15, 'finish_inside' => 25,
+                'time_1hr' => 100, 'time_12hr' => 400, 'time_24hr' => 700, 'time_72hr' => 1500, 'time_gfe' => 250,
+                'addon_domination' => 30, 'addon_submission' => 25, 'addon_watch' => 40,
+                'group_threesome' => 75, 'group_foursome' => 150, 'group_orgy' => 250
+            ],
+            'price_template_standard' => [
+                'foreplay_kissing' => 10, 'foreplay_cuddling' => 15, 'foreplay_groping' => 20, 'foreplay_stripping' => 25,
+                'manual_handjob' => 30, 'manual_fingering' => 30, 'manual_mutual' => 50,
+                'oral_giving' => 60, 'oral_receiving' => 50, 'oral_mutual' => 100,
+                'full_vaginal' => 100, 'full_anal' => 150, 'full_both' => 200,
+                'solo_masturbate' => 40, 'solo_watch' => 70,
+                'finish_body' => 20, 'finish_face' => 30, 'finish_inside' => 50,
+                'time_1hr' => 200, 'time_12hr' => 800, 'time_24hr' => 1400, 'time_72hr' => 3000, 'time_gfe' => 500,
+                'addon_domination' => 60, 'addon_submission' => 50, 'addon_watch' => 80,
+                'group_threesome' => 150, 'group_foursome' => 300, 'group_orgy' => 500
+            ],
+            'price_template_luxury' => [
+                'foreplay_kissing' => 25, 'foreplay_cuddling' => 40, 'foreplay_groping' => 50, 'foreplay_stripping' => 60,
+                'manual_handjob' => 75, 'manual_fingering' => 75, 'manual_mutual' => 125,
+                'oral_giving' => 150, 'oral_receiving' => 125, 'oral_mutual' => 250,
+                'full_vaginal' => 250, 'full_anal' => 375, 'full_both' => 500,
+                'solo_masturbate' => 100, 'solo_watch' => 175,
+                'finish_body' => 50, 'finish_face' => 75, 'finish_inside' => 125,
+                'time_1hr' => 500, 'time_12hr' => 2000, 'time_24hr' => 3500, 'time_72hr' => 7500, 'time_gfe' => 1250,
+                'addon_domination' => 150, 'addon_submission' => 125, 'addon_watch' => 200,
+                'group_threesome' => 375, 'group_foursome' => 750, 'group_orgy' => 1250
+            ],
         ];
     }
 
@@ -2530,6 +2717,121 @@ PROMPT;
             }
         }
 
+        /* Batch Progress Card Animations */
+        @keyframes batchCardBreathing {
+            0%, 100% {
+                border-color: rgba(139, 92, 246, 0.4);
+                box-shadow: 0 0 10px rgba(139, 92, 246, 0.2), inset 0 0 20px rgba(139, 92, 246, 0.05);
+            }
+            50% {
+                border-color: rgba(168, 85, 247, 0.7);
+                box-shadow: 0 0 20px rgba(168, 85, 247, 0.4), inset 0 0 30px rgba(168, 85, 247, 0.1);
+            }
+        }
+
+        @keyframes creamBorderBreathing {
+            0%, 100% {
+                border-color: rgba(253, 245, 208, 0.5);
+                box-shadow: 0 0 15px rgba(253, 245, 208, 0.2), 0 0 30px rgba(218, 165, 32, 0.15);
+            }
+            50% {
+                border-color: rgba(253, 245, 208, 0.9);
+                box-shadow: 0 0 25px rgba(253, 245, 208, 0.5), 0 0 50px rgba(218, 165, 32, 0.3);
+            }
+        }
+
+        @keyframes goldBarGlow {
+            0%, 100% {
+                box-shadow: 0 0 5px rgba(253, 245, 208, 0.4), 0 0 10px rgba(218, 165, 32, 0.3);
+            }
+            50% {
+                box-shadow: 0 0 10px rgba(253, 245, 208, 0.7), 0 0 20px rgba(218, 165, 32, 0.5), 0 0 30px rgba(253, 245, 208, 0.3);
+            }
+        }
+
+        @keyframes goldBarShimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+
+        .batch-progress-card {
+            display: none;
+            margin-bottom: 15px;
+            padding: 20px;
+            background: linear-gradient(135deg, #1C1A24 0%, #252233 50%, #1C1A24 100%);
+            border: 2px solid rgba(139, 92, 246, 0.5);
+            border-radius: 12px;
+            animation: batchCardBreathing 3s ease-in-out infinite;
+        }
+
+        .batch-progress-card.active {
+            display: block;
+        }
+
+        .batch-progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .batch-progress-title {
+            font-family: 'MagicCards', 'Segoe UI', sans-serif;
+            font-size: 16px;
+            color: #B8A8C8;
+            letter-spacing: 1px;
+            animation: neonPulse 3s ease-in-out infinite alternate;
+        }
+
+        .batch-progress-count {
+            font-family: 'MagicCards', 'Segoe UI', sans-serif;
+            font-size: 14px;
+            color: #FDF5D0;
+            animation: creamPulse 2s ease-in-out infinite alternate;
+        }
+
+        .batch-progress-track {
+            width: 100%;
+            height: 12px;
+            background: #252233;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid rgba(253, 245, 208, 0.3);
+        }
+
+        .batch-progress-fill {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg,
+                #DAA520 0%,
+                #FDF5D0 25%,
+                #DAA520 50%,
+                #FDF5D0 75%,
+                #DAA520 100%);
+            background-size: 200% 100%;
+            border-radius: 6px;
+            transition: width 0.3s ease-out;
+            animation: goldBarGlow 2s ease-in-out infinite, goldBarShimmer 2s linear infinite;
+        }
+
+        .batch-skipped-list {
+            margin-top: 12px;
+            font-size: 11px;
+            color: #C9B8D8;
+            font-style: italic;
+        }
+
+        .batch-skipped-list strong {
+            color: #B8A8C8;
+            font-style: normal;
+        }
+
+        .batch-existing-skipped {
+            margin-top: 8px;
+            font-size: 11px;
+            color: #A8D8A8;
+        }
+
         .section-header {
             color: #7A6890;
             font-family: 'MagicCards', 'Segoe UI', sans-serif;
@@ -2595,6 +2897,226 @@ PROMPT;
 
         .info-code-box strong {
             color: #B8A8C8;
+        }
+
+        /* SHARMAT Logs Tab Styles */
+        .log-tab-btn {
+            background: #252233;
+            border: 1px solid #3A3545;
+            color: #B8A8C8;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: 'MagicCards', 'Segoe UI', sans-serif;
+            font-size: 13px;
+            letter-spacing: 1px;
+            transition: all 0.2s;
+        }
+
+        .log-tab-btn:hover {
+            background: #2A2740;
+            border-color: #7A6890;
+        }
+
+        .log-tab-btn.active {
+            background: #7A6890;
+            color: #fff;
+            border-color: #7A6890;
+        }
+
+        .log-entry {
+            padding: 8px 12px;
+            border-bottom: 1px solid #2A2740;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            color: #B8A8C8;
+        }
+
+        .log-entry:hover {
+            background: #252233;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-timestamp {
+            color: #666;
+            margin-right: 10px;
+        }
+
+        .log-source {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            margin-right: 8px;
+            font-weight: bold;
+        }
+
+        .log-source.JSONB { background: #2e7d32; color: #c8e6c9; }
+        .log-source.JSON { background: #1565c0; color: #bbdefb; }
+        .log-source.FALLBACK { background: #f57c00; color: #fff3e0; }
+        .log-source.INJECT { background: #7b1fa2; color: #e1bee7; }
+        .log-source.TIER { background: #c62828; color: #ffcdd2; }
+        .log-source.SCENE { background: #00838f; color: #b2ebf2; }
+        .log-source.PHASE { background: #558b2f; color: #dcedc8; }
+
+        .log-scene-id {
+            color: #64b5f6;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .log-scene-id:hover {
+            text-decoration: underline;
+        }
+
+        .log-scene-desc {
+            color: #a5d6a7;
+        }
+
+        .log-npc-name {
+            color: #ff9800;
+            font-weight: bold;
+        }
+
+        .log-prompt-text {
+            color: #B8A8C8;
+            margin-left: 10px;
+        }
+
+        .log-empty {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .log-empty p {
+            margin: 10px 0;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 15px;
+        }
+
+        .status-card {
+            background: #252233;
+            border: 1px solid #3A3545;
+            border-radius: 8px;
+            padding: 15px;
+        }
+
+        .status-card-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #3A3545;
+        }
+
+        .status-card-name {
+            color: #ff9800;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .status-card-badge {
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: bold;
+        }
+
+        .status-card-badge.active { background: #2e7d32; color: #c8e6c9; }
+        .status-card-badge.idle { background: #1565c0; color: #bbdefb; }
+        .status-card-badge.inactive { background: #424242; color: #bdbdbd; }
+
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            font-size: 12px;
+        }
+
+        .status-label {
+            color: #888;
+        }
+
+        .status-value {
+            color: #B8A8C8;
+            font-weight: bold;
+        }
+
+        /* Clear Log button - matches Delete NPC button style */
+        .btn-clear-log {
+            background: linear-gradient(135deg, #252233 0%, #1C1A24 100%);
+            border: 2px solid #FDF5D0;
+            color: #B8A8D0;
+            padding: 6px 14px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .btn-clear-log:hover {
+            background: linear-gradient(135deg, #5B1020 0%, #3A0A15 100%);
+        }
+
+        /* Logs checkbox - matches Settings gold checkboxes */
+        .logs-checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+        }
+
+        .logs-checkbox-group input[type="checkbox"] {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #FDF5D0;
+            border-radius: 4px;
+            background: #1E1A2E;
+            cursor: pointer;
+            position: relative;
+            flex-shrink: 0;
+            animation: goldNeonPulse 3s ease-in-out infinite alternate;
+        }
+
+        .logs-checkbox-group input[type="checkbox"]:checked {
+            background: #FDF5D0;
+            border-color: #FDF5D0;
+            animation: goldNeonPulse 3s ease-in-out infinite alternate;
+        }
+
+        .logs-checkbox-group input[type="checkbox"]:checked::after {
+            content: '✓';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #3D2A5C;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .logs-checkbox-group input[type="checkbox"]:hover {
+            border-color: #fff;
+            box-shadow: 0 0 8px rgba(253, 245, 208, 0.4);
+        }
+
+        .logs-checkbox-group span {
+            color: #B8A8C8;
+            font-weight: bold;
+            animation: subPulse 3s ease-in-out infinite alternate;
         }
 
         .quick-link-btn {
@@ -3207,40 +3729,39 @@ PROMPT;
         .pagination button,
         .pagination span {
             padding: 8px 12px;
-            background: #252233; border: 1px solid #3A3545; color: #E8E0F0;
+            background: #1C1A24;
+            border: 1px solid #3A3545;
             border-radius: 4px;
             cursor: pointer;
             font-size: 13px;
-            color: #E8E0F0;
-            background: #1C1A24;
-            color: #E8E0F0;
+            color: #C9B8D8;
             transition: all 0.2s ease;
         }
 
         .pagination button:hover {
             background: linear-gradient(135deg, #6B5B7A 0%, #5A4A6A 100%);
-            border: 1px solid #7A6A8A;
-            color: #E8E0F0;
             border-color: #FDF5D0;
+            color: #FDF5D0;
         }
 
         .pagination button.active {
             background: linear-gradient(135deg, #6B5B7A 0%, #5A4A6A 100%);
-            border: 1px solid #7A6A8A;
-            color: #E8E0F0;
             border-color: #FDF5D0;
+            color: #FDF5D0;
             font-weight: 600;
         }
 
         .pagination button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+            color: #7A6890;
         }
 
         .pagination span {
             cursor: default;
             border: none;
             padding: 8px 0;
+            color: #9988BB;
         }
 
         .pagination-info {
@@ -3248,8 +3769,8 @@ PROMPT;
             text-align: center;
             margin-top: 10px;
             font-size: 13px;
-            color: #E8E0F0;
             color: #B8A8D0;
+            font-weight: 500;
         }
 
         .header-content {
@@ -4336,6 +4857,7 @@ PROMPT;
             <button class="tab-button" onclick="switchTab('speakstyles')">NPC<span style="margin: 0 8px;"></span>Settings</button>
             <button class="tab-button" onclick="switchTab('prompts')">Prompts</button>
             <button class="tab-button" onclick="switchTab('settings')">Settings</button>
+            <button class="tab-button" onclick="switchTab('logs')">Sharmat<span style="margin: 0 8px;"></span>Logs</button>
             <button class="tab-button" onclick="switchTab('info')">Info</button>
         </div>
 
@@ -4456,17 +4978,20 @@ PROMPT;
                     </div>
                     <div class="form-group" style="flex: 1;">
                         <label for="aiConnectorSelect">AI Connector (for generation)</label>
-                        <select id="aiConnectorSelect" style="width: 100%; padding: 10px; background: #252233; border: 1px solid #3A3545; color: #B8A8C8; border-radius: 5px;">
-                            <option value="">-- Select connector --</option>
-                            <?php
-                            $connectors = $GLOBALS["db"]->fetchAll("SELECT id, label FROM core_llm_connector ORDER BY label");
-                            foreach ($connectors as $conn) {
-                                $id = htmlspecialchars($conn['id']);
-                                $label = htmlspecialchars($conn['label']);
-                                echo "<option value=\"{$id}\">{$label}</option>\n";
-                            }
-                            ?>
-                        </select>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <select id="aiConnectorSelect" style="flex: 1; padding: 10px; background: #252233; border: 1px solid #3A3545; color: #B8A8C8; border-radius: 5px;">
+                                <option value="">-- Select connector --</option>
+                                <?php
+                                $connectors = $GLOBALS["db"]->fetchAll("SELECT id, label FROM core_llm_connector ORDER BY label");
+                                foreach ($connectors as $conn) {
+                                    $id = htmlspecialchars($conn['id']);
+                                    $label = htmlspecialchars($conn['label']);
+                                    echo "<option value=\"{$id}\">{$label}</option>\n";
+                                }
+                                ?>
+                            </select>
+                            <button type="button" class="btn-secondary" onclick="openAiPromptModal()" style="padding: 8px 10px; white-space: nowrap; font-family: 'MagicCards', 'Segoe UI', sans-serif; letter-spacing: 1px; word-spacing: 4px; font-size: 12px;">Edit Prompt</button>
+                        </div>
                         <p style="font-size: 11px; color: #B8A8D0; margin: 5px 0 8px 0;"><strong>Grok highly recommended</strong> - it doesn't hold back on adult content.</p>
                         <div style="display: flex; gap: 10px;">
                             <button type="button" id="autoGenerateToggle" class="btn-secondary npc-action-btn" onclick="toggleAutoGenerate()">Generate as NPCs are Met</button>
@@ -4476,15 +5001,16 @@ PROMPT;
                 </div>
 
                 <!-- Batch Progress Bar -->
-                <div id="batchGenerateProgress" style="display: none; margin-bottom: 15px; padding: 15px; background: #1C1A24; border: 1px solid #3A3545; border-radius: 8px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                        <span id="batchProgressText">Processing...</span>
-                        <span id="batchProgressCount">0 / 0</span>
+                <div id="batchGenerateProgress" class="batch-progress-card">
+                    <div class="batch-progress-header">
+                        <span id="batchProgressText" class="batch-progress-title">Processing...</span>
+                        <span id="batchProgressCount" class="batch-progress-count">0 / 0</span>
                     </div>
-                    <div style="width: 100%; height: 8px; background: #252233; border-radius: 4px; overflow: hidden;">
-                        <div id="batchProgressBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #8B5CF6, #A855F7); transition: width 0.3s;"></div>
+                    <div class="batch-progress-track">
+                        <div id="batchProgressBar" class="batch-progress-fill"></div>
                     </div>
-                    <div id="batchSkippedList" style="margin-top: 10px; font-size: 11px; color: #888;"></div>
+                    <div id="batchExistingSkipped" class="batch-existing-skipped"></div>
+                    <div id="batchSkippedList" class="batch-skipped-list"></div>
                 </div>
 
                 <!-- NPC Specific Settings Panel -->
@@ -4530,6 +5056,7 @@ PROMPT;
                             <div class="form-group" style="margin-bottom: 0;">
                                 <label for="profanityLevel" style="margin-bottom: 2px;">Profanity Level</label>
                                 <select id="profanityLevel" style="width: 100%; padding: 8px 10px; background: #252233; border: 1px solid #3A3545; color: #B8A8C8; border-radius: 5px;">
+                                    <option value="">-- Not set --</option>
                                     <option value="1">1 - Soft (tasteful, romantic)</option>
                                     <option value="2">2 - Moderate (some explicit terms)</option>
                                     <option value="3">3 - Hard (crude, vulgar)</option>
@@ -4544,6 +5071,7 @@ PROMPT;
                         <div class="form-group" style="flex: 1; min-width: 150px; margin-bottom: 0;">
                             <label style="margin-bottom: 2px;">Spousal Status</label>
                             <select id="spousalStatus" style="width: 100%; padding: 8px 10px; background: #252233; border: 1px solid #3A3545; color: #B8A8C8; border-radius: 5px;" onchange="onSpousalStatusChange()">
+                                <option value="">-- Not set --</option>
                                 <option value="single">Single</option>
                                 <option value="married">Married</option>
                                 <option value="widowed">Widowed</option>
@@ -4990,6 +5518,11 @@ PROMPT;
                         </tbody>
                     </table>
                 </div>
+                <!-- NPC Table Pagination -->
+                <div id="npcPaginationContainer" style="display: none; margin-top: 15px;">
+                    <div class="pagination" id="npcPaginationControls"></div>
+                    <div class="pagination-info" id="npcPaginationInfo"></div>
+                </div>
             </div>
         </div>
 
@@ -5105,6 +5638,50 @@ PROMPT;
                     <span>Enable Affinity Gating</span>
                 </label>
                 <p class="legend">When enabled, NSFW functions are locked behind relationship tier thresholds. AcceptSex requires Acquaintance (6+), InitiateSex requires Fond (56+), and prostitute functions have their own tier requirements. When disabled, all affinity-gated functions are available immediately.</p>
+            </div>
+
+            <!-- Token Limits Section -->
+            <h3 style="margin: 20px 0 15px; color: #FDF5D0; font-size: 16px; animation: subPulse 3s ease-in-out infinite alternate;">Response Token Limits</h3>
+            <p class="legend" style="margin-bottom: 15px;">Control how long the AI's responses can be during intimate scenes. Lower values = shorter, punchier dialogue. Higher values = more verbose responses. These limits prevent the AI from rambling during sex scenes.</p>
+
+            <div class="settings-slider-group">
+                <span class="slider-title">Sex Scene Token Limit</span>
+                <div class="slider-container">
+                    <input type="range" id="tokenLimitSexScene" name="TOKEN_LIMIT_SEX_SCENE" min="50" max="10000" step="50" value="100">
+                    <span class="slider-value" id="tokenLimitSexSceneValue">100 tokens</span>
+                </div>
+                <p class="legend">Maximum tokens for regular sex scene dialogue (chatnf_sl events). Lower = shorter moans/dirty talk. Default: 100 tokens (~25-50 words).</p>
+            </div>
+
+            <div class="settings-slider-group">
+                <span class="slider-title">Climax/Orgasm Token Limit</span>
+                <div class="slider-container">
+                    <input type="range" id="tokenLimitClimax" name="TOKEN_LIMIT_CLIMAX" min="50" max="10000" step="50" value="50">
+                    <span class="slider-value" id="tokenLimitClimaxValue">50 tokens</span>
+                </div>
+                <p class="legend">Maximum tokens for orgasm/climax responses. Should be VERY short - just moans and exclamations. Default: 50 tokens (~10-20 words).</p>
+            </div>
+
+            <!-- Scene Event Cooldowns -->
+            <h3 style="margin: 20px 0 15px; color: #FDF5D0; font-size: 16px; animation: subPulse 3s ease-in-out infinite alternate;">Scene Event Cooldowns</h3>
+            <p class="legend" style="margin-bottom: 15px;">Control how often scene events can trigger NPC dialogue. Applies to both Player scenes AND NPC-to-NPC scenes. This prevents NPCs from talking over each other during rapid scene changes. Set to 0 to disable cooldown.</p>
+
+            <div class="settings-slider-group">
+                <span class="slider-title">Sex Scene Dialogue Cooldown</span>
+                <div class="slider-container">
+                    <input type="range" id="cooldownSexScene" name="COOLDOWN_SEX_SCENE" min="0" max="60" step="5" value="15">
+                    <span class="slider-value" id="cooldownSexSceneValue">15 sec</span>
+                </div>
+                <p class="legend">Minimum seconds between chatnf_sl events (regular sex dialogue). Prevents spam during rapid animation changes. Default: 15 seconds.</p>
+            </div>
+
+            <div class="settings-slider-group">
+                <span class="slider-title">Climax/Orgasm Cooldown</span>
+                <div class="slider-container">
+                    <input type="range" id="cooldownClimax" name="COOLDOWN_CLIMAX" min="0" max="120" step="5" value="30">
+                    <span class="slider-value" id="cooldownClimaxValue">30 sec</span>
+                </div>
+                <p class="legend">Minimum seconds between orgasm/climax events. Prevents multiple orgasm responses in quick succession. Default: 30 seconds.</p>
             </div>
 
             <div class="row full">
@@ -5257,6 +5834,63 @@ PROMPT;
                             <div class="form-group">
                                 <label>Hostile (-91 to -100) - Violent Refusal</label>
                                 <textarea id="promptTierHostile" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">#PARTNER# has initiated sexual/intimate stance with you before any action has started. You DESPISE #PARTNER#. This is assault. Fight back, resist with everything you have. Express hatred and disgust. Refuse ALL advances and try to escape or call for help.</textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 1c2. Refusal Confirmation Prompt (Collapsible) -->
+                    <div class="card" style="margin-bottom: 20px;">
+                        <div class="collapsible-header" onclick="toggleNestedSection('refusalPrompt')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+                            <h3 class="section-header" style="margin-bottom: 0; display: flex; align-items: center; gap: 10px;">
+                                <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> Refusal Confirmation Prompt
+                            </h3>
+                            <span id="refusalPromptToggle" class="section-toggle-btn">Open</span>
+                        </div>
+                        <p style="color: #9988BB; font-size: 11px; margin: 10px 0;">
+                            When an NPC refuses advances (due to low affinity), this prompt is injected to confirm their refusal. Use <code>#PARTNER#</code> for the person they're refusing. This ends the intimacy flow for that NPC.
+                        </p>
+                        <div id="refusalPromptContent" style="display: none;">
+                            <div class="form-group">
+                                <label>Refusal Confirmation</label>
+                                <textarea id="promptRefusalConfirm" class="auto-resize" style="min-height: 60px; width: 100%; resize: none; overflow: hidden;">You have refused #PARTNER#'s advances. Express your refusal clearly - you can be polite, cold, or hostile depending on your relationship. Make it clear this is not happening. The scene ends here for you.</textarea>
+                            </div>
+                            <div class="form-group" style="margin-top: 15px; border-top: 1px solid #4a3d6a; padding-top: 15px;">
+                                <label>After Refusal</label>
+                                <div class="settings-checkbox-group" style="margin: 10px 0;">
+                                    <label for="enableNonConsentPrompt">
+                                        <input type="checkbox" id="enableNonConsentPrompt">
+                                        <span>Non-Consent / Forced Scene</span>
+                                    </label>
+                                    <p class="legend">If the scene continues after NPC refused (player forces it), this prompt is injected instead. Uncheck to prevent canned refusals from frontier models (Claude, GPT, etc). Use <code>#PARTNER#</code> for the person forcing them.</p>
+                                </div>
+                                <textarea id="promptNonConsent" class="auto-resize" style="min-height: 60px; width: 100%; resize: none; overflow: hidden;">You refused but #PARTNER# is forcing themselves on you anyway. This is rape. You did NOT consent to this. React accordingly - you might fight back, go numb, cry, plead, dissociate, or express trauma. Your body is being violated against your will.</textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 1c3. Arousal Gating Prompt (Collapsible) - Only active when arousal gating checkbox is ON -->
+                    <div class="card" style="margin-bottom: 20px;">
+                        <div class="collapsible-header" onclick="toggleNestedSection('arousalGatingPrompt')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+                            <h3 class="section-header" style="margin-bottom: 0; display: flex; align-items: center; gap: 10px;">
+                                <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> Arousal Gating Prompt
+                            </h3>
+                            <span id="arousalGatingPromptToggle" class="section-toggle-btn">Open</span>
+                        </div>
+                        <p style="color: #9988BB; font-size: 11px; margin: 10px 0;">
+                            <strong style="color: #B8A8C8;">Only applies when "Enable Sex Disposal / Arousal Gating" is checked.</strong> This prompt is injected during the affinity tier phase when the NPC's arousal is below the threshold. Even if they like the person, they're "not in the mood". Use <code>#PARTNER#</code> for partner name and <code>#AROUSAL#</code> for current arousal value.
+                        </p>
+                        <div id="arousalGatingPromptContent" style="display: none;">
+                            <div class="settings-slider-group" style="margin-bottom: 15px;">
+                                <span class="slider-title">Arousal Threshold</span>
+                                <div class="slider-container">
+                                    <input type="range" id="arousalGatingThreshold" name="AROUSAL_GATING_THRESHOLD" min="0" max="100" step="5" value="10">
+                                    <span class="slider-value" id="arousalGatingThresholdValue">10</span>
+                                </div>
+                                <p class="legend">Minimum arousal level required to proceed. Below this, NPC may refuse even if they like the partner. Does NOT apply to slaves or prostitutes.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Not In The Mood (Below Threshold)</label>
+                                <textarea id="promptArousalLow" class="auto-resize" style="min-height: 60px; width: 100%; resize: none; overflow: hidden;">#PARTNER# has initiated intimacy, but you're not in the mood right now. Your arousal is #AROUSAL# (needs to be higher). You may like #PARTNER#, but this isn't the right time. Politely decline or suggest trying again later when you're more receptive.</textarea>
                             </div>
                         </div>
                     </div>
@@ -5658,6 +6292,93 @@ PROMPT;
             </div>
 
             <!-- ============================================ -->
+            <!-- SECTION 2C: NPC-TO-NPC SCENES (OStim NPCs) -->
+            <!-- ============================================ -->
+            <div class="collapsible-section" style="margin-bottom: 15px;">
+                <div class="collapsible-header" onclick="togglePromptSection('sectionNpcScenes')" style="background: linear-gradient(135deg, #2A2540 0%, #1C1A24 100%); padding: 15px 20px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border: 1px solid #3A3545; transition: all 0.3s ease;">
+                    <h3 class="section-header" style="margin: 0; display: flex; align-items: center; gap: 10px;">
+                        <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;">
+                        NPC-to-NPC Scenes (OStim NPCs)
+                    </h3>
+                    <div style="display: flex; gap: 8px;">
+                        <span class="section-save-btn" onclick="event.stopPropagation(); savePromptSettings();">Save</span>
+                        <span id="sectionNpcScenesToggle" class="section-toggle-btn">Open</span>
+                    </div>
+                </div>
+                <div id="sectionNpcScenesContent" class="collapsible-content" style="display: none; padding: 20px; background: #1C1A24; border: 1px solid #3A3545; border-top: none; border-radius: 0 0 8px 8px;">
+                    <p style="color: #9988BB; font-size: 12px; margin-bottom: 10px;">
+                        Prompts for NPC-to-NPC scenes (OStim NPCs mod). These scenes involve TWO NPCs without the player.
+                    </p>
+                    <div class="alert" style="background: #2A2540; border-color: #4A3555; margin-bottom: 20px;">
+                        <strong style="color: #B8A8C8;">How NPC-to-NPC Works:</strong><br>
+                        • <strong>DOM NPC</strong> (initiator) uses the invite prompt below, then falls back to NSFW Framework Globals for speech/climax/pillow talk.<br>
+                        • <strong>SUB NPC</strong> (recipient) uses the standard <strong>NSFW Framework Global</strong> tier prompts above (which say "#PARTNER# has initiated...").<br>
+                        • The <code>#PARTNER#</code> placeholder is set to the other NPC's name, so existing prompts work automatically.
+                    </div>
+
+                    <!-- NPC Invite Phase -->
+                    <div class="card" style="margin-bottom: 15px; border-color: #3A3545;">
+                        <h3 class="section-header" style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                            <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> DOM NPC Initiator Prompt
+                        </h3>
+                        <p style="color: #9988BB; font-size: 11px; margin-bottom: 10px;">
+                            Fires when the DOM NPC approaches the SUB NPC to initiate a scene.
+                            Use <code>#PARTNER#</code> for the SUB NPC's name.
+                        </p>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label>NPC Invite Prompt (DOM NPC only)</label>
+                            <textarea id="promptNpcInvite" class="auto-resize" style="min-height: 60px; width: 100%; resize: none; overflow: hidden;">(You are approaching #PARTNER# with romantic/sexual intent. You are the initiator. Lead the approach based on your personality and relationship with them.)</textarea>
+                        </div>
+                    </div>
+
+                    <!-- NPC Scene Context -->
+                    <div class="card" style="margin-bottom: 15px; border-color: #3A3545;">
+                        <h3 class="section-header" style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                            <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> NPC Scene Context
+                        </h3>
+                        <p style="color: #9988BB; font-size: 11px; margin-bottom: 10px;">
+                            Injected when an NPC-to-NPC scene is active so both NPCs know they're in a scene together.
+                            Use <code>#NPC_NAME#</code> for the speaking NPC, <code>#PARTNER#</code> for the other NPC.
+                        </p>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label>NPC Scene Active Prompt</label>
+                            <textarea id="promptNpcSceneActive" class="auto-resize" style="min-height: 60px; width: 100%; resize: none; overflow: hidden;">(You are currently in an intimate/sexual scene with #PARTNER#. React to the physical intimacy based on your personality and feelings toward them. Their sexual personality is provided in their profile.)</textarea>
+                        </div>
+                    </div>
+
+                    <!-- NPC Orgasm -->
+                    <div class="card" style="margin-bottom: 15px; border-color: #3A3545;">
+                        <h3 class="section-header" style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                            <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> NPC Orgasm Prompt
+                        </h3>
+                        <p style="color: #9988BB; font-size: 11px; margin-bottom: 10px;">
+                            Fires when an NPC reaches climax during an NPC-to-NPC scene.
+                            Use <code>#NPC_NAME#</code> for the climaxing NPC, <code>#PARTNER#</code> for their partner.
+                        </p>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label>NPC Climax Prompt</label>
+                            <textarea id="promptNpcOrgasm" class="auto-resize" style="min-height: 60px; width: 100%; resize: none; overflow: hidden;">(#NPC_NAME# is reaching climax with #PARTNER#. Express this moment according to your personality and feelings.)</textarea>
+                        </div>
+                    </div>
+
+                    <!-- NPC Affair Detection -->
+                    <div class="card" style="margin-bottom: 0; border-color: #3A3545;">
+                        <h3 class="section-header" style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                            <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> NPC Affair Context
+                        </h3>
+                        <p style="color: #9988BB; font-size: 11px; margin-bottom: 10px;">
+                            Injected when an NPC has a spouse but is in a scene with someone who is NOT their spouse.
+                            Use <code>#NPC_NAME#</code> for the NPC, <code>#PARTNER#</code> for scene partner, <code>#SPOUSE#</code> for their actual spouse.
+                        </p>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label>NPC Affair Prompt</label>
+                            <textarea id="promptNpcAffair" class="auto-resize" style="min-height: 60px; width: 100%; resize: none; overflow: hidden;">(#NPC_NAME# is married to #SPOUSE#, but #NPC_NAME# is being intimate with #PARTNER# instead. This is an affair. React according to your personality - guilt, thrill, justification, or indifference.)</textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ============================================ -->
             <!-- SECTION 3: PROSTITUTION -->
             <!-- ============================================ -->
             <div class="collapsible-section" style="margin-bottom: 15px;">
@@ -5906,6 +6627,205 @@ PROMPT;
                             </div>
                         </div>
                     </div>
+
+                    <!-- Price Templates - Collapsible -->
+                    <div class="card" style="margin-bottom: 20px;">
+                        <div class="collapsible-header" onclick="toggleNestedSection('priceTemplates')" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+                            <h3 class="section-header" style="margin-bottom: 0; display: flex; align-items: center; gap: 10px;">
+                                <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> Price Templates (Budget/Standard/Luxury)
+                            </h3>
+                            <span id="priceTemplatesToggle" class="section-toggle-btn">Open</span>
+                        </div>
+                        <p style="color: #9988BB; font-size: 11px; margin: 10px 0;">
+                            Default pricing templates used when clicking "Budget", "Standard", or "Luxury" buttons in NPC prostitute pricing.
+                            Edit these to customize the default prices across all NPCs.
+                        </p>
+                        <div id="priceTemplatesContent" style="display: none;">
+                            <!-- Template Selection Tabs -->
+                            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                                <button type="button" class="btn-template active" id="templateTabBudget" onclick="switchTemplateTab('budget')" style="flex: 1;">Budget</button>
+                                <button type="button" class="btn-template" id="templateTabStandard" onclick="switchTemplateTab('standard')" style="flex: 1;">Standard</button>
+                                <button type="button" class="btn-template" id="templateTabLuxury" onclick="switchTemplateTab('luxury')" style="flex: 1;">Luxury</button>
+                            </div>
+
+                            <!-- Budget Template -->
+                            <div id="templateBudget" class="template-panel">
+                                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                                    <div>
+                                        <h5 style="color: #e91e63; margin: 0 0 8px 0;">Foreplay</h5>
+                                        <div class="price-row"><span>Kissing</span><input type="number" id="tpl_budget_foreplay_kissing" class="price-input" value="5" min="0"></div>
+                                        <div class="price-row"><span>Cuddling</span><input type="number" id="tpl_budget_foreplay_cuddling" class="price-input" value="8" min="0"></div>
+                                        <div class="price-row"><span>Groping</span><input type="number" id="tpl_budget_foreplay_groping" class="price-input" value="10" min="0"></div>
+                                        <div class="price-row"><span>Stripping</span><input type="number" id="tpl_budget_foreplay_stripping" class="price-input" value="12" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #ff9800; margin: 0 0 8px 0;">Manual</h5>
+                                        <div class="price-row"><span>Handjob</span><input type="number" id="tpl_budget_manual_handjob" class="price-input" value="15" min="0"></div>
+                                        <div class="price-row"><span>Fingering</span><input type="number" id="tpl_budget_manual_fingering" class="price-input" value="15" min="0"></div>
+                                        <div class="price-row"><span>Mutual</span><input type="number" id="tpl_budget_manual_mutual" class="price-input" value="25" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #9c27b0; margin: 0 0 8px 0;">Oral</h5>
+                                        <div class="price-row"><span>Giving</span><input type="number" id="tpl_budget_oral_giving" class="price-input" value="30" min="0"></div>
+                                        <div class="price-row"><span>Receiving</span><input type="number" id="tpl_budget_oral_receiving" class="price-input" value="25" min="0"></div>
+                                        <div class="price-row"><span>Mutual (69)</span><input type="number" id="tpl_budget_oral_mutual" class="price-input" value="50" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #f44336; margin: 0 0 8px 0;">Full Service</h5>
+                                        <div class="price-row"><span>Vaginal</span><input type="number" id="tpl_budget_full_vaginal" class="price-input" value="50" min="0"></div>
+                                        <div class="price-row"><span>Anal</span><input type="number" id="tpl_budget_full_anal" class="price-input" value="75" min="0"></div>
+                                        <div class="price-row"><span>Both</span><input type="number" id="tpl_budget_full_both" class="price-input" value="100" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #673ab7; margin: 0 0 8px 0;">Solo/Finish</h5>
+                                        <div class="price-row"><span>Masturbate</span><input type="number" id="tpl_budget_solo_masturbate" class="price-input" value="20" min="0"></div>
+                                        <div class="price-row"><span>Watch</span><input type="number" id="tpl_budget_solo_watch" class="price-input" value="35" min="0"></div>
+                                        <div class="price-row"><span>On Body</span><input type="number" id="tpl_budget_finish_body" class="price-input" value="10" min="0"></div>
+                                        <div class="price-row"><span>On Face</span><input type="number" id="tpl_budget_finish_face" class="price-input" value="15" min="0"></div>
+                                        <div class="price-row"><span>Inside</span><input type="number" id="tpl_budget_finish_inside" class="price-input" value="25" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #f57c00; margin: 0 0 8px 0;">Time Bookings</h5>
+                                        <div class="price-row"><span>1 Hour</span><input type="number" id="tpl_budget_time_1hr" class="price-input" value="100" min="0"></div>
+                                        <div class="price-row"><span>12 Hours</span><input type="number" id="tpl_budget_time_12hr" class="price-input" value="400" min="0"></div>
+                                        <div class="price-row"><span>24 Hours</span><input type="number" id="tpl_budget_time_24hr" class="price-input" value="700" min="0"></div>
+                                        <div class="price-row"><span>72 Hours</span><input type="number" id="tpl_budget_time_72hr" class="price-input" value="1500" min="0"></div>
+                                        <div class="price-row"><span>GFE</span><input type="number" id="tpl_budget_time_gfe" class="price-input" value="250" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #c2185b; margin: 0 0 8px 0;">Add-ons</h5>
+                                        <div class="price-row"><span>Domination</span><input type="number" id="tpl_budget_addon_domination" class="price-input" value="30" min="0"></div>
+                                        <div class="price-row"><span>Submission</span><input type="number" id="tpl_budget_addon_submission" class="price-input" value="25" min="0"></div>
+                                        <div class="price-row"><span>Watch Only</span><input type="number" id="tpl_budget_addon_watch" class="price-input" value="40" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #3f51b5; margin: 0 0 8px 0;">Group</h5>
+                                        <div class="price-row"><span>Threesome</span><input type="number" id="tpl_budget_group_threesome" class="price-input" value="75" min="0"></div>
+                                        <div class="price-row"><span>Foursome</span><input type="number" id="tpl_budget_group_foursome" class="price-input" value="150" min="0"></div>
+                                        <div class="price-row"><span>Orgy</span><input type="number" id="tpl_budget_group_orgy" class="price-input" value="250" min="0"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Standard Template -->
+                            <div id="templateStandard" class="template-panel" style="display: none;">
+                                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                                    <div>
+                                        <h5 style="color: #e91e63; margin: 0 0 8px 0;">Foreplay</h5>
+                                        <div class="price-row"><span>Kissing</span><input type="number" id="tpl_standard_foreplay_kissing" class="price-input" value="10" min="0"></div>
+                                        <div class="price-row"><span>Cuddling</span><input type="number" id="tpl_standard_foreplay_cuddling" class="price-input" value="15" min="0"></div>
+                                        <div class="price-row"><span>Groping</span><input type="number" id="tpl_standard_foreplay_groping" class="price-input" value="20" min="0"></div>
+                                        <div class="price-row"><span>Stripping</span><input type="number" id="tpl_standard_foreplay_stripping" class="price-input" value="25" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #ff9800; margin: 0 0 8px 0;">Manual</h5>
+                                        <div class="price-row"><span>Handjob</span><input type="number" id="tpl_standard_manual_handjob" class="price-input" value="30" min="0"></div>
+                                        <div class="price-row"><span>Fingering</span><input type="number" id="tpl_standard_manual_fingering" class="price-input" value="30" min="0"></div>
+                                        <div class="price-row"><span>Mutual</span><input type="number" id="tpl_standard_manual_mutual" class="price-input" value="50" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #9c27b0; margin: 0 0 8px 0;">Oral</h5>
+                                        <div class="price-row"><span>Giving</span><input type="number" id="tpl_standard_oral_giving" class="price-input" value="60" min="0"></div>
+                                        <div class="price-row"><span>Receiving</span><input type="number" id="tpl_standard_oral_receiving" class="price-input" value="50" min="0"></div>
+                                        <div class="price-row"><span>Mutual (69)</span><input type="number" id="tpl_standard_oral_mutual" class="price-input" value="100" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #f44336; margin: 0 0 8px 0;">Full Service</h5>
+                                        <div class="price-row"><span>Vaginal</span><input type="number" id="tpl_standard_full_vaginal" class="price-input" value="100" min="0"></div>
+                                        <div class="price-row"><span>Anal</span><input type="number" id="tpl_standard_full_anal" class="price-input" value="150" min="0"></div>
+                                        <div class="price-row"><span>Both</span><input type="number" id="tpl_standard_full_both" class="price-input" value="200" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #673ab7; margin: 0 0 8px 0;">Solo/Finish</h5>
+                                        <div class="price-row"><span>Masturbate</span><input type="number" id="tpl_standard_solo_masturbate" class="price-input" value="40" min="0"></div>
+                                        <div class="price-row"><span>Watch</span><input type="number" id="tpl_standard_solo_watch" class="price-input" value="70" min="0"></div>
+                                        <div class="price-row"><span>On Body</span><input type="number" id="tpl_standard_finish_body" class="price-input" value="20" min="0"></div>
+                                        <div class="price-row"><span>On Face</span><input type="number" id="tpl_standard_finish_face" class="price-input" value="30" min="0"></div>
+                                        <div class="price-row"><span>Inside</span><input type="number" id="tpl_standard_finish_inside" class="price-input" value="50" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #f57c00; margin: 0 0 8px 0;">Time Bookings</h5>
+                                        <div class="price-row"><span>1 Hour</span><input type="number" id="tpl_standard_time_1hr" class="price-input" value="200" min="0"></div>
+                                        <div class="price-row"><span>12 Hours</span><input type="number" id="tpl_standard_time_12hr" class="price-input" value="800" min="0"></div>
+                                        <div class="price-row"><span>24 Hours</span><input type="number" id="tpl_standard_time_24hr" class="price-input" value="1400" min="0"></div>
+                                        <div class="price-row"><span>72 Hours</span><input type="number" id="tpl_standard_time_72hr" class="price-input" value="3000" min="0"></div>
+                                        <div class="price-row"><span>GFE</span><input type="number" id="tpl_standard_time_gfe" class="price-input" value="500" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #c2185b; margin: 0 0 8px 0;">Add-ons</h5>
+                                        <div class="price-row"><span>Domination</span><input type="number" id="tpl_standard_addon_domination" class="price-input" value="60" min="0"></div>
+                                        <div class="price-row"><span>Submission</span><input type="number" id="tpl_standard_addon_submission" class="price-input" value="50" min="0"></div>
+                                        <div class="price-row"><span>Watch Only</span><input type="number" id="tpl_standard_addon_watch" class="price-input" value="80" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #3f51b5; margin: 0 0 8px 0;">Group</h5>
+                                        <div class="price-row"><span>Threesome</span><input type="number" id="tpl_standard_group_threesome" class="price-input" value="150" min="0"></div>
+                                        <div class="price-row"><span>Foursome</span><input type="number" id="tpl_standard_group_foursome" class="price-input" value="300" min="0"></div>
+                                        <div class="price-row"><span>Orgy</span><input type="number" id="tpl_standard_group_orgy" class="price-input" value="500" min="0"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Luxury Template -->
+                            <div id="templateLuxury" class="template-panel" style="display: none;">
+                                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                                    <div>
+                                        <h5 style="color: #e91e63; margin: 0 0 8px 0;">Foreplay</h5>
+                                        <div class="price-row"><span>Kissing</span><input type="number" id="tpl_luxury_foreplay_kissing" class="price-input" value="25" min="0"></div>
+                                        <div class="price-row"><span>Cuddling</span><input type="number" id="tpl_luxury_foreplay_cuddling" class="price-input" value="40" min="0"></div>
+                                        <div class="price-row"><span>Groping</span><input type="number" id="tpl_luxury_foreplay_groping" class="price-input" value="50" min="0"></div>
+                                        <div class="price-row"><span>Stripping</span><input type="number" id="tpl_luxury_foreplay_stripping" class="price-input" value="60" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #ff9800; margin: 0 0 8px 0;">Manual</h5>
+                                        <div class="price-row"><span>Handjob</span><input type="number" id="tpl_luxury_manual_handjob" class="price-input" value="75" min="0"></div>
+                                        <div class="price-row"><span>Fingering</span><input type="number" id="tpl_luxury_manual_fingering" class="price-input" value="75" min="0"></div>
+                                        <div class="price-row"><span>Mutual</span><input type="number" id="tpl_luxury_manual_mutual" class="price-input" value="125" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #9c27b0; margin: 0 0 8px 0;">Oral</h5>
+                                        <div class="price-row"><span>Giving</span><input type="number" id="tpl_luxury_oral_giving" class="price-input" value="150" min="0"></div>
+                                        <div class="price-row"><span>Receiving</span><input type="number" id="tpl_luxury_oral_receiving" class="price-input" value="125" min="0"></div>
+                                        <div class="price-row"><span>Mutual (69)</span><input type="number" id="tpl_luxury_oral_mutual" class="price-input" value="250" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #f44336; margin: 0 0 8px 0;">Full Service</h5>
+                                        <div class="price-row"><span>Vaginal</span><input type="number" id="tpl_luxury_full_vaginal" class="price-input" value="250" min="0"></div>
+                                        <div class="price-row"><span>Anal</span><input type="number" id="tpl_luxury_full_anal" class="price-input" value="375" min="0"></div>
+                                        <div class="price-row"><span>Both</span><input type="number" id="tpl_luxury_full_both" class="price-input" value="500" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #673ab7; margin: 0 0 8px 0;">Solo/Finish</h5>
+                                        <div class="price-row"><span>Masturbate</span><input type="number" id="tpl_luxury_solo_masturbate" class="price-input" value="100" min="0"></div>
+                                        <div class="price-row"><span>Watch</span><input type="number" id="tpl_luxury_solo_watch" class="price-input" value="175" min="0"></div>
+                                        <div class="price-row"><span>On Body</span><input type="number" id="tpl_luxury_finish_body" class="price-input" value="50" min="0"></div>
+                                        <div class="price-row"><span>On Face</span><input type="number" id="tpl_luxury_finish_face" class="price-input" value="75" min="0"></div>
+                                        <div class="price-row"><span>Inside</span><input type="number" id="tpl_luxury_finish_inside" class="price-input" value="125" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #f57c00; margin: 0 0 8px 0;">Time Bookings</h5>
+                                        <div class="price-row"><span>1 Hour</span><input type="number" id="tpl_luxury_time_1hr" class="price-input" value="500" min="0"></div>
+                                        <div class="price-row"><span>12 Hours</span><input type="number" id="tpl_luxury_time_12hr" class="price-input" value="2000" min="0"></div>
+                                        <div class="price-row"><span>24 Hours</span><input type="number" id="tpl_luxury_time_24hr" class="price-input" value="3500" min="0"></div>
+                                        <div class="price-row"><span>72 Hours</span><input type="number" id="tpl_luxury_time_72hr" class="price-input" value="7500" min="0"></div>
+                                        <div class="price-row"><span>GFE</span><input type="number" id="tpl_luxury_time_gfe" class="price-input" value="1250" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #c2185b; margin: 0 0 8px 0;">Add-ons</h5>
+                                        <div class="price-row"><span>Domination</span><input type="number" id="tpl_luxury_addon_domination" class="price-input" value="150" min="0"></div>
+                                        <div class="price-row"><span>Submission</span><input type="number" id="tpl_luxury_addon_submission" class="price-input" value="125" min="0"></div>
+                                        <div class="price-row"><span>Watch Only</span><input type="number" id="tpl_luxury_addon_watch" class="price-input" value="200" min="0"></div>
+                                    </div>
+                                    <div>
+                                        <h5 style="color: #3f51b5; margin: 0 0 8px 0;">Group</h5>
+                                        <div class="price-row"><span>Threesome</span><input type="number" id="tpl_luxury_group_threesome" class="price-input" value="375" min="0"></div>
+                                        <div class="price-row"><span>Foursome</span><input type="number" id="tpl_luxury_group_foursome" class="price-input" value="750" min="0"></div>
+                                        <div class="price-row"><span>Orgy</span><input type="number" id="tpl_luxury_group_orgy" class="price-input" value="1250" min="0"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
             </div>
@@ -5931,9 +6851,9 @@ PROMPT;
                     </p>
 
                     <!-- Fiction Frame - Safety Context for AI Models -->
-                    <div class="card" style="margin-bottom: 20px; border: 2px solid #8B5CF6;">
+                    <div class="card" style="margin-bottom: 20px; border: 2px solid #4A3545;">
                         <h3 class="section-header" style="display: flex; align-items: center; gap: 10px;">
-                            <span style="font-size: 18px;">🛡️</span> Fiction Frame (Model Safety Context)
+                            <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> Fiction Frame (Model Safety Context)
                         </h3>
                         <p style="color: #B8A8C8; font-size: 11px; margin: 10px 0;">
                             <strong>IMPORTANT:</strong> This prompt is prepended to ALL slavery-related prompts throughout the entire scene.
@@ -6373,6 +7293,61 @@ The effects will fade over time.</textarea>
             </div>
         </div>
 
+        <!-- SHARMAT Logs Tab -->
+        <div id="logs" class="tab-content">
+            <h2 class="section-header" style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;"><img src="images/ChimNSFWsoulgem.png" style="width: 32px; height: 32px; vertical-align: middle; position: relative; top: -5px;"> Sharmat Debug Logs</h2>
+
+            <div class="logs-container" style="display: flex; flex-direction: column; height: calc(100vh - 250px); min-height: 500px;">
+                <!-- Sub-tabs for different log types -->
+                <div class="logs-tabs" style="display: flex; gap: 5px; margin-bottom: 15px; flex-wrap: wrap;">
+                    <button class="log-tab-btn active" onclick="switchLogTab('ostim')" data-tab="ostim">OStim Scenes</button>
+                    <button class="log-tab-btn" onclick="switchLogTab('prompts')" data-tab="prompts">Prompts Sent</button>
+                    <button class="log-tab-btn" onclick="switchLogTab('responses')" data-tab="responses">NPC Responses</button>
+                    <button class="log-tab-btn" onclick="switchLogTab('status')" data-tab="status">Live Status</button>
+                </div>
+
+                <!-- Controls -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
+                    <label class="logs-checkbox-group">
+                        <input type="checkbox" id="logsAutoRefresh" checked>
+                        <span>Auto-refresh (5s)</span>
+                    </label>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn-secondary" onclick="refreshLogs()" style="padding: 6px 12px; font-size: 12px;">Refresh</button>
+                        <button class="btn-clear-log" onclick="clearCurrentLog()">Clear Log</button>
+                    </div>
+                </div>
+
+                <!-- Log content area -->
+                <div class="log-content-wrapper" style="flex: 1; background: #1C1A24; border: 1px solid #3A3545; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column;">
+                    <!-- OStim Scenes Log -->
+                    <div id="log-ostim" class="log-panel active" style="flex: 1; overflow-y: auto; padding: 15px;">
+                        <div class="log-loading" style="text-align: center; padding: 40px; color: #666;">Loading...</div>
+                    </div>
+
+                    <!-- Prompts Sent Log -->
+                    <div id="log-prompts" class="log-panel" style="flex: 1; overflow-y: auto; padding: 15px; display: none;">
+                        <div class="log-loading" style="text-align: center; padding: 40px; color: #666;">Loading...</div>
+                    </div>
+
+                    <!-- NPC Responses Log -->
+                    <div id="log-responses" class="log-panel" style="flex: 1; overflow-y: auto; padding: 15px; display: none;">
+                        <div class="log-loading" style="text-align: center; padding: 40px; color: #666;">Loading...</div>
+                    </div>
+
+                    <!-- Live Status -->
+                    <div id="log-status" class="log-panel" style="flex: 1; overflow-y: auto; padding: 15px; display: none;">
+                        <div class="log-loading" style="text-align: center; padding: 40px; color: #666;">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- Status bar -->
+                <div id="logsStatusBar" style="padding: 8px 15px; background: #252233; font-size: 11px; color: #888; border-top: 1px solid #3A3545; margin-top: 10px; border-radius: 0 0 8px 8px;">
+                    Entries: 0 | Last update: --
+                </div>
+            </div>
+        </div>
+
         <div id="info" class="tab-content">
             <h2 class="section-header" style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;"><img src="images/ChimNSFWsoulgem.png" style="width: 32px; height: 32px; vertical-align: middle; position: relative; top: -5px;"> NSFW Agent Documentation</h2>
 
@@ -6532,6 +7507,7 @@ The effects will fade over time.</textarea>
                         (savedTab === 'speakstyles' && btn.textContent.includes('NPC')) ||
                         (savedTab === 'prompts' && btn.textContent.includes('Prompts')) ||
                         (savedTab === 'settings' && btn.textContent.includes('Settings') && !btn.textContent.includes('NPC')) ||
+                        (savedTab === 'logs' && btn.textContent.includes('Sharmat')) ||
                         (savedTab === 'info' && btn.textContent.includes('Info'))) {
                         btn.click();
                     }
@@ -6602,6 +7578,11 @@ The effects will fade over time.</textarea>
                 } else if (tabName === 'prompts') {
                     // Prompts: couple flanking soul gem shield
                     promptsLogo.style.opacity = '1';
+                } else if (tabName === 'logs') {
+                    // Logs: use info logo for now
+                    infoLogo.style.opacity = '1';
+                    // Initialize logs when tab is opened
+                    initLogsTab();
                 } else {
                     // Default (Scenes): original woman logo
                     defaultLogo.style.opacity = '1';
@@ -6927,7 +7908,11 @@ The effects will fade over time.</textarea>
                 if (data.success) {
                     showAlert('sceneSuccessAlert', data.message, 'success');
                     closeEditModal();
-                    loadScenes(); // Refresh the table
+                    loadScenes(); // Refresh the scenes manager table
+                    // Also refresh the OStim scenes log if we're on the logs tab
+                    if (typeof loadOstimScenes === 'function') {
+                        loadOstimScenes();
+                    }
                 } else {
                     showAlert('sceneErrorAlert', 'Error: ' + data.error, 'error');
                 }
@@ -7438,6 +8423,51 @@ The effects will fade over time.</textarea>
                     document.getElementById('xttsSpeedLevel2Value').textContent = this.value + 'x';
                 });
             }
+
+            // Token limit sliders
+            const tokenSexSceneSlider = document.getElementById('tokenLimitSexScene');
+            if (tokenSexSceneSlider) {
+                tokenSexSceneSlider.addEventListener('input', function() {
+                    document.getElementById('tokenLimitSexSceneValue').textContent = this.value + ' tokens';
+                });
+            }
+
+            const tokenClimaxSlider = document.getElementById('tokenLimitClimax');
+            if (tokenClimaxSlider) {
+                tokenClimaxSlider.addEventListener('input', function() {
+                    document.getElementById('tokenLimitClimaxValue').textContent = this.value + ' tokens';
+                });
+            }
+
+            // Cooldown sliders
+            const cooldownSexSceneSlider = document.getElementById('cooldownSexScene');
+            if (cooldownSexSceneSlider) {
+                cooldownSexSceneSlider.addEventListener('input', function() {
+                    document.getElementById('cooldownSexSceneValue').textContent = this.value + ' sec';
+                });
+            }
+
+            const cooldownClimaxSlider = document.getElementById('cooldownClimax');
+            if (cooldownClimaxSlider) {
+                cooldownClimaxSlider.addEventListener('input', function() {
+                    document.getElementById('cooldownClimaxValue').textContent = this.value + ' sec';
+                });
+            }
+
+            const maxResponsesSlider = document.getElementById('maxResponsesPerNpc');
+            if (maxResponsesSlider) {
+                maxResponsesSlider.addEventListener('input', function() {
+                    document.getElementById('maxResponsesPerNpcValue').textContent = this.value;
+                });
+            }
+
+            // Arousal gating threshold slider
+            const arousalGatingSlider = document.getElementById('arousalGatingThreshold');
+            if (arousalGatingSlider) {
+                arousalGatingSlider.addEventListener('input', function() {
+                    document.getElementById('arousalGatingThresholdValue').textContent = this.value;
+                });
+            }
         });
 
         // Toggle auto-generate button
@@ -7473,6 +8503,20 @@ The effects will fade over time.</textarea>
                         document.getElementById('trackFertilityInfo').checked = data.data.TRACK_FERTILITY_INFO || false;
                         document.getElementById('enableSexDisposal').checked = data.data.ENABLE_SEX_DISPOSAL !== false;  // Default true
                         document.getElementById('enableAffinityGating').checked = data.data.ENABLE_AFFINITY_GATING !== false;  // Default true
+                        // Token limits
+                        const sexSceneTokens = data.data.TOKEN_LIMIT_SEX_SCENE !== undefined ? data.data.TOKEN_LIMIT_SEX_SCENE : 100;
+                        document.getElementById('tokenLimitSexScene').value = sexSceneTokens;
+                        document.getElementById('tokenLimitSexSceneValue').textContent = sexSceneTokens + ' tokens';
+                        const climaxTokens = data.data.TOKEN_LIMIT_CLIMAX !== undefined ? data.data.TOKEN_LIMIT_CLIMAX : 50;
+                        document.getElementById('tokenLimitClimax').value = climaxTokens;
+                        document.getElementById('tokenLimitClimaxValue').textContent = climaxTokens + ' tokens';
+                        // Cooldowns
+                        const cooldownSexScene = data.data.COOLDOWN_SEX_SCENE !== undefined ? data.data.COOLDOWN_SEX_SCENE : 15;
+                        document.getElementById('cooldownSexScene').value = cooldownSexScene;
+                        document.getElementById('cooldownSexSceneValue').textContent = cooldownSexScene + ' sec';
+                        const cooldownClimax = data.data.COOLDOWN_CLIMAX !== undefined ? data.data.COOLDOWN_CLIMAX : 30;
+                        document.getElementById('cooldownClimax').value = cooldownClimax;
+                        document.getElementById('cooldownClimaxValue').textContent = cooldownClimax + ' sec';
                         // Set auto-generate toggle button state
                         const autoGenToggle = document.getElementById('autoGenerateToggle');
                         if (data.data.AUTO_GENERATE_NSFW_PROFILES) {
@@ -7511,6 +8555,12 @@ The effects will fade over time.</textarea>
             formData.append('TRACK_FERTILITY_INFO', document.getElementById('trackFertilityInfo').checked);
             formData.append('ENABLE_SEX_DISPOSAL', document.getElementById('enableSexDisposal').checked);
             formData.append('ENABLE_AFFINITY_GATING', document.getElementById('enableAffinityGating').checked);
+            // Token limits
+            formData.append('TOKEN_LIMIT_SEX_SCENE', document.getElementById('tokenLimitSexScene').value);
+            formData.append('TOKEN_LIMIT_CLIMAX', document.getElementById('tokenLimitClimax').value);
+            // Cooldowns
+            formData.append('COOLDOWN_SEX_SCENE', document.getElementById('cooldownSexScene').value);
+            formData.append('COOLDOWN_CLIMAX', document.getElementById('cooldownClimax').value);
             formData.append('AUTO_GENERATE_NSFW_PROFILES', document.getElementById('autoGenerateToggle').classList.contains('active'));
             formData.append('AUTO_GENERATE_CONNECTOR', document.getElementById('aiConnectorSelect').value);
             formData.append('GENERIC_GLOSSARY', document.getElementById('genericGlossary').value.trim());
@@ -7533,20 +8583,80 @@ The effects will fade over time.</textarea>
             });
         }
 
-        // Batch generate NSFW profiles for all NPCs
+        // Batch generate NSFW profiles for NPCs without existing profiles
         async function batchGenerateNsfwProfiles() {
-            if (!confirm('This will generate NSFW profiles for ALL NPCs in your database. Children and animals will be skipped. This may take a while and consume API credits. Continue?')) {
+            // Show themed confirmation dialog
+            const confirmed = await showBatchConfirmDialog();
+            if (!confirmed) {
                 return;
             }
-            await runBatchGeneration(false);
+            await runBatchGeneration(true); // Always skip existing profiles
         }
 
-        // Batch generate only for NPCs missing NSFW profiles
+        // Show themed batch confirmation dialog
+        function showBatchConfirmDialog() {
+            // Create themed dialog overlay
+            const overlay = document.createElement('div');
+            overlay.id = 'batchConfirmOverlay';
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.7);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10000;
+            `;
+
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `
+                background: linear-gradient(135deg, #1C1A24 0%, #252233 50%, #1C1A24 100%);
+                border: 3px solid #FDF5D0;
+                border-radius: 12px;
+                padding: 25px;
+                max-width: 450px;
+                text-align: center;
+                animation: borderPulse 3s ease-in-out infinite alternate;
+                box-shadow: 0 0 8px rgba(253, 245, 208, 0.3);
+            `;
+
+            dialog.innerHTML = `
+                <h3 style="font-family: 'MagicCards', 'Segoe UI', sans-serif; color: #7A6890; margin: 0 0 15px 0; letter-spacing: 2px; word-spacing: 6px; font-size: 20px; animation: neonPulse 3s ease-in-out infinite alternate;">Batch Generate Profiles</h3>
+                <p style="color: #C9B8D8; margin: 0 0 10px 0; font-size: 14px;">This will generate NSFW profiles for NPCs that don't have one yet.</p>
+                <p style="color: #FDF5D0; margin: 0 0 20px 0; font-size: 13px;">Children and animals will be skipped automatically.<br><strong>Note:</strong> This may consume API credits.</p>
+                <div style="display: flex; gap: 15px; justify-content: center;">
+                    <button id="batchConfirmYes" class="btn-primary" style="min-width: 100px;">Continue</button>
+                    <button id="batchConfirmNo" class="btn-secondary" style="min-width: 100px;">Cancel</button>
+                </div>
+            `;
+
+            overlay.appendChild(dialog);
+            document.body.appendChild(overlay);
+
+            return new Promise((resolve) => {
+                document.getElementById('batchConfirmYes').onclick = () => {
+                    overlay.remove();
+                    resolve(true);
+                };
+                document.getElementById('batchConfirmNo').onclick = () => {
+                    overlay.remove();
+                    resolve(false);
+                };
+                overlay.onclick = (e) => {
+                    if (e.target === overlay) {
+                        overlay.remove();
+                        resolve(false);
+                    }
+                };
+            });
+        }
+
+        // Batch generate only for NPCs missing NSFW profiles (legacy function)
         async function batchGenerateMissingProfiles() {
-            if (!confirm('This will generate NSFW profiles for NPCs that don\'t have them yet. Children and animals will be skipped. Continue?')) {
-                return;
-            }
-            await runBatchGeneration(true);
+            await batchGenerateNsfwProfiles(); // Same behavior now
         }
 
         // Run batch generation
@@ -7556,12 +8666,14 @@ The effects will fade over time.</textarea>
             const progressCount = document.getElementById('batchProgressCount');
             const progressBar = document.getElementById('batchProgressBar');
             const skippedList = document.getElementById('batchSkippedList');
+            const existingSkipped = document.getElementById('batchExistingSkipped');
 
-            progressDiv.style.display = 'block';
+            progressDiv.classList.add('active');
             progressText.textContent = 'Fetching NPC list...';
             progressCount.textContent = '0 / 0';
             progressBar.style.width = '0%';
             skippedList.innerHTML = '';
+            existingSkipped.innerHTML = '';
 
             try {
                 // Get list of NPCs to process
@@ -7575,6 +8687,13 @@ The effects will fade over time.</textarea>
                 const npcs = data.npcs;
                 const skipped = data.skipped;
                 const total = npcs.length;
+                const totalFound = data.total_found || 0;
+                const existingCount = totalFound - total - skipped.length;
+
+                // Show existing profiles skipped count
+                if (existingCount > 0) {
+                    existingSkipped.innerHTML = `<strong>${existingCount}</strong> NPCs already have profiles (skipped)`;
+                }
 
                 if (skipped.length > 0) {
                     const skippedNames = skipped.map(s => s.name).join(', ');
@@ -7584,8 +8703,16 @@ The effects will fade over time.</textarea>
                 if (total === 0) {
                     progressText.textContent = 'No NPCs to process!';
                     progressBar.style.width = '100%';
+                    // Auto-hide after 3 seconds
+                    setTimeout(() => {
+                        progressDiv.classList.remove('active');
+                    }, 3000);
                     return;
                 }
+
+                // Show total to process
+                progressText.textContent = `Generating ${total} profiles...`;
+                progressCount.textContent = `0 / ${total}`;
 
                 let processed = 0;
                 let failed = 0;
@@ -7648,9 +8775,18 @@ The effects will fade over time.</textarea>
                 progressText.textContent = `Complete! Processed ${processed} NPCs` + (failed > 0 ? ` (${failed} failed)` : '');
                 showAlert('settingsSuccessAlert', `Batch generation complete! ${processed - failed} profiles created.`, 'success');
 
+                // Refresh the NPC table to show updated data
+                loadConfiguredNpcsTable();
+
+                // Auto-hide progress card after 5 seconds
+                setTimeout(() => {
+                    progressDiv.classList.remove('active');
+                }, 5000);
+
             } catch (error) {
                 progressText.textContent = 'Error: ' + error.message;
                 showAlert('settingsErrorAlert', 'Batch generation failed: ' + error.message, 'error');
+                // Keep visible on error so user can see what happened
             }
         }
 
@@ -7725,6 +8861,17 @@ The effects will fade over time.</textarea>
     let globalSpeakStyles = [];
     let configuredNpcs = [];
     let currentNpcSource = 'manual'; // Track if current NPC settings are 'ai' or 'manual'
+
+    // Price templates loaded from database (configurable via Prompts tab)
+    let priceTemplates = {
+        budget: null,
+        standard: null,
+        luxury: null
+    };
+
+    // NPC table pagination state
+    let npcCurrentPage = 1;
+    const npcItemsPerPage = 15;
 
     // Style icons mapping
     const styleIcons = {
@@ -8282,19 +9429,19 @@ The effects will fade over time.</textarea>
         const aiNote = document.getElementById('aiGeneratedPromptNote');
 
         if (speakStyle) speakStyle.value = '';
-        if (profanity) profanity.value = '2';
+        if (profanity) profanity.value = '';
         if (sexPrompt) sexPrompt.value = '';
         if (kinksInput) kinksInput.value = '';
         if (secretKinksInput) secretKinksInput.value = '';
         if (isProstitute) isProstitute.checked = false;
         if (isSlave) isSlave.checked = false;
-        
+
         // Clear relationship fields
         const spousalStatus = document.getElementById('spousalStatus');
         const spouseNamesInput = document.getElementById('spouseNamesInput');
         const sexualOrientation = document.getElementById('sexualOrientation');
         const relationshipPreference = document.getElementById('relationshipPreference');
-        if (spousalStatus) spousalStatus.value = 'single';
+        if (spousalStatus) spousalStatus.value = '';
         if (spouseNamesInput) spouseNamesInput.value = '';
         if (sexualOrientation) sexualOrientation.value = '';
         if (relationshipPreference) relationshipPreference.value = '';
@@ -8566,71 +9713,44 @@ The effects will fade over time.</textarea>
         }
     }
 
-    // Apply price template presets
+    // Apply price template presets - uses database-stored templates with fallback to defaults
     function applyPriceTemplate(type) {
-        const templates = {
+        // Default templates (used as fallback if database doesn't have custom values)
+        const defaultTemplates = {
             budget: {
-                // Individual Acts - Foreplay
                 foreplay_kissing: 5, foreplay_cuddling: 8, foreplay_groping: 10, foreplay_stripping: 12,
-                // Manual
                 manual_handjob: 15, manual_fingering: 15, manual_mutual: 25,
-                // Oral
                 oral_giving: 30, oral_receiving: 25, oral_mutual: 50,
-                // Full Service
                 full_vaginal: 50, full_anal: 75, full_both: 100,
-                // Solo
                 solo_masturbate: 20, solo_watch: 35,
-                // Finish
                 finish_body: 10, finish_face: 15, finish_inside: 25,
-                // Time bookings
                 time_1hr: 100, time_12hr: 400, time_24hr: 700, time_72hr: 1500, time_gfe: 250,
-                // Style add-ons
                 addon_domination: 30, addon_submission: 25, addon_watch: 40,
-                // Group premiums
                 group_threesome: 75, group_foursome: 150, group_orgy: 250
             },
             standard: {
-                // Individual Acts - Foreplay
                 foreplay_kissing: 10, foreplay_cuddling: 15, foreplay_groping: 20, foreplay_stripping: 25,
-                // Manual
                 manual_handjob: 30, manual_fingering: 30, manual_mutual: 50,
-                // Oral
                 oral_giving: 60, oral_receiving: 50, oral_mutual: 100,
-                // Full Service
                 full_vaginal: 100, full_anal: 150, full_both: 200,
-                // Solo
                 solo_masturbate: 40, solo_watch: 70,
-                // Finish
                 finish_body: 20, finish_face: 30, finish_inside: 50,
-                // Time bookings
                 time_1hr: 200, time_12hr: 800, time_24hr: 1400, time_72hr: 3000, time_gfe: 500,
-                // Style add-ons
                 addon_domination: 60, addon_submission: 50, addon_watch: 80,
-                // Group premiums
                 group_threesome: 150, group_foursome: 300, group_orgy: 500
             },
             luxury: {
-                // Individual Acts - Foreplay
                 foreplay_kissing: 25, foreplay_cuddling: 40, foreplay_groping: 50, foreplay_stripping: 60,
-                // Manual
                 manual_handjob: 75, manual_fingering: 75, manual_mutual: 125,
-                // Oral
                 oral_giving: 150, oral_receiving: 125, oral_mutual: 250,
-                // Full Service
                 full_vaginal: 250, full_anal: 375, full_both: 500,
-                // Solo
                 solo_masturbate: 100, solo_watch: 175,
-                // Finish
                 finish_body: 50, finish_face: 75, finish_inside: 125,
-                // Time bookings
                 time_1hr: 500, time_12hr: 2000, time_24hr: 3500, time_72hr: 7500, time_gfe: 1250,
-                // Style add-ons
                 addon_domination: 150, addon_submission: 125, addon_watch: 200,
-                // Group premiums
                 group_threesome: 375, group_foursome: 750, group_orgy: 1250
             },
             clear: {
-                // All zeros
                 foreplay_kissing: 0, foreplay_cuddling: 0, foreplay_groping: 0, foreplay_stripping: 0,
                 manual_handjob: 0, manual_fingering: 0, manual_mutual: 0,
                 oral_giving: 0, oral_receiving: 0, oral_mutual: 0,
@@ -8643,7 +9763,16 @@ The effects will fade over time.</textarea>
             }
         };
 
-        const prices = templates[type];
+        // Use database-stored template if available, otherwise fall back to default
+        let prices;
+        if (type === 'clear') {
+            prices = defaultTemplates.clear;
+        } else if (priceTemplates[type]) {
+            prices = priceTemplates[type];
+        } else {
+            prices = defaultTemplates[type];
+        }
+
         if (!prices) return;
 
         // Apply all prices
@@ -8651,6 +9780,58 @@ The effects will fade over time.</textarea>
             const input = document.getElementById('price_' + key);
             if (input) {
                 input.value = prices[key];
+            }
+        });
+    }
+
+    // Switch between price template tabs (Budget/Standard/Luxury)
+    function switchTemplateTab(type) {
+        // Hide all panels
+        document.querySelectorAll('.template-panel').forEach(p => p.style.display = 'none');
+        // Deactivate all tab buttons
+        document.querySelectorAll('#templateTabBudget, #templateTabStandard, #templateTabLuxury').forEach(b => b.classList.remove('active'));
+
+        // Show selected panel and activate button
+        const panelId = 'template' + type.charAt(0).toUpperCase() + type.slice(1);
+        const panel = document.getElementById(panelId);
+        if (panel) panel.style.display = 'block';
+
+        const tabBtn = document.getElementById('templateTab' + type.charAt(0).toUpperCase() + type.slice(1));
+        if (tabBtn) tabBtn.classList.add('active');
+    }
+
+    // Collect price template data from UI for saving
+    function collectPriceTemplateData(type) {
+        const template = {};
+        const priceKeys = [
+            'foreplay_kissing', 'foreplay_cuddling', 'foreplay_groping', 'foreplay_stripping',
+            'manual_handjob', 'manual_fingering', 'manual_mutual',
+            'oral_giving', 'oral_receiving', 'oral_mutual',
+            'full_vaginal', 'full_anal', 'full_both',
+            'solo_masturbate', 'solo_watch',
+            'finish_body', 'finish_face', 'finish_inside',
+            'time_1hr', 'time_12hr', 'time_24hr', 'time_72hr', 'time_gfe',
+            'addon_domination', 'addon_submission', 'addon_watch',
+            'group_threesome', 'group_foursome', 'group_orgy'
+        ];
+
+        priceKeys.forEach(key => {
+            const input = document.getElementById('tpl_' + type + '_' + key);
+            if (input) {
+                template[key] = parseInt(input.value) || 0;
+            }
+        });
+
+        return template;
+    }
+
+    // Populate price template UI from database values
+    function populatePriceTemplateUI(type, values) {
+        if (!values) return;
+        Object.keys(values).forEach(key => {
+            const input = document.getElementById('tpl_' + type + '_' + key);
+            if (input) {
+                input.value = values[key];
             }
         });
     }
@@ -9114,6 +10295,7 @@ The effects will fade over time.</textarea>
         document.getElementById('modalInitPrompt').value = '';
         document.getElementById('modalMasturbationPrompt').value = '';
         document.getElementById('modalClimaxPrompt').value = '';
+        document.getElementById('modalPartnerClimaxPrompt').value = '';
         document.getElementById('modalPillowTalkPrompt').value = '';
 
         // Collapse advanced section
@@ -9273,10 +10455,12 @@ The effects will fade over time.</textarea>
 
     function renderConfiguredNpcsTable(npcs) {
         const tbody = document.getElementById('configuredNpcsTableBody');
+        const paginationContainer = document.getElementById('npcPaginationContainer');
         tbody.innerHTML = '';
 
         if (!npcs || npcs.length === 0) {
             tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #9988BB; padding: 20px;">No NPCs configured yet. Select an NPC above to add settings.</td></tr>';
+            paginationContainer.style.display = 'none';
             return;
         }
 
@@ -9295,7 +10479,16 @@ The effects will fade over time.</textarea>
             return formatNpcName(a.name).localeCompare(formatNpcName(b.name)); // Alphabetical
         });
 
-        sortedNpcs.forEach(npc => {
+        // Calculate pagination
+        const totalPages = Math.ceil(sortedNpcs.length / npcItemsPerPage);
+        if (npcCurrentPage > totalPages) npcCurrentPage = totalPages;
+        if (npcCurrentPage < 1) npcCurrentPage = 1;
+
+        const startIndex = (npcCurrentPage - 1) * npcItemsPerPage;
+        const endIndex = Math.min(startIndex + npcItemsPerPage, sortedNpcs.length);
+        const paginatedNpcs = sortedNpcs.slice(startIndex, endIndex);
+
+        paginatedNpcs.forEach(npc => {
             // Use emoji and description from server (looked up from database)
             const icon = npc.style_emoji || '📝';
             const styleDesc = npc.style_description || npc.speak_style || 'Not set';
@@ -9340,6 +10533,101 @@ The effects will fade over time.</textarea>
             `;
             tbody.appendChild(tr);
         });
+
+        // Render pagination controls
+        if (totalPages > 1) {
+            paginationContainer.style.display = 'block';
+            renderNpcPaginationControls(totalPages, sortedNpcs.length, startIndex, endIndex);
+        } else {
+            paginationContainer.style.display = 'none';
+        }
+    }
+
+    // Render NPC pagination controls
+    function renderNpcPaginationControls(totalPages, totalNpcs, startIndex, endIndex) {
+        const paginationControls = document.getElementById('npcPaginationControls');
+        paginationControls.innerHTML = '';
+
+        // Previous button
+        const prevBtn = document.createElement('button');
+        prevBtn.textContent = '« Prev';
+        prevBtn.disabled = npcCurrentPage === 1;
+        prevBtn.onclick = () => {
+            if (npcCurrentPage > 1) {
+                npcCurrentPage--;
+                renderConfiguredNpcsTable(configuredNpcs);
+            }
+        };
+        paginationControls.appendChild(prevBtn);
+
+        // Page numbers
+        const maxVisiblePages = 5;
+        let startPage = Math.max(1, npcCurrentPage - Math.floor(maxVisiblePages / 2));
+        let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+        if (endPage - startPage < maxVisiblePages - 1) {
+            startPage = Math.max(1, endPage - maxVisiblePages + 1);
+        }
+
+        // First page + ellipsis
+        if (startPage > 1) {
+            const firstBtn = document.createElement('button');
+            firstBtn.textContent = '1';
+            firstBtn.onclick = () => {
+                npcCurrentPage = 1;
+                renderConfiguredNpcsTable(configuredNpcs);
+            };
+            paginationControls.appendChild(firstBtn);
+
+            if (startPage > 2) {
+                const dots = document.createElement('span');
+                dots.textContent = '...';
+                paginationControls.appendChild(dots);
+            }
+        }
+
+        // Page number buttons
+        for (let i = startPage; i <= endPage; i++) {
+            const btn = document.createElement('button');
+            btn.textContent = i;
+            btn.className = i === npcCurrentPage ? 'active' : '';
+            btn.onclick = () => {
+                npcCurrentPage = i;
+                renderConfiguredNpcsTable(configuredNpcs);
+            };
+            paginationControls.appendChild(btn);
+        }
+
+        // Last page + ellipsis
+        if (endPage < totalPages) {
+            if (endPage < totalPages - 1) {
+                const dots = document.createElement('span');
+                dots.textContent = '...';
+                paginationControls.appendChild(dots);
+            }
+            const lastBtn = document.createElement('button');
+            lastBtn.textContent = totalPages;
+            lastBtn.onclick = () => {
+                npcCurrentPage = totalPages;
+                renderConfiguredNpcsTable(configuredNpcs);
+            };
+            paginationControls.appendChild(lastBtn);
+        }
+
+        // Next button
+        const nextBtn = document.createElement('button');
+        nextBtn.textContent = 'Next »';
+        nextBtn.disabled = npcCurrentPage === totalPages;
+        nextBtn.onclick = () => {
+            if (npcCurrentPage < totalPages) {
+                npcCurrentPage++;
+                renderConfiguredNpcsTable(configuredNpcs);
+            }
+        };
+        paginationControls.appendChild(nextBtn);
+
+        // Update pagination info
+        document.getElementById('npcPaginationInfo').textContent =
+            `Showing ${startIndex + 1}-${endIndex} of ${totalNpcs} NPCs (Page ${npcCurrentPage}/${totalPages})`;
     }
 
     // Toggle NPC priority
@@ -9413,6 +10701,9 @@ The effects will fade over time.</textarea>
     function showConfiguredNpcsAutocomplete(searchTerm) {
         const dropdown = document.getElementById('configuredNpcsAutocomplete');
         const term = searchTerm.toLowerCase().trim();
+
+        // Reset to page 1 when searching
+        npcCurrentPage = 1;
 
         if (!term || !configuredNpcs || configuredNpcs.length === 0) {
             dropdown.style.display = 'none';
@@ -9646,6 +10937,7 @@ The effects will fade over time.</textarea>
                     document.getElementById('modalInitPrompt').value = data.init_prompt || '';
                     document.getElementById('modalMasturbationPrompt').value = data.masturbation_prompt || '';
                     document.getElementById('modalClimaxPrompt').value = data.climax_prompt || '';
+                    document.getElementById('modalPartnerClimaxPrompt').value = data.partner_climax_prompt || '';
                     document.getElementById('modalPillowTalkPrompt').value = data.pillow_talk_prompt || '';
                 }
             });
@@ -9718,6 +11010,7 @@ The effects will fade over time.</textarea>
         const initPrompt = document.getElementById('modalInitPrompt').value.trim();
         const masturbationPrompt = document.getElementById('modalMasturbationPrompt').value.trim();
         const climaxPrompt = document.getElementById('modalClimaxPrompt').value.trim();
+        const partnerClimaxPrompt = document.getElementById('modalPartnerClimaxPrompt').value.trim();
         const pillowTalkPrompt = document.getElementById('modalPillowTalkPrompt').value.trim();
 
         if (!label) {
@@ -9742,6 +11035,7 @@ The effects will fade over time.</textarea>
         formData.append('init_prompt', initPrompt);
         formData.append('masturbation_prompt', masturbationPrompt);
         formData.append('climax_prompt', climaxPrompt);
+        formData.append('partner_climax_prompt', partnerClimaxPrompt);
         formData.append('pillow_talk_prompt', pillowTalkPrompt);
 
         showProcessing();
@@ -10088,6 +11382,12 @@ The effects will fade over time.</textarea>
         tier_devoted: '#PARTNER# has initiated sexual/intimate stance with you before any action has started. You are deeply in love with #PARTNER#. Complete vulnerability and trust. Deep emotional connection. You give yourself fully to them.',
         tier_bonded: '#PARTNER# has initiated sexual/intimate stance with you before any action has started. You are soulbound to #PARTNER#. Complete surrender, no boundaries remain between you. Anything goes. Total devotion and trust.',
 
+        // Refusal and Arousal Gating Prompts
+        refusal_confirm: 'You have refused #PARTNER#\'s advances. Express your refusal clearly - you can be polite, cold, or hostile depending on your relationship. Make it clear this is not happening. The scene ends here for you.',
+        non_consent: 'You refused #PARTNER#\'s advances but they are forcing themselves on you anyway. This is non-consensual. React with fear, anger, disgust, resistance, or traumatic dissociation as fits your character. You did not want this.',
+        enable_non_consent_prompt: true,
+        arousal_low: '#PARTNER# has initiated intimacy, but you\'re not in the mood right now. Your arousal is #AROUSAL# (needs to be higher). You may like #PARTNER#, but this isn\'t the right time. Politely decline or suggest trying again later when you\'re more receptive.',
+
         // SECTION 2: Marriage & Affairs Tier Prompts (11 tiers)
         tier_marriage_hostile: '#PARTNER# has initiated a sexual/intimate scene with you. You are married to #SPOUSE#. You are disgusted and enraged. You threaten #PARTNER# and will fight them if they touch you.',
         tier_marriage_hateful: '#PARTNER# has initiated a sexual/intimate scene with you. You are married to #SPOUSE#. You despise #PARTNER# for even suggesting this. You would never betray your spouse for someone like them.',
@@ -10180,6 +11480,12 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         drug_effect: 'You have consumed skooma or other substances. You feel:\n- Euphoric, disconnected from reality\n- Time distortion, heightened senses\n- May become erratic, paranoid, or overly affectionate\n- Addiction may influence your decisions',
         intoxicated_sex: 'Your intoxication affects your sexual behavior: lowered inhibitions, more willing to try things, less concerned about consequences, possibly sloppy or uncoordinated.',
 
+        // SECTION 2C: NPC-to-NPC Scenes (DOM only - SUB uses standard tier prompts, both use their stored JSONB profiles)
+        npc_invite: '(You are approaching #PARTNER# with romantic/sexual intent. You are the initiator. Lead the approach based on your personality and relationship with them.)',
+        npc_scene_active: '(You are currently in an intimate/sexual scene with #PARTNER#. React to the physical intimacy based on your personality and feelings toward them. Their sexual personality is provided in their profile.)',
+        npc_orgasm: '(#NPC_NAME# is reaching climax with #PARTNER#. Express this moment according to your personality and feelings.)',
+        npc_affair: '(#NPC_NAME# is married to #SPOUSE#, but #NPC_NAME# is being intimate with #PARTNER# instead. This is an affair. React according to your personality - guilt, thrill, justification, or indifference.)',
+
         // SECTION 5: Fertility & Pregnancy
         fmr_pregnant_t1: 'You are in early pregnancy. You may experience nausea, mood swings, and fatigue. Be careful but intimacy is still possible.',
         fmr_pregnant_t2: 'You are visibly pregnant now. You can feel the baby moving. Some positions are uncomfortable. Be mindful of the belly.',
@@ -10225,6 +11531,16 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     setPromptValue('promptTierDevoted', s.tier_devoted, 'tier_devoted');
                     setPromptValue('promptTierBonded', s.tier_bonded, 'tier_bonded');
 
+                    // Refusal and Arousal Gating Prompts
+                    setPromptValue('promptRefusalConfirm', s.refusal_confirm, 'refusal_confirm');
+                    setPromptValue('promptNonConsent', s.non_consent, 'non_consent');
+                    document.getElementById('enableNonConsentPrompt').checked = s.enable_non_consent_prompt !== false;
+                    setPromptValue('promptArousalLow', s.arousal_low, 'arousal_low');
+                    if (s.arousal_gating_threshold !== undefined) {
+                        document.getElementById('arousalGatingThreshold').value = s.arousal_gating_threshold;
+                        document.getElementById('arousalGatingThresholdValue').textContent = s.arousal_gating_threshold;
+                    }
+
                     // SECTION 2: Marriage & Affairs Tier Prompts (11 tiers)
                     setPromptValue('promptTierMarriageHostile', s.tier_marriage_hostile, 'tier_marriage_hostile');
                     setPromptValue('promptTierMarriageHateful', s.tier_marriage_hateful, 'tier_marriage_hateful');
@@ -10258,6 +11574,12 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
 
                     // Prostitution Group Pricing
                     setPromptValue('promptProstitutionGroupPricing', s.prostitution_group_pricing, 'prostitution_group_pricing');
+
+                    // SECTION 2C: NPC-to-NPC Scenes (DOM only - SUB uses standard tier prompts)
+                    setPromptValue('promptNpcInvite', s.npc_invite, 'npc_invite');
+                    setPromptValue('promptNpcSceneActive', s.npc_scene_active, 'npc_scene_active');
+                    setPromptValue('promptNpcOrgasm', s.npc_orgasm, 'npc_orgasm');
+                    setPromptValue('promptNpcAffair', s.npc_affair, 'npc_affair');
 
                     // SECTION 2: NSFW Local Defaults
                     setPromptValue('promptDefaultSexPersonality', s.default_sex_personality, 'default_sex_personality');
@@ -10356,6 +11678,20 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                         }
                     });
 
+                    // Store price templates globally for applyPriceTemplate() function
+                    if (s.price_template_budget) {
+                        priceTemplates.budget = s.price_template_budget;
+                        populatePriceTemplateUI('budget', s.price_template_budget);
+                    }
+                    if (s.price_template_standard) {
+                        priceTemplates.standard = s.price_template_standard;
+                        populatePriceTemplateUI('standard', s.price_template_standard);
+                    }
+                    if (s.price_template_luxury) {
+                        priceTemplates.luxury = s.price_template_luxury;
+                        populatePriceTemplateUI('luxury', s.price_template_luxury);
+                    }
+
                     // Auto-resize all textareas after content is loaded
                     document.querySelectorAll('.auto-resize').forEach(textarea => {
                         autoResizeTextarea(textarea);
@@ -10406,6 +11742,13 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('tier_devoted', getVal('promptTierDevoted'));
         formData.append('tier_bonded', getVal('promptTierBonded'));
 
+        // Refusal and Arousal Gating Prompts
+        formData.append('refusal_confirm', getVal('promptRefusalConfirm'));
+        formData.append('non_consent', getVal('promptNonConsent'));
+        formData.append('enable_non_consent_prompt', document.getElementById('enableNonConsentPrompt').checked ? '1' : '0');
+        formData.append('arousal_low', getVal('promptArousalLow'));
+        formData.append('arousal_gating_threshold', document.getElementById('arousalGatingThreshold').value);
+
         // SECTION 2: Marriage & Affairs Tier Prompts (11 tiers)
         formData.append('tier_marriage_hostile', getVal('promptTierMarriageHostile'));
         formData.append('tier_marriage_hateful', getVal('promptTierMarriageHateful'));
@@ -10439,6 +11782,12 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
 
         // Prostitution Group Pricing
         formData.append('prostitution_group_pricing', getVal('promptProstitutionGroupPricing'));
+
+        // SECTION 2C: NPC-to-NPC Scenes (DOM only)
+        formData.append('npc_invite', getVal('promptNpcInvite'));
+        formData.append('npc_scene_active', getVal('promptNpcSceneActive'));
+        formData.append('npc_orgasm', getVal('promptNpcOrgasm'));
+        formData.append('npc_affair', getVal('promptNpcAffair'));
 
         // SECTION 2: NSFW Local Defaults
         formData.append('default_sex_personality', getVal('promptDefaultSexPersonality'));
@@ -10518,6 +11867,11 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('pricing_mod_hateful', getVal('pricingModHateful'));
         formData.append('pricing_mod_hostile', getVal('pricingModHostile'));
 
+        // Price Templates (Budget/Standard/Luxury)
+        formData.append('price_template_budget', JSON.stringify(collectPriceTemplateData('budget')));
+        formData.append('price_template_standard', JSON.stringify(collectPriceTemplateData('standard')));
+        formData.append('price_template_luxury', JSON.stringify(collectPriceTemplateData('luxury')));
+
         showProcessing();
         fetch('?action=savePromptSettings', {
             method: 'POST',
@@ -10570,6 +11924,14 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         resetVal('promptTierFond', 'tier_fond');
         resetVal('promptTierDevoted', 'tier_devoted');
         resetVal('promptTierBonded', 'tier_bonded');
+
+        // Refusal and Arousal Gating Prompts
+        resetVal('promptRefusalConfirm', 'refusal_confirm');
+        resetVal('promptNonConsent', 'non_consent');
+        document.getElementById('enableNonConsentPrompt').checked = true;
+        resetVal('promptArousalLow', 'arousal_low');
+        document.getElementById('arousalGatingThreshold').value = 10;
+        document.getElementById('arousalGatingThresholdValue').textContent = '10';
 
         // SECTION 2: Marriage & Affairs Tier Prompts (11 tiers)
         resetVal('promptTierMarriageHostile', 'tier_marriage_hostile');
@@ -10682,6 +12044,393 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         }
     };
 
+    // AI Prompt Template Modal Functions
+    function openAiPromptModal() {
+        // Load current prompt template from server
+        fetch('config_manager.php?action=get_ai_prompt_template')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('aiPromptTemplateText').value = data.template || '';
+                } else {
+                    document.getElementById('aiPromptTemplateText').value = '';
+                }
+                document.getElementById('aiPromptModal').classList.add('active');
+            })
+            .catch(err => {
+                console.error('Failed to load AI prompt template:', err);
+                document.getElementById('aiPromptTemplateText').value = '';
+                document.getElementById('aiPromptModal').classList.add('active');
+            });
+    }
+
+    function closeAiPromptModal() {
+        document.getElementById('aiPromptModal').classList.remove('active');
+    }
+
+    // Themed toast notification - matches section-header breathing purple
+    function showToast(message, isSuccess = true) {
+        // Remove existing toast if any
+        const existing = document.getElementById('nsfwToast');
+        if (existing) existing.remove();
+
+        const toast = document.createElement('div');
+        toast.id = 'nsfwToast';
+        toast.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #252233;
+            border: 2px solid ${isSuccess ? '#3A3545' : '#8B4513'};
+            border-radius: 10px;
+            padding: 30px 50px;
+            z-index: 10001;
+            text-align: center;
+        `;
+        toast.innerHTML = `
+            <div style="color: #7A6890; font-family: 'MagicCards', 'Segoe UI', sans-serif; font-size: 24px; letter-spacing: 1px; word-spacing: 8px; animation: subPulse 3s ease-in-out infinite alternate;">${message}</div>
+            <button onclick="document.getElementById('nsfwToast').remove()" style="
+                background: #252233;
+                border: 2px solid #FDF5D0;
+                color: #FDF5D0;
+                padding: 10px 30px;
+                border-radius: 5px;
+                margin-top: 20px;
+                font-family: 'MagicCards', 'Segoe UI', sans-serif;
+                font-size: 14px;
+                letter-spacing: 1px;
+                word-spacing: 6px;
+                cursor: pointer;
+                text-shadow: 0 0 5px rgba(253, 245, 208, 0.3);
+                animation: neonPulse 3s ease-in-out infinite alternate;
+            ">OK</button>
+        `;
+        document.body.appendChild(toast);
+    }
+
+    function saveAiPromptTemplate() {
+        const template = document.getElementById('aiPromptTemplateText').value;
+        console.log('[NSFW] Saving AI prompt template, length:', template.length);
+
+        fetch('config_manager.php?action=save_ai_prompt_template', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ template: template })
+        })
+        .then(r => {
+            console.log('[NSFW] Save response status:', r.status);
+            return r.text();
+        })
+        .then(text => {
+            console.log('[NSFW] Save response text:', text.substring(0, 500));
+            try {
+                const data = JSON.parse(text);
+                if (data.success) {
+                    showToast('Prompt Template Saved', true);
+                    closeAiPromptModal();
+                } else {
+                    showToast('Failed to save: ' + (data.error || 'Unknown error'), false);
+                }
+            } catch (e) {
+                console.error('[NSFW] Parse error:', e, 'Response was:', text.substring(0, 200));
+                showToast('Failed to save: Invalid response from server', false);
+            }
+        })
+        .catch(err => {
+            console.error('[NSFW] Save error:', err);
+            showToast('Failed to save: ' + err.message, false);
+        });
+    }
+
+    function resetAiPromptTemplate() {
+        if (!confirm('Reset to the default AI prompt template? This cannot be undone.')) return;
+
+        fetch('config_manager.php?action=reset_ai_prompt_template', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('aiPromptTemplateText').value = data.template || '';
+                    showToast('AI Prompt Template Reset', true);
+                } else {
+                    showToast('Failed to reset: ' + (data.error || 'Unknown error'), false);
+                }
+            })
+            .catch(err => {
+                showToast('Failed to reset: ' + err.message, false);
+            });
+    }
+
+    // ==========================================
+    // SHARMAT LOGS TAB FUNCTIONS
+    // ==========================================
+
+    let logsRefreshInterval = null;
+    let currentLogTab = 'ostim';
+    let logsInitialized = false;
+
+    function initLogsTab() {
+        if (logsInitialized) {
+            refreshLogs();
+            return;
+        }
+        logsInitialized = true;
+        refreshLogs();
+        setupLogsAutoRefresh();
+    }
+
+    function switchLogTab(tabName) {
+        currentLogTab = tabName;
+
+        // Update tab buttons
+        document.querySelectorAll('.log-tab-btn').forEach(btn => {
+            btn.classList.remove('active');
+            if (btn.dataset.tab === tabName) {
+                btn.classList.add('active');
+            }
+        });
+
+        // Update panels
+        document.querySelectorAll('.log-panel').forEach(panel => {
+            panel.style.display = 'none';
+        });
+        document.getElementById('log-' + tabName).style.display = 'block';
+
+        // Load data for selected tab
+        refreshLogs();
+    }
+
+    function setupLogsAutoRefresh() {
+        const checkbox = document.getElementById('logsAutoRefresh');
+        if (checkbox) {
+            checkbox.addEventListener('change', function() {
+                if (this.checked) {
+                    logsRefreshInterval = setInterval(refreshLogs, 5000);
+                } else {
+                    clearInterval(logsRefreshInterval);
+                }
+            });
+            // Start auto-refresh if checked
+            if (checkbox.checked) {
+                logsRefreshInterval = setInterval(refreshLogs, 5000);
+            }
+        }
+    }
+
+    function refreshLogs() {
+        switch (currentLogTab) {
+            case 'ostim':
+                loadOstimScenes();
+                break;
+            case 'prompts':
+                loadPromptsSent();
+                break;
+            case 'responses':
+                loadNpcResponses();
+                break;
+            case 'status':
+                loadLiveStatus();
+                break;
+        }
+    }
+
+    function loadOstimScenes() {
+        fetch('nsfw_debug_panel.php?action=getSceneLog')
+            .then(r => r.json())
+            .then(data => {
+                const container = document.getElementById('log-ostim');
+                if (data.success && data.entries && data.entries.length > 0) {
+                    container.innerHTML = data.entries.map(e => {
+                        return `<div class="log-entry">
+                            <span class="log-timestamp">${escapeHtml(e.time)}</span>
+                            <span class="log-source ${e.source}">${e.source}</span>
+                            <span class="log-scene-id" onclick="openLogSceneEditor('${escapeHtml(e.scene_id)}')" title="Click to edit description">${escapeHtml(e.scene_id)}</span>
+                            <span class="log-scene-desc">${escapeHtml(e.description)}</span>
+                        </div>`;
+                    }).join('');
+                    updateLogsStatusBar(data.entries.length);
+                } else {
+                    container.innerHTML = `<div class="log-empty">
+                        <p>No scenes logged yet.</p>
+                        <p style="font-size:11px;">Scene IDs will appear here when OStim scenes are triggered in-game.</p>
+                    </div>`;
+                    updateLogsStatusBar(0);
+                }
+            })
+            .catch(err => {
+                console.error('Error loading OStim scenes:', err);
+                document.getElementById('log-ostim').innerHTML = `<div class="log-empty"><p>Error loading scenes</p></div>`;
+            });
+    }
+
+    // Open scene editor from logs tab - fetches data and opens the existing editModal
+    function openLogSceneEditor(sceneId) {
+        fetch('config_manager.php?action=getScene&stage=' + encodeURIComponent(sceneId))
+            .then(r => r.json())
+            .then(d => {
+                const scene = d.success && d.scene ? d.scene : { stage: sceneId, description: '', description_es: '', i_desc: '' };
+                document.getElementById('editStage').value = sceneId;
+                document.getElementById('editDesc').value = scene.description || '';
+                document.getElementById('editDescEs').value = scene.description_es || '';
+                document.getElementById('editIDesc').value = scene.i_desc || '';
+                document.getElementById('editModal').style.display = 'block';
+                // Auto-resize textareas
+                document.querySelectorAll('#editModal .auto-resize').forEach(autoResizeTextarea);
+            })
+            .catch(() => {
+                // Fallback - open modal with empty fields
+                document.getElementById('editStage').value = sceneId;
+                document.getElementById('editDesc').value = '';
+                document.getElementById('editDescEs').value = '';
+                document.getElementById('editIDesc').value = '';
+                document.getElementById('editModal').style.display = 'block';
+            });
+    }
+
+    function loadPromptsSent() {
+        fetch('nsfw_debug_panel.php?action=getPromptLog')
+            .then(r => r.json())
+            .then(data => {
+                const container = document.getElementById('log-prompts');
+                if (data.success && data.entries && data.entries.length > 0) {
+                    container.innerHTML = data.entries.map(e => {
+                        return `<div class="log-entry">
+                            <span class="log-timestamp">${escapeHtml(e.time)}</span>
+                            <span class="log-source ${e.type}">${e.type}</span>
+                            <span class="log-npc-name">${escapeHtml(e.npc)}</span>
+                            <span class="log-prompt-text">${escapeHtml(e.message)}</span>
+                        </div>`;
+                    }).join('');
+                    updateLogsStatusBar(data.entries.length);
+                } else {
+                    container.innerHTML = `<div class="log-empty">
+                        <p>No prompts logged yet.</p>
+                        <p style="font-size:11px;">Tier prompts, scene context, and injections will appear here during gameplay.</p>
+                    </div>`;
+                    updateLogsStatusBar(0);
+                }
+            })
+            .catch(err => {
+                console.error('Error loading prompts:', err);
+                document.getElementById('log-prompts').innerHTML = `<div class="log-empty"><p>Error loading prompts</p></div>`;
+            });
+    }
+
+    function loadNpcResponses() {
+        fetch('nsfw_debug_panel.php?action=getResponses')
+            .then(r => r.json())
+            .then(data => {
+                const container = document.getElementById('log-responses');
+                if (data.success && data.entries && data.entries.length > 0) {
+                    container.innerHTML = data.entries.map(e => {
+                        return `<div class="log-entry">
+                            <span class="log-timestamp">${e.time || '--'}</span>
+                            <span class="log-npc-name">${escapeHtml(e.speaker || 'Unknown')}</span>
+                            <span class="log-prompt-text">${escapeHtml(e.message || '')}</span>
+                        </div>`;
+                    }).join('');
+                    updateLogsStatusBar(data.entries.length);
+                } else {
+                    container.innerHTML = `<div class="log-empty">
+                        <p>No recent NPC responses.</p>
+                        <p style="font-size:11px;">NPC dialogue during intimate scenes will appear here.</p>
+                    </div>`;
+                    updateLogsStatusBar(0);
+                }
+            })
+            .catch(err => {
+                console.error('Error loading responses:', err);
+                document.getElementById('log-responses').innerHTML = `<div class="log-empty"><p>Error loading responses</p></div>`;
+            });
+    }
+
+    function loadLiveStatus() {
+        fetch('nsfw_debug_panel.php?action=getStatus')
+            .then(r => r.json())
+            .then(data => {
+                const container = document.getElementById('log-status');
+                if (data.success && data.statuses && data.statuses.length > 0) {
+                    container.innerHTML = `<div class="status-grid">` + data.statuses.map(s => {
+                        const levelText = s.level == 2 ? 'Active Scene' : (s.level == 1 ? 'Idle Scene' : 'Not in Scene');
+                        const badgeClass = s.level == 2 ? 'active' : (s.level == 1 ? 'idle' : 'inactive');
+                        return `<div class="status-card">
+                            <div class="status-card-header">
+                                <span class="status-card-name">${escapeHtml(s.npc)}</span>
+                                <span class="status-card-badge ${badgeClass}">${levelText}</span>
+                            </div>
+                            <div class="status-row">
+                                <span class="status-label">Phase</span>
+                                <span class="status-value">${escapeHtml(s.phase)}</span>
+                            </div>
+                            <div class="status-row">
+                                <span class="status-label">Level</span>
+                                <span class="status-value">${s.level}</span>
+                            </div>
+                            <div class="status-row">
+                                <span class="status-label">Actors</span>
+                                <span class="status-value">${escapeHtml(s.actors) || 'None'}</span>
+                            </div>
+                            <div class="status-row">
+                                <span class="status-label">Updated</span>
+                                <span class="status-value">${s.updated}</span>
+                            </div>
+                        </div>`;
+                    }).join('') + `</div>`;
+                    updateLogsStatusBar(data.statuses.length, 'NPCs tracked');
+                } else {
+                    container.innerHTML = `<div class="log-empty">
+                        <p>No NPCs currently tracked.</p>
+                        <p style="font-size:11px;">NPC intimacy status will appear here during scenes.</p>
+                    </div>`;
+                    updateLogsStatusBar(0);
+                }
+            })
+            .catch(err => {
+                console.error('Error loading status:', err);
+                document.getElementById('log-status').innerHTML = `<div class="log-empty"><p>Error loading status</p></div>`;
+            });
+    }
+
+    function updateLogsStatusBar(count, suffix = 'entries') {
+        const statusBar = document.getElementById('logsStatusBar');
+        const now = new Date().toLocaleTimeString();
+        statusBar.textContent = `${count} ${suffix} | Last update: ${now}`;
+    }
+
+    function clearCurrentLog() {
+        if (!confirm('Clear the current log?')) return;
+
+        let action = '';
+        switch (currentLogTab) {
+            case 'ostim': action = 'clearSceneLog'; break;
+            case 'prompts': action = 'clearPromptLog'; break;
+            case 'responses': return; // Responses from DB, can't clear here
+            case 'status': return; // Status files are temp, auto-clear
+        }
+
+        if (!action) return;
+
+        fetch('nsfw_debug_panel.php?action=' + action)
+            .then(r => r.json())
+            .then(() => refreshLogs())
+            .catch(err => console.error('Error clearing log:', err));
+    }
+
+    function copyToClipboard(text) {
+        navigator.clipboard.writeText(text).then(() => {
+            showToast('Copied: ' + text, true);
+        }).catch(err => {
+            console.error('Copy failed:', err);
+        });
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
     </script>
 
     <!-- Edit Style Modal -->
@@ -10750,8 +12499,12 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                             <textarea id="modalMasturbationPrompt" placeholder="How this style behaves during self-pleasure..." autocomplete="off"></textarea>
                         </div>
                         <div class="form-group">
-                            <label>Orgasm/Climax Prompt</label>
-                            <textarea id="modalClimaxPrompt" placeholder="How this style behaves during climax..." autocomplete="off"></textarea>
+                            <label>Orgasm/Climax Prompt (Self)</label>
+                            <textarea id="modalClimaxPrompt" placeholder="How this NPC behaves when THEY orgasm..." autocomplete="off"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Partner Climax Prompt (React to Partner)</label>
+                            <textarea id="modalPartnerClimaxPrompt" placeholder="How this NPC reacts when their PARTNER orgasms. Use #PARTNER# for partner name..." autocomplete="off"></textarea>
                         </div>
                         <div class="form-group">
                             <label>Pillow Talk Prompt</label>
@@ -10783,6 +12536,28 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
             <div class="modal-footer" style="display: flex; justify-content: center; gap: 15px;">
                 <button class="btn-danger npc-action-btn" onclick="confirmDeleteNpc()" style="min-width: 80px;">Delete</button>
                 <button class="btn-secondary npc-action-btn" onclick="closeDeleteNpcModal()" style="min-width: 80px;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Prompt Template Modal -->
+    <div id="aiPromptModal" class="modal-overlay">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">
+                <h3 class="section-header" style="margin: 0; display: flex; align-items: center; gap: 10px;">
+                    <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 32px; height: 32px;"> <span style="font-family: 'MagicCards', 'Segoe UI', sans-serif; letter-spacing: 1px; word-spacing: 4px;">AI Profile Generation Prompt</span>
+                </h3>
+            </div>
+            <div class="modal-body">
+                <p style="color: #9988BB; font-size: 12px; margin: 0 0 10px 0;">This prompt is sent to the AI when generating NSFW profiles. Use placeholders: <code>{NPC_CONTEXT}</code> for NPC bio, <code>{SPEAK_STYLES}</code> for speak styles list.</p>
+                <div class="form-group">
+                    <textarea id="aiPromptTemplateText" style="width: 100%; min-height: 400px; background: #1A1825; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px; padding: 12px; font-family: monospace; font-size: 12px; line-height: 1.5;"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-primary npc-action-btn" onclick="saveAiPromptTemplate()">Save</button>
+                <button class="btn-secondary npc-action-btn" onclick="resetAiPromptTemplate()">Reset to Default</button>
+                <button class="btn-secondary npc-action-btn" onclick="closeAiPromptModal()">Cancel</button>
             </div>
         </div>
     </div>

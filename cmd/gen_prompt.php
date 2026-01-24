@@ -75,7 +75,6 @@ if ($method === 'POST') {
         $connector->setOldGlobals($currentConnectorData);
         $npcMaster->setOldGlobalsFromCurrentNpcData($currentNpcData);
 
-        $extended = $npcMaster->getExtendedData($currentNpcData);
         $metadata = $npcMaster->getMetadata($currentNpcData);
         $metadataProfile= $profile->getMetadata($currentProfileData);
 
@@ -132,20 +131,22 @@ if ($method === 'POST') {
   
         // Different prompts based on field type
         if ($jsonDataInput["field_type"] === "sex_prompt") {
-            $prompt["en"][] = ['role' => 'user', 'content' => "Create a detailed and explicit sex behavior prompt for the character {$GLOBALS["HERIKA_NAME"]}.
+            $prompt["en"][] = ['role' => 'user', 'content' => "Create a detailed sexual personality profile for the character {$GLOBALS["HERIKA_NAME"]}.
     $profanityDescriptionsPrompt
-     This prompt should comprehensively describe the character's sexual behavior, including a variety of fetishes, kinks, and preferences. Specifically, include the following elements:
+     This profile should describe the character's sexual personality, preferences, fetishes, and kinks. Specifically, include the following elements:
 Sexual Orientation and Identity: Detail the character's sexual orientation (e.g., heterosexual, bisexual, pansexual), gender preferences, and any fluid or evolving aspects of their identity.
-Fetishes and Kinks: List and describe at least 1 specific fetishes or kinks (e.g., BDSM, role-playing, voyeurism, foot fetish, exhibitionism), explaining how they manifest in the character's behavior. Ensure these are varied and aligned with PEGI-18 content.
-Overall Tone: Keep the description explicit and immersive for NSFW storytelling."];
+Fetishes and Kinks: List and describe at least 1 specific fetish or kink (e.g., BDSM, role-playing, voyeurism, foot fetish, exhibitionism), explaining how they manifest in the character's behavior. Be explicit and don't hold back.
+Intimate Demeanor: How does this character behave during sex? Are they dominant, submissive, aggressive, tender, playful? How does their background influence this?
+Output a CHARACTER PROFILE in third person - NOT a scene or story. Write 2-3 paragraphs describing WHO they are sexually, not WHAT they do in a scene."];
             $prompt["en"][]=['role' => 'user', 'content' =>'Output format: plain text prompt, starting directly with Sexual Orientation'];
 
-            $prompt["es"][] = ['role' => 'user', 'content' => "Crea un prompt detallado y explícito de comportamiento sexual para el personaje {$GLOBALS["HERIKA_NAME"]}.
+            $prompt["es"][] = ['role' => 'user', 'content' => "Crea un perfil de personalidad sexual detallado para el personaje {$GLOBALS["HERIKA_NAME"]}.
     $profanityDescriptionsPrompt
-Este prompt debe describir de manera exhaustiva el comportamiento sexual del personaje, incluyendo una variedad de fetiches, kinks y preferencias. Específicamente, incluye los siguientes elementos:
+Este perfil debe describir la personalidad sexual del personaje, sus preferencias, fetiches y kinks. Específicamente, incluye los siguientes elementos:
 Orientación e Identidad Sexual: Detalla la orientación sexual del personaje (por ejemplo, heterosexual, bisexual, pansexual), preferencias de género y cualquier aspecto fluido o en evolución de su identidad.
-Fetiches y manias: Lista y describe al menos 1 fetiche o kink específico (por ejemplo, BDSM, role-playing, voyeurism, foot fetish, exhibitionism), explicando cómo se manifiestan en el comportamiento del personaje. Asegúrate de que sean variados y alineados con el contenido PEGI-18.
-Tono General: Mantén la descripción explícita e inmersiva para la narración NSFW,"];
+Fetiches y Kinks: Lista y describe al menos 1 fetiche o kink específico (por ejemplo, BDSM, role-playing, voyeurism, foot fetish, exhibitionism), explicando cómo se manifiestan en el comportamiento del personaje. Sé explícito y no te contengas.
+Actitud Íntima: ¿Cómo se comporta este personaje durante el sexo? ¿Es dominante, sumiso, agresivo, tierno, juguetón? ¿Cómo influye su trasfondo en esto?
+Genera un PERFIL DE PERSONAJE en tercera persona - NO una escena o historia. Escribe 2-3 párrafos describiendo QUIÉN es sexualmente, no QUÉ hace en una escena."];
         $prompt["es"][]=['role' => 'user', 'content' =>'Formato de salida: prompt en texto plano, empezando directamenete por Orientación e Identidad Sexual'];
 
 

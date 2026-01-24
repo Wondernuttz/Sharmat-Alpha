@@ -46,6 +46,10 @@ class NsfwOstimHandler {
             self::handleSceneEvent();
         } else if ($gameRequest[0] == "ext_nsfw_orgasm") {
             self::handleOrgasm();
+        } else if ($gameRequest[0] == "ext_nsfw_npc_invite") {
+            self::handleNpcInvite();
+        } else if ($gameRequest[0] == "ext_nsfw_npc_orgasm") {
+            self::handleNpcOrgasm();
         }
     }
 
@@ -115,10 +119,24 @@ class NsfwOstimHandler {
             $intimacyStatus = getIntimacyForActor($actor);
 
             // Check if this is a NEW scene or continuation
+            // A scene is NEW if:
+            // 1. No scene_phase set at all (never been in a scene)
+            // 2. scene_phase is null (previous scene ended and was cleared)
+            // 3. scene_start_time is old (previous scene was >5 min ago, stale data)
             $isNewScene = !isset($intimacyStatus["scene_phase"]) || $intimacyStatus["scene_phase"] === null;
 
+            // Also check for stale scene data - if last scene was >5 minutes ago, treat as new
+            if (!$isNewScene && isset($intimacyStatus["scene_start_time"])) {
+                $timeSinceSceneStart = time() - $intimacyStatus["scene_start_time"];
+                if ($timeSinceSceneStart > 300) {  // 5 minutes
+                    error_log("[AIAGENTNSFW] Stale scene data for $actor (started " . $timeSinceSceneStart . "s ago) - treating as new scene");
+                    $isNewScene = true;
+                }
+            }
+
             if ($isNewScene) {
-                // NEW SCENE: Start with tier prompt phase
+                // NEW SCENE: Always start with tier prompt phase (accept/refuse)
+                // Arousal gating only affects the threshold check AFTER accept (in prerequest.php)
                 $intimacyStatus["level"] = 0;
                 $intimacyStatus["scene_phase"] = "tier_prompt";
                 $intimacyStatus["scene_is_idle"] = in_array("idle", $sexTags);
@@ -140,7 +158,9 @@ class NsfwOstimHandler {
                     // Determine NPC type for this actor
                     $npcManager = new NpcMaster();
                     $npcData = $npcManager->getByName($actor);
-                    $extended_data = $npcManager->getExtendedData($npcData);
+                    // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+                    require_once __DIR__ . "/nsfw_data.php";
+                    $extended_data = NsfwNpcData::get($actor);
                     $metadata = $npcManager->getMetadata($npcData);
 
                     $isSlave = isNpcSlave($actor);
@@ -173,19 +193,20 @@ class NsfwOstimHandler {
 
                     error_log("[AIAGENTNSFW] Stored NPC type for $actor: slave=" . ($isSlave ? "YES" : "no") . ", prostitute=" . ($isProstitute ? "YES" : "no"));
 
-                    // For slaves, auto-accept immediately (they can't refuse)
-                    // For prostitutes, mark as transaction and let them request payment
+                    // Slaves auto-accept (they can't refuse)
+                    // Prostitutes auto-accept but need payment negotiation
+                    // Regular NPCs stay at tier_prompt for affinity-based accept/refuse
                     if ($isSlave) {
                         $intimacyStatus["scene_phase"] = "accepted";
                         error_log("[AIAGENTNSFW] Auto-accepting for $actor (slave) on scene start");
                     } else if ($isProstitute) {
                         $intimacyStatus["scene_phase"] = "accepted";
                         $intimacyStatus["is_transaction"] = true;
-                        $intimacyStatus["payment_requested"] = false;
                         $intimacyStatus["payment_confirmed"] = false;
                         $intimacyStatus["negotiation_phase"] = true;
-                        error_log("[AIAGENTNSFW] Prostitute transaction started for $actor - awaiting payment request");
+                        error_log("[AIAGENTNSFW] Prostitute transaction started for $actor - awaiting CollectPayment");
                     }
+                    // Regular NPCs stay at tier_prompt - prerequest.php handles accept/refuse
 
                     // If this is the current speaker, inject tier prompt immediately
                     if ($actor === $GLOBALS["HERIKA_NAME"]) {
@@ -223,9 +244,52 @@ class NsfwOstimHandler {
             } else {
                 // CONTINUING SCENE: Progress through phases
                 error_log("[AIAGENTNSFW] Continuing scene for $actor - phase: {$intimacyStatus["scene_phase"]}");
+
+                // ============================================
+                // DETECT TRANSITION: Idle → Actual Sex
+                // ============================================
+                // When scene was idle but now has actual sex tags, mark sex_started
+                // This triggers kink/sex prompt injection in prerequest.php
+                // ============================================
+                $wasIdle = !empty($intimacyStatus["scene_is_idle"]);
+                $isNowIdle = in_array("idle", $sexTags);
+
+                if ($wasIdle && !$isNowIdle && empty($intimacyStatus["sex_started"])) {
+                    // TRANSITION: Idle → Actual Sex!
+                    $intimacyStatus["scene_is_idle"] = false;
+                    $intimacyStatus["sex_started"] = true;
+                    error_log("[AIAGENTNSFW] SEX STARTED for $actor - transitioning from idle to actual sex");
+                } else if (!$wasIdle && !$isNowIdle && empty($intimacyStatus["sex_started"])) {
+                    // Scene started directly with sex (no idle phase)
+                    $intimacyStatus["sex_started"] = true;
+                    error_log("[AIAGENTNSFW] SEX STARTED for $actor - scene started with sex (no idle)");
+                }
+
+                // Update idle status for current stage
+                $intimacyStatus["scene_is_idle"] = $isNowIdle;
             }
 
             updateIntimacyForActor($actor, $intimacyStatus);
+        }
+
+        // ============================================
+        // PROPAGATE scene_actors TO ALL PARTICIPANTS
+        // ============================================
+        // Every NPC in the scene needs scene_actors set so they can be identified
+        // as scene participants. This is purely informational - prerequest.php
+        // handles the phase/level logic based on arousal gating setting.
+        // ============================================
+        foreach ($orderedActorList as $otherActor) {
+            if ($otherActor === $actor || $otherActor === $GLOBALS["PLAYER_NAME"]) continue;
+
+            $otherIntimacy = getIntimacyForActor($otherActor);
+
+            // If this actor doesn't have scene_actors set, propagate it
+            if (empty($otherIntimacy["scene_actors"]) || $otherIntimacy["scene_actors"] !== $orderedActorList) {
+                $otherIntimacy["scene_actors"] = $orderedActorList;
+                updateIntimacyForActor($otherActor, $otherIntimacy);
+                error_log("[AIAGENTNSFW] Propagated scene_actors to $otherActor: " . implode(",", $orderedActorList));
+            }
         }
 
         error_log("Searching for description $sexStageName");
@@ -246,14 +310,109 @@ class NsfwOstimHandler {
             $cleanedSceneDesc = preg_replace('/\{actor\d+\}/', '', $sceneDescriptionParsed);
         }
 
-        // Rewrite data
-        $GLOBALS["gameRequest"][3] = "#INTIMATE SCENE: $cleanedSceneDesc. Scene tags:" . implode(",", $sexTags);
-        $GLOBALS["AIAGENTNSFW_FORCE_STOP"] = true;
+        // ============================================
+        // FORCE_STOP LOGIC: Control LLM triggering
+        // ============================================
+        // tier_prompt phase = NEW SCENE = NPC should SPEAK (tier prompt as chat event)
+        // other phases = scene update = just log, no LLM (unless sex_started triggers kinks)
+        //
+        // When FORCE_STOP = true, context.php terminates without LLM
+        // When FORCE_STOP = false, the event flows through to LLM with the prompt
+        // ============================================
+
+        // Check if ANY actor in this scene is in tier_prompt phase (new scene)
+        // We check all actors because HERIKA_NAME might not be set yet in preprocessing
+        $anyActorInTierPrompt = false;
+        error_log("[AIAGENTNSFW] Checking tier_prompt phase for actors: " . implode(", ", $orderedActorList));
+        foreach ($orderedActorList as $checkActor) {
+            if ($checkActor === $GLOBALS["PLAYER_NAME"]) continue;  // Skip player
+            $checkIntimacy = getIntimacyForActor($checkActor);
+            $currentPhase = $checkIntimacy["scene_phase"] ?? "NOT_SET";
+            error_log("[AIAGENTNSFW] Actor $checkActor scene_phase = $currentPhase");
+            if (($checkIntimacy["scene_phase"] ?? null) === "tier_prompt") {
+                $anyActorInTierPrompt = true;
+                error_log("[AIAGENTNSFW] Actor $checkActor is in tier_prompt phase - will inject tier prompt!");
+                break;
+            }
+        }
+        error_log("[AIAGENTNSFW] anyActorInTierPrompt = " . ($anyActorInTierPrompt ? "TRUE" : "FALSE"));
+
+        // ============================================
+        // CONTEXT INJECTION: tier_prompt vs engaged
+        // ============================================
+        // tier_prompt = Inject tier prompt from database - NPC decides accept/refuse
+        // accepted/engaged = Full intimate scene context
+        // ============================================
+        if ($anyActorInTierPrompt) {
+            // TIER_PROMPT PHASE: Inject the tier prompt directly as the chat cue
+            // The NPC needs to see this prompt and respond to it immediately
+            require_once __DIR__ . "/nsfw_relationship.php";
+
+            // Find the first NPC in tier_prompt phase to get their tier prompt
+            $tierPromptNpc = null;
+            foreach ($orderedActorList as $checkActor) {
+                if ($checkActor === $GLOBALS["PLAYER_NAME"]) continue;
+                $checkIntimacy = getIntimacyForActor($checkActor);
+                if (($checkIntimacy["scene_phase"] ?? null) === "tier_prompt") {
+                    $tierPromptNpc = $checkActor;
+                    break;
+                }
+            }
+
+            if ($tierPromptNpc) {
+                // Build the tier prompt for this NPC
+                $tierPromptContext = NsfwRelationship::buildSceneContext($tierPromptNpc, $orderedActorList, false);
+
+                if (!empty($tierPromptContext)) {
+                    // Set the tier prompt as the gameRequest data - this is what the model sees
+                    $GLOBALS["gameRequest"][3] = $tierPromptContext;
+                    error_log("[AIAGENTNSFW] tier_prompt phase - injected tier prompt for $tierPromptNpc");
+                } else {
+                    // Fallback if no tier prompt found - still don't claim intimate scene
+                    $GLOBALS["gameRequest"][3] = "";
+                    error_log("[AIAGENTNSFW] tier_prompt phase - no tier prompt found, cleared scene context");
+                }
+            } else {
+                $GLOBALS["gameRequest"][3] = "";
+                error_log("[AIAGENTNSFW] tier_prompt phase - no NPC in tier_prompt found");
+            }
+        } else {
+            // ACCEPTED/ENGAGED: Full intimate scene context
+            $GLOBALS["gameRequest"][3] = "#INTIMATE SCENE: $cleanedSceneDesc. Scene tags:" . implode(",", $sexTags);
+        }
+
+        // ============================================
+        // CRITICAL: Update PROMPTS array with new gameRequest[3]
+        // ============================================
+        // prompts.php was loaded BEFORE this runs, so it has stale gameRequest[3].
+        // We MUST update the PROMPTS["ext_nsfw_sexcene"]["player_request"] now
+        // so that request.php picks up the correct tier prompt (not #INTIMATE SCENE)
+        // ============================================
+        if (isset($GLOBALS["PROMPTS"]["ext_nsfw_sexcene"])) {
+            $GLOBALS["PROMPTS"]["ext_nsfw_sexcene"]["player_request"] = [$GLOBALS["gameRequest"][3]];
+            error_log("[AIAGENTNSFW] Updated PROMPTS[ext_nsfw_sexcene][player_request] with: " . substr($GLOBALS["gameRequest"][3], 0, 100));
+        }
+
+        // NEW SCENE (tier_prompt) = Let it trigger LLM for tier prompt response
+        // This makes scene start work like orgasm events - fires as its own chat event
+        if ($anyActorInTierPrompt) {
+            $GLOBALS["AIAGENTNSFW_FORCE_STOP"] = false;
+            error_log("[AIAGENTNSFW] tier_prompt phase detected - allowing LLM trigger for scene start");
+        } else {
+            // Continuing scene - just update state, no LLM spam
+            $GLOBALS["AIAGENTNSFW_FORCE_STOP"] = true;
+            error_log("[AIAGENTNSFW] No tier_prompt phase - FORCE_STOP=true (continuing scene)");
+        }
+
         logEvent($GLOBALS["gameRequest"]);
     }
 
     /**
      * Handle ext_nsfw_npc_scene - NPC-to-NPC scene (no player)
+     *
+     * Sets up BOTH NPCs with full intimacy tracking, sex prompts, and tier prompts
+     * just like player scenes. This allows NPCs to react to each other properly
+     * during OStim NPCs mod scenes.
      */
     private static function handleNpcScene() {
         global $gameRequest;
@@ -262,31 +421,242 @@ class NsfwOstimHandler {
 
         $result = NsfwNpcScene::processNpcScene($gameRequest[3]);
 
-        if ($result) {
-            $npc1 = $result['npc1']['name'];
-            $npc2 = $result['npc2']['name'];
-            $sceneID = $result['sceneID'];
-
-            error_log("[AIAGENT-NSFW] NPC Scene: {$npc1} + {$npc2}, shouldStop: " . ($result['shouldStop'] ? 'YES' : 'NO'));
-
-            if ($result['shouldStop']) {
-                error_log("[AIAGENT-NSFW] NPC scene should stop: {$result['stopReason']}");
-            }
-
-            if ($result['npc1']['isChimEnabled'] && !empty($result['npc1']['tierPrompt'])) {
-                error_log("[AIAGENT-NSFW] Queueing tier dialogue for {$npc1}");
-            }
-
-            if ($result['npc2']['isChimEnabled'] && !empty($result['npc2']['tierPrompt'])) {
-                error_log("[AIAGENT-NSFW] Queueing tier dialogue for {$npc2}");
-            }
-
-            $GLOBALS["gameRequest"][3] = "NPC intimate scene: {$npc1} and {$npc2} ({$sceneID})";
-            $GLOBALS["AIAGENTNSFW_FORCE_STOP"] = true;
-            logEvent($GLOBALS["gameRequest"]);
+        if (!$result) {
+            error_log("[AIAGENT-NSFW] Failed to process NPC scene data");
+            terminate();
+            return;
         }
 
-        terminate();
+        $npc1Name = $result['npc1']['name'];
+        $npc2Name = $result['npc2']['name'];
+        $threadID = $result['threadID'];
+        $sceneID = $result['sceneID'];
+
+        error_log("[AIAGENT-NSFW] NPC-to-NPC Scene: {$npc1Name} + {$npc2Name} (Thread: {$threadID}, Scene: {$sceneID})");
+
+        // Build actor list for NPC-to-NPC scene (no player)
+        $orderedActorList = [$npc1Name, $npc2Name];
+        $GLOBALS["AIAGENTNSFW_SCENE_ACTORS"] = $orderedActorList;
+        $GLOBALS["AIAGENTNSFW_NPC_SCENE"] = true;  // Flag this as NPC-only scene
+        $GLOBALS["AIAGENTNSFW_NPC_THREAD_ID"] = $threadID;
+
+        // ============================================
+        // SET UP BOTH NPCs WITH FULL INTIMACY TRACKING
+        // ============================================
+        // Mirror what handleSceneUpdate() does for player scenes
+        // Each NPC gets: scene_actors, scene_phase, tier prompts, sex prompts
+        // ============================================
+
+        require_once __DIR__ . "/nsfw_data.php";
+        require_once __DIR__ . "/nsfw_relationship.php";
+
+        foreach ($orderedActorList as $actor) {
+            $intimacyStatus = getIntimacyForActor($actor);
+
+            // Check if this is a NEW scene or continuation
+            $isNewScene = !isset($intimacyStatus["scene_phase"]) || $intimacyStatus["scene_phase"] === null;
+
+            if ($isNewScene) {
+                // NEW NPC SCENE: Always start with tier_prompt (accept/refuse based on affinity)
+                // Arousal gating only affects the threshold check AFTER accept (in prerequest.php)
+                $intimacyStatus["level"] = 0;
+                $intimacyStatus["scene_phase"] = "tier_prompt";
+                $intimacyStatus["scene_is_idle"] = false;  // NPC scenes typically aren't idle
+                $intimacyStatus["scene_start_time"] = time();
+                $intimacyStatus["scene_actors"] = $orderedActorList;
+                $intimacyStatus["is_npc_scene"] = true;  // Mark as NPC-to-NPC scene
+                $intimacyStatus["npc_scene_partner"] = ($actor === $npc1Name) ? $npc2Name : $npc1Name;
+                $intimacyStatus["npc_scene_thread_id"] = $threadID;
+
+                error_log("[AIAGENTNSFW] New NPC scene for $actor - starting tier_prompt phase (partner: {$intimacyStatus['npc_scene_partner']})");
+
+                // ============================================
+                // DETERMINE NPC TYPE (PROSTITUTE, SLAVE, ETC)
+                // ============================================
+                $npcManager = new NpcMaster();
+                $npcData = $npcManager->getByName($actor);
+                $extendedData = NsfwNpcData::get($actor);
+
+                $isProstitute = false;
+                $isSlave = false;
+
+                if (!empty($extendedData)) {
+                    $isProstitute = !empty($extendedData['is_prostitute']) || !empty($extendedData['profession_prostitute']);
+                    $isSlave = !empty($extendedData['is_slave']);
+                }
+
+                // Store NPC type for prerequest.php
+                $intimacyStatus["is_prostitute"] = $isProstitute;
+                $intimacyStatus["is_slave"] = $isSlave;
+
+                // ============================================
+                // GET TIER PROMPT FOR THIS NPC
+                // ============================================
+                // Use relationship between the two NPCs
+                $partnerName = $intimacyStatus["npc_scene_partner"];
+                // Get NPC-to-NPC relationship (not player relationship)
+                $relationship = RelationshipManager::getRelationship($actor, $partnerName);
+                $affinity = $relationship['aff'] ?? 0;
+                $tier = strtolower($relationship['tier'] ?? 'neutral');
+
+                // Get appropriate tier prompt
+                $tierPrompt = NsfwRelationship::getTierPromptByAffinity($affinity, $isProstitute, $partnerName, $actor);
+                $intimacyStatus["cached_tier_prompt"] = $tierPrompt;
+                $intimacyStatus["partner_affinity"] = $affinity;
+                $intimacyStatus["partner_tier"] = $tier;
+
+                error_log("[AIAGENTNSFW] NPC $actor tier prompt for partner $partnerName (affinity: $affinity, tier: $tier, prostitute: " . ($isProstitute ? 'YES' : 'NO') . ")");
+
+                // ============================================
+                // LOAD SEX PROMPT AND SPEAK STYLE
+                // ============================================
+                // These will be injected when the NPC speaks during the scene
+                if (!empty($extendedData['sex_prompt']) || !empty($extendedData['nsfw_sex_prompt'])) {
+                    $intimacyStatus["has_sex_prompt"] = true;
+                    error_log("[AIAGENTNSFW] NPC $actor has configured sex prompt");
+                }
+
+                if (!empty($extendedData['sex_speech_style']) || !empty($extendedData['nsfw_speak_style'])) {
+                    $intimacyStatus["has_speak_style"] = true;
+                    error_log("[AIAGENTNSFW] NPC $actor has configured speak style");
+                }
+
+                // Save intimacy status for this NPC
+                updateIntimacyForActor($actor, $intimacyStatus);
+            } else {
+                // CONTINUING SCENE: Update scene actors if needed
+                if (empty($intimacyStatus["scene_actors"]) || $intimacyStatus["scene_actors"] !== $orderedActorList) {
+                    $intimacyStatus["scene_actors"] = $orderedActorList;
+                    $intimacyStatus["is_npc_scene"] = true;
+                    updateIntimacyForActor($actor, $intimacyStatus);
+                }
+                error_log("[AIAGENTNSFW] Continuing NPC scene for $actor (phase: {$intimacyStatus['scene_phase']})");
+            }
+        }
+
+        // ============================================
+        // BUILD SCENE CONTEXT FOR LOGGING
+        // ============================================
+        $npc1Affinity = $result['npc1']['affinity'] ?? 0;
+        $npc2Affinity = $result['npc2']['affinity'] ?? 0;
+        $npc1Tier = RelationshipManager::getTierLabel($npc1Affinity);
+        $npc2Tier = RelationshipManager::getTierLabel($npc2Affinity);
+
+        $contextMsg = "NPC intimate scene started: {$npc1Name} ({$npc1Tier} toward {$npc2Name}) and {$npc2Name} ({$npc2Tier} toward {$npc1Name})";
+        error_log("[AIAGENTNSFW] $contextMsg");
+
+        $GLOBALS["gameRequest"][3] = $contextMsg;
+        logEvent($GLOBALS["gameRequest"]);
+
+        // Don't terminate - let the request flow continue so NPCs can speak
+        // The prerequest.php will inject their prompts when they respond
+    }
+
+    /**
+     * Handle ext_nsfw_npc_invite - NPC-to-NPC invite phase
+     * Fires BEFORE the scene starts when dom actor approaches sub actor
+     * This is the perfect time to inject tier prompts based on relationship
+     *
+     * Data format: DomActor^SubActor^ThirdActor (third is optional)
+     */
+    private static function handleNpcInvite() {
+        global $gameRequest;
+
+        error_log("[AIAGENT-NSFW] NPC Invite phase: {$gameRequest[3]}");
+
+        // Parse invite data (using ^ delimiter)
+        $parts = explode('^', $gameRequest[3]);
+
+        if (count($parts) < 2) {
+            error_log("[AIAGENT-NSFW] Invalid invite data: {$gameRequest[3]}");
+            terminate();
+            return;
+        }
+
+        $domActor = $parts[0];
+        $subActor = $parts[1];
+        $thirdActor = isset($parts[2]) ? $parts[2] : null;
+
+        error_log("[AIAGENT-NSFW] NPC Invite: {$domActor} -> {$subActor}" . ($thirdActor ? " + {$thirdActor}" : ""));
+
+        // Build actor list
+        $actorList = [$domActor, $subActor];
+        if ($thirdActor) {
+            $actorList[] = $thirdActor;
+        }
+
+        require_once __DIR__ . "/nsfw_relationship.php";
+        require_once __DIR__ . "/nsfw_data.php";
+
+        // Set up intimacy tracking for each NPC before the scene starts
+        // This injects tier prompts based on their relationship with each other
+        foreach ($actorList as $actor) {
+            $intimacyStatus = getIntimacyForActor($actor);
+
+            // Set invite phase - NPCs are approaching each other
+            $intimacyStatus["level"] = 0;
+            $intimacyStatus["scene_phase"] = "invite";
+            $intimacyStatus["scene_actors"] = $actorList;
+            $intimacyStatus["invite_time"] = time();
+
+            // Determine partner (the other actor)
+            $partnerName = ($actor === $domActor) ? $subActor : $domActor;
+
+            // Check NPC type (slave, prostitute)
+            $isSlave = isNpcSlave($actor);
+            $isProstitute = isProstitute($actor);
+
+            $intimacyStatus["npc_is_slave"] = $isSlave;
+            $intimacyStatus["npc_is_prostitute"] = $isProstitute;
+            $intimacyStatus["npc_partner"] = $partnerName;
+
+            error_log("[AIAGENT-NSFW] NPC Invite setup for {$actor}: partner={$partnerName}, slave=" . ($isSlave ? "YES" : "no") . ", prostitute=" . ($isProstitute ? "YES" : "no"));
+
+            updateIntimacyForActor($actor, $intimacyStatus);
+        }
+
+        // Log the invite event for narrative purposes
+        $contextMsg = "{$domActor} is approaching {$subActor} with romantic intent.";
+        if ($thirdActor) {
+            $contextMsg = "{$domActor} is approaching {$subActor} and {$thirdActor} with romantic intent.";
+        }
+
+        $GLOBALS["gameRequest"][3] = $contextMsg;
+        logEvent($GLOBALS["gameRequest"]);
+
+        error_log("[AIAGENT-NSFW] NPC Invite phase complete - tier prompts will inject when NPCs speak");
+    }
+
+    /**
+     * Handle ext_nsfw_npc_orgasm - NPC orgasm in NPC-to-NPC scene
+     * Data format: actorName^partnerName^sceneID
+     */
+    private static function handleNpcOrgasm() {
+        global $gameRequest;
+
+        error_log("[AIAGENT-NSFW] NPC Orgasm: {$gameRequest[3]}");
+
+        // Parse orgasm data (using ^ delimiter)
+        $parts = explode('^', $gameRequest[3]);
+
+        if (count($parts) < 2) {
+            error_log("[AIAGENT-NSFW] Invalid NPC orgasm data: {$gameRequest[3]}");
+            terminate();
+            return;
+        }
+
+        $orgasmedActor = $parts[0];
+        $partnerName = $parts[1];
+        $sceneID = isset($parts[2]) ? $parts[2] : '';
+
+        error_log("[AIAGENT-NSFW] NPC Orgasm: {$orgasmedActor} climaxed with {$partnerName}");
+
+        // Log the orgasm event with context
+        $contextMsg = "{$orgasmedActor} is reaching climax with {$partnerName}.";
+        $GLOBALS["gameRequest"][3] = $contextMsg;
+        logEvent($GLOBALS["gameRequest"]);
+
+        error_log("[AIAGENT-NSFW] NPC Orgasm logged for {$orgasmedActor}");
     }
 
     /**
@@ -315,6 +685,16 @@ class NsfwOstimHandler {
         }
         error_log("[AIAGENT_NSFW] Scene ended - actors in scene: " . implode(", ", $sceneActors));
 
+        // Reset response counters for all scene actors (cooldown system)
+        if (function_exists('apcu_delete')) {
+            foreach ($sceneActors as $sceneActor) {
+                apcu_delete("nsfw_responses_{$sceneActor}");
+                apcu_delete("nsfw_cooldown_sex_{$sceneActor}");
+                apcu_delete("nsfw_cooldown_climax_{$sceneActor}");
+            }
+            error_log("[AIAGENT_NSFW] Reset response counters for scene actors");
+        }
+
         // Check if this was a prostitute transaction
         $wasTransaction = !empty($currentIntimacy["is_transaction"]);
         $paymentConfirmed = !empty($currentIntimacy["payment_confirmed"]);
@@ -325,7 +705,24 @@ class NsfwOstimHandler {
             $scoring[] = $actorResult[0] . " satisfaction score: " . $actorResult[1];
         }
 
-        // Inject pillow talk prompt to ALL NPCs who were in the scene
+        // Detect if this was an NPC-to-NPC scene (no player involved)
+        $isNpcOnlyScene = true;
+        foreach ($sceneActors as $checkActor) {
+            if (strcasecmp($checkActor, $playerName) === 0 || strcasecmp($checkActor, "Player") === 0) {
+                $isNpcOnlyScene = false;
+                break;
+            }
+        }
+
+        if ($isNpcOnlyScene) {
+            error_log("[AIAGENT_NSFW] NPC-to-NPC scene ended - setting up pillow talk for both NPCs");
+        }
+
+        // Inject pillow talk prompt to NPCs in the scene
+        // When arousal gating ON: only NPCs who orgasmed get pillow talk
+        // When arousal gating OFF: all NPCs in scene get pillow talk (intimacy status is NULL)
+        $arousalGatingOn = isSexDisposalEnabled();
+
         foreach ($sceneActors as $sceneActor) {
             // Skip player
             if (strcasecmp($sceneActor, $playerName) === 0 || strcasecmp($sceneActor, "Player") === 0) {
@@ -333,12 +730,67 @@ class NsfwOstimHandler {
             }
 
             $actorIntimacy = getIntimacyForActor($sceneActor);
+
+            // When arousal gating is ON, check if NPC orgasmed
+            // When arousal gating is OFF, skip this check - all NPCs get pillow talk
+            if ($arousalGatingOn) {
+                $actorOrgasmed = !empty($actorIntimacy["orgasmed"]);
+                if (!$actorOrgasmed) {
+                    error_log("[AIAGENT_NSFW] Skipping pillow talk for $sceneActor - no orgasm occurred (arousal gating ON)");
+                    continue;
+                }
+            }
+
             $actorWasTransaction = !empty($actorIntimacy["is_transaction"]);
             $actorPaymentConfirmed = !empty($actorIntimacy["payment_confirmed"]);
+            $wasNpcScene = !empty($actorIntimacy["is_npc_scene"]);
+            $npcScenePartner = $actorIntimacy["npc_scene_partner"] ?? null;
 
             // Build pillow talk prompt for this actor
             $pillowTalkPrompt = "";
-            if (isNpcSlave($sceneActor)) {
+
+            if ($wasNpcScene && $npcScenePartner) {
+                // ============================================
+                // NPC-TO-NPC SCENE PILLOW TALK
+                // ============================================
+                // NPCs talk to each other, not to player
+                $partnerAffinity = $actorIntimacy["partner_affinity"] ?? 0;
+                $partnerTier = $actorIntimacy["partner_tier"] ?? 'neutral';
+
+                require_once __DIR__ . '/nsfw_data.php';
+                $extended = NsfwNpcData::get($sceneActor);
+
+                // Check for custom speak style pillow talk first
+                if (!empty($extended['sex_speech_style'])) {
+                    $speakStyle = NsfwData::getSpeakStyle($extended['sex_speech_style']);
+                    if (!empty($speakStyle['pillow_talk_prompt'])) {
+                        // Replace #PARTNER# with actual partner name
+                        $pillowTalkPrompt = str_replace('#PARTNER#', $npcScenePartner, $speakStyle['pillow_talk_prompt']);
+                    }
+                }
+
+                // Fallback to tier-based pillow talk - reuse existing tier system
+                // This checks for marriage/affair scenarios: if sceneActor is married
+                // and partner != spouse, it's an affair; if partner == spouse, it's marriage
+                if (empty($pillowTalkPrompt)) {
+                    // Check if NPC is prostitute for tier prompt selection
+                    $isProstitute = !empty($extended['is_prostitute']) || !empty($extended['profession_prostitute']);
+
+                    // Build pillow talk using the tier system - handles marriage/affair/regular
+                    $tierContext = NsfwRelationship::getTierPromptByAffinity(
+                        $partnerAffinity,
+                        $isProstitute,
+                        $npcScenePartner,  // Partner name for #PARTNER# replacement
+                        $sceneActor        // NPC name for marriage/affair detection
+                    );
+
+                    // Wrap it in post-scene context
+                    $pillowTalkPrompt = "The intimate scene has ended. $tierContext Share a brief post-intimacy response to $npcScenePartner.";
+                }
+
+                error_log("[AIAGENT_NSFW] NPC-to-NPC pillow talk for $sceneActor toward $npcScenePartner (tier: $partnerTier, affinity: $partnerAffinity)");
+
+            } else if (isNpcSlave($sceneActor)) {
                 // Slave pillow talk
                 try {
                     $relationship = RelationshipManager::getPlayerRelationship($sceneActor);
@@ -358,22 +810,35 @@ class NsfwOstimHandler {
                 }
                 error_log("[AIAGENT_NSFW] Post-service talk for prostitute $sceneActor (paid: " . ($actorPaymentConfirmed ? 'yes' : 'no') . ")");
             } else {
-                // Regular NPC pillow talk - check for speak style pillow_talk_prompt
-                $npcManager = new NpcMaster();
-                $npcData = $npcManager->getByName($sceneActor);
-                $extended = $npcManager->getExtendedData($npcData);
+                // Regular NPC pillow talk (with player) - check for speak style pillow_talk_prompt
+                // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+                require_once __DIR__ . '/nsfw_data.php';
+                $extended = NsfwNpcData::get($sceneActor);
+                error_log("[AIAGENT_NSFW] PILLOW DEBUG: $sceneActor extended_data keys: " . implode(', ', array_keys($extended)));
+                error_log("[AIAGENT_NSFW] PILLOW DEBUG: sex_speech_style = " . ($extended['sex_speech_style'] ?? 'NOT SET'));
+
                 if (!empty($extended['sex_speech_style'])) {
                     // Use NsfwData::getSpeakStyle which reads from JSONB
                     $speakStyle = NsfwData::getSpeakStyle($extended['sex_speech_style']);
+                    error_log("[AIAGENT_NSFW] PILLOW DEBUG: speakStyle keys: " . ($speakStyle ? implode(', ', array_keys($speakStyle)) : 'NULL'));
+                    error_log("[AIAGENT_NSFW] PILLOW DEBUG: pillow_talk_prompt = " . ($speakStyle['pillow_talk_prompt'] ?? 'NOT SET'));
+
                     if (!empty($speakStyle['pillow_talk_prompt'])) {
                         $pillowTalkPrompt = $speakStyle['pillow_talk_prompt'];
                         error_log("[AIAGENT_NSFW] Using speak style pillow talk for $sceneActor (style: {$extended['sex_speech_style']})");
+                    } else {
+                        error_log("[AIAGENT_NSFW] PILLOW DEBUG: Style '{$extended['sex_speech_style']}' has NO pillow_talk_prompt!");
                     }
+                } else {
+                    error_log("[AIAGENT_NSFW] PILLOW DEBUG: $sceneActor has NO sex_speech_style set!");
                 }
+
                 if (empty($pillowTalkPrompt)) {
                     $pillowTalkPrompt = "The intimate moment has ended. Share a brief, genuine post-intimacy reaction in character.";
+                    error_log("[AIAGENT_NSFW] Pillow talk for regular NPC $sceneActor (FALLBACK - no style pillow talk found)");
+                } else {
+                    error_log("[AIAGENT_NSFW] Pillow talk for regular NPC $sceneActor (USING SPEAK STYLE)");
                 }
-                error_log("[AIAGENT_NSFW] Pillow talk for regular NPC $sceneActor");
             }
 
             // Store pillow talk prompt for this actor so prerequest can inject it
@@ -397,16 +862,22 @@ class NsfwOstimHandler {
                 "level" => 0,
                 "sex_disposal" => 10,
                 "orgasmed" => false,
+                "sex_started" => false,  // CRITICAL: Stop sex prompts from firing
+                "is_naked" => 0,  // Reset clothing state - NPC is dressed after scene
                 "scene_phase" => null,
                 "tier_prompt_sent" => false,
                 "scene_is_idle" => null,
                 "scene_start_time" => null,
                 "scene_actors" => null,
                 "is_transaction" => false,
-                "payment_requested" => false,
                 "payment_confirmed" => false,
-                "additional_payment_demanded" => false,
                 "service_completed" => false,
+                // Clear NPC-to-NPC scene flags
+                "is_npc_scene" => false,
+                "npc_scene_partner" => null,
+                "npc_scene_thread_id" => null,
+                "partner_affinity" => null,
+                "partner_tier" => null,
                 "pillow_talk_pending" => $pillowTalkPending,
                 "pillow_talk_prompt" => $pillowTalkPrompt
             ]);
@@ -419,49 +890,46 @@ class NsfwOstimHandler {
             "level" => 0,
             "sex_disposal" => 10,
             "orgasmed" => false,
+            "sex_started" => false,  // CRITICAL: Stop sex prompts from firing
+            "is_naked" => 0,  // Reset clothing state - NPC is dressed after scene
             "scene_phase" => null,
             "tier_prompt_sent" => false,
             "scene_is_idle" => null,
             "scene_start_time" => null,
             "scene_actors" => null,
             "is_transaction" => false,
-            "payment_requested" => false,
             "payment_confirmed" => false,
-            "additional_payment_demanded" => false,
             "service_completed" => false,
+            // Clear NPC-to-NPC scene flags
+            "is_npc_scene" => false,
+            "npc_scene_partner" => null,
+            "npc_scene_thread_id" => null,
+            "partner_affinity" => null,
+            "partner_tier" => null,
             "pillow_talk_pending" => $pillowTalkPending,
             "pillow_talk_prompt" => $pillowTalkPrompt
         ]);
 
-        // Build post-scene prompt for current actor
+        // ============================================
+        // POST-SCENE PROMPT FOR CURRENT ACTOR
+        // ============================================
+        // This uses the pillow_talk_prompt that was ALREADY set by the loop above (726-848)
+        // The loop handles: arousal gating, orgasm check, speak styles, slave/prostitute/regular NPC
+        // We just read back what was stored - ONE code path for pillow talk logic
+        // ============================================
+
+        // Re-read current actor's intimacy to get the pillow talk we just stored
+        $finalIntimacy = getIntimacyForActor($actor);
         $postScenePrompt = "";
 
-        if ($wasTransaction) {
-            // PROSTITUTE POST-SERVICE TALK
-            if ($paymentConfirmed) {
-                $postScenePrompt = "The service session has ended. You were paid for your services. ";
-                if ($serviceCompleted) {
-                    $postScenePrompt .= "You ended the session professionally. Give a brief post-service farewell - professional but courteous. ";
-                } else {
-                    $postScenePrompt .= "The scene ended. Thank the client if appropriate and wish them well. ";
-                }
-            } else {
-                $postScenePrompt = "The service session has ended but payment was not confirmed! ";
-                $postScenePrompt .= "You may want to remind the client about payment or express displeasure. ";
-            }
-            $postScenePrompt .= "Keep it brief and business-like.";
-            error_log("[AIAGENT_NSFW] Post-service talk for prostitute (paid: " . ($paymentConfirmed ? 'yes' : 'no') . ")");
+        if (!empty($finalIntimacy["pillow_talk_prompt"])) {
+            // Use the pillow talk from the loop (respects arousal gating + orgasm check)
+            $postScenePrompt = $finalIntimacy["pillow_talk_prompt"];
+            error_log("[AIAGENT_NSFW] Post-scene for $actor: using stored pillow talk");
         } else {
-            // Use stored pillow talk prompt if available
-            if (!empty($currentIntimacy["pillow_talk_prompt"])) {
-                $postScenePrompt = $currentIntimacy["pillow_talk_prompt"];
-            } else {
-                // REGULAR NPC PILLOW TALK
-                $postScenePrompt = "The intimate moment has ended. Share a brief, genuine post-intimacy reaction. ";
-                $postScenePrompt .= "This can be affectionate, satisfied, or whatever fits your personality and feelings toward your partner. ";
-                $postScenePrompt .= "Keep it natural and in character.";
-            }
-            error_log("[AIAGENT_NSFW] Pillow talk for regular NPC");
+            // No pillow talk was set - either no orgasm (arousal gating ON) or NPC wasn't in loop
+            $postScenePrompt = "The scene has ended.";
+            error_log("[AIAGENT_NSFW] Post-scene for $actor: no pillow talk (orgasm check failed or not in scene)");
         }
 
         $GLOBALS["PROMPTS"]["chatnf_sl_end"]["player_request"] = ["The Narrator: " . implode(",", $scoring) . "\n#Post-Scene Guidance: " . $postScenePrompt];
@@ -475,7 +943,7 @@ class NsfwOstimHandler {
     private static function handleNaked() {
         $actor = $GLOBALS["HERIKA_NAME"];
         $intimacyStatus = getIntimacyForActor($actor);
-        $intimacyStatus["is_naked"] = 2;
+        $intimacyStatus["is_naked"] = 1;  // 0=clothed, 1=naked (Tyler's design)
         updateIntimacyForActor($actor, $intimacyStatus);
     }
 
@@ -487,6 +955,11 @@ class NsfwOstimHandler {
 
         $actor = $GLOBALS["HERIKA_NAME"];
         $intimacyStatus = getIntimacyForActor($actor);
+
+        // Mark this NPC as having orgasmed - used for pillow talk eligibility
+        $intimacyStatus["orgasmed"] = true;
+        updateIntimacyForActor($actor, $intimacyStatus);
+        error_log("[AIAGENT-NSFW] Marked $actor as orgasmed (chatnf_sl_climax)");
 
         if (isset($intimacyStatus["orgasm_generated"]) && $intimacyStatus["orgasm_generated"] && isset($intimacyStatus["orgasm_generated_text"])) {
             // We have used GASP. Let's use it.
@@ -510,6 +983,18 @@ class NsfwOstimHandler {
             terminate();
         } else {
             // NPC will generate response via standard prompt
+            // Inject climax_prompt into speech style so it goes directly to NPC (bypasses Narrator path)
+            require_once(__DIR__."/nsfw_data.php");
+            $extended = NsfwNpcData::get($actor);
+            if (!empty($extended["sex_speech_style"])) {
+                $speakStyle = NsfwData::getSpeakStyle($extended["sex_speech_style"]);
+                if (!empty($speakStyle['climax_prompt'])) {
+                    $climaxPrompt = str_replace('#PARTNER#', $GLOBALS["PLAYER_NAME"] ?? 'your partner', $speakStyle['climax_prompt']);
+                    $GLOBALS["HERIKA_SPEECHSTYLE"] = ($GLOBALS["HERIKA_SPEECHSTYLE"] ?? '') . "\n#Climax Behavior\n" . $climaxPrompt;
+                    $GLOBALS["AIAGENTNSFW_CLIMAX_PROMPT"] = $speakStyle['climax_prompt'];
+                    error_log("[AIAGENT-NSFW] Injected climax_prompt for $actor: " . substr($climaxPrompt, 0, 50) . "...");
+                }
+            }
             error_log("[AIAGENT-NSFW] Climax from llm_request should happen");
         }
     }
@@ -583,17 +1068,65 @@ class NsfwOstimHandler {
 
         error_log("[AIAGENT-NSFW] Processing ext_nsfw_orgasm: {$gameRequest[3]}");
 
-        $parts = explode("/", $gameRequest[3]);
-        $orgasmerName = trim($parts[0] ?? '');
+        // Data format: "(Context location: X)PlayerName:OrgasmerName/SceneId/Index/Partner"
+        // OR for player orgasm: "(Context)PlayerName:PLAYER_ORGASM/SceneId/Index/PlayerName"
+        // Need to extract the orgasmer name from after the colon
+        $rawData = $gameRequest[3];
+
+        // First split by "/" to get the main parts
+        $parts = explode("/", $rawData);
+        $firstPart = trim($parts[0] ?? ''); // "(Context)PlayerName:OrgasmerName" or "PLAYER_ORGASM"
         $sceneId = trim($parts[1] ?? '');
         $orgasmerIndex = intval($parts[2] ?? 0);
+        $partnerName = trim($parts[3] ?? '');
+
+        // Check for PLAYER_ORGASM prefix (sent when player orgasms)
+        $isPlayerOrgasmPrefix = (strpos($rawData, 'PLAYER_ORGASM') !== false);
+
+        // Extract orgasmer name - it's after the colon in the first part
+        $orgasmerName = '';
+        if (strpos($firstPart, ':') !== false) {
+            $colonParts = explode(':', $firstPart);
+            $orgasmerName = trim(end($colonParts)); // Get the last part after colon
+        } else {
+            $orgasmerName = $firstPart;
+        }
+
+        error_log("[AIAGENT-NSFW] Parsed orgasm - orgasmer: '$orgasmerName', scene: '$sceneId', partner: '$partnerName', playerOrgasmPrefix: " . ($isPlayerOrgasmPrefix ? 'YES' : 'NO'));
 
         $actor = $GLOBALS["HERIKA_NAME"];
         $intimacyStatus = getIntimacyForActor($actor);
         $playerName = $GLOBALS["PLAYER_NAME"] ?? "Player";
 
         // Check if this is the PLAYER having an orgasm
-        $isPlayerOrgasm = (strcasecmp($orgasmerName, $playerName) === 0 || strcasecmp($orgasmerName, "Player") === 0);
+        // Either by PLAYER_ORGASM prefix (new method) or by matching player name (old method)
+        $isPlayerOrgasm = $isPlayerOrgasmPrefix || (strcasecmp($orgasmerName, $playerName) === 0 || strcasecmp($orgasmerName, "Player") === 0);
+
+        error_log("[AIAGENT-NSFW] Orgasm type: " . ($isPlayerOrgasm ? "PLAYER orgasm (NPC $actor should REACT)" : "NPC $actor orgasm (express their climax)"));
+
+        // COOLDOWN: If player orgasmed recently, suppress NPC's own orgasm event
+        // This prevents the NPC from getting their own climax_prompt right after reacting to player's orgasm
+        $playerOrgasmCooldown = 5; // seconds
+        if (!$isPlayerOrgasm) {
+            // Check if player orgasmed recently
+            $lastPlayerOrgasm = $intimacyStatus['last_player_orgasm_time'] ?? 0;
+            $timeSincePlayerOrgasm = time() - $lastPlayerOrgasm;
+            if ($lastPlayerOrgasm > 0 && $timeSincePlayerOrgasm < $playerOrgasmCooldown) {
+                error_log("[AIAGENT-NSFW] SUPPRESSING NPC orgasm for $actor - player orgasmed {$timeSincePlayerOrgasm}s ago (cooldown: {$playerOrgasmCooldown}s)");
+                // Still log the event but don't generate a response
+                $GLOBALS["gameRequest"][0] = "infoaction";
+                $GLOBALS["gameRequest"][3] = "$actor reacts to $playerName's orgasm";
+                logEvent($GLOBALS["gameRequest"]);
+                terminate();
+                return;
+            }
+        } else {
+            // Player is orgasming - record the timestamp
+            $intimacyStatus['last_player_orgasm_time'] = time();
+            updateIntimacyForActor($actor, $intimacyStatus);
+            error_log("[AIAGENT-NSFW] Recorded player orgasm time for cooldown tracking");
+        }
+
         if ($isPlayerOrgasm) {
             if (isNpcSlave($actor)) {
                 // Inject owner climax reaction prompt for slave
@@ -609,41 +1142,107 @@ class NsfwOstimHandler {
                     error_log("[AIAGENT-NSFW] Failed to get slave owner climax prompt: " . $e->getMessage());
                 }
             } else {
-                // Regular NPC - inject partner climax reaction prompt
-                $GLOBALS["HERIKA_PERSONALITY"] .= "\n<partner_orgasm>\n$orgasmerName is cumming! React to your partner's orgasm.\n</partner_orgasm>";
-                error_log("[AIAGENT-NSFW] Injected partner climax reaction for $actor (partner: $orgasmerName is cumming)");
+                // Regular NPC - inject partner climax reaction prompt from their speak style if available
+                // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+                $extended = NsfwNpcData::get($actor);
+                $partnerReactionPrompt = '';
+
+                error_log("[AIAGENT-NSFW] DEBUG: Looking up partner_climax for $actor, sex_speech_style=" . ($extended['sex_speech_style'] ?? 'NOT SET'));
+
+                // Try to get partner_climax_prompt from NPC's speak style
+                if (!empty($extended['sex_speech_style'])) {
+                    $speakStyle = NsfwData::getSpeakStyle($extended['sex_speech_style']);
+                    error_log("[AIAGENT-NSFW] DEBUG: Got speak style, partner_climax_prompt=" . ($speakStyle['partner_climax_prompt'] ?? 'NOT SET'));
+                    if (!empty($speakStyle['partner_climax_prompt'])) {
+                        $partnerReactionPrompt = $speakStyle['partner_climax_prompt'];
+                        $partnerReactionPrompt = str_replace('#PARTNER#', $orgasmerName, $partnerReactionPrompt);
+                        error_log("[AIAGENT-NSFW] Using speak style partner_climax_prompt for $actor: " . substr($partnerReactionPrompt, 0, 80));
+                    }
+                }
+
+                // Only inject if speak style has partner_climax_prompt - no hardcoded fallback
+                if (!empty($partnerReactionPrompt)) {
+                    $GLOBALS["HERIKA_PERSONALITY"] .= "\n<partner_orgasm>\n{$partnerReactionPrompt}\n</partner_orgasm>";
+                    error_log("[AIAGENT-NSFW] Injected partner climax reaction for $actor (partner: $orgasmerName is cumming)");
+                    error_log("[AIAGENT-NSFW] Partner climax prompt content: " . substr($partnerReactionPrompt, 0, 100));
+                } else {
+                    error_log("[AIAGENT-NSFW] No partner_climax_prompt for $actor - skipping injection");
+                }
             }
         }
 
+        // Track if THIS NPC is actually orgasming (used later to decide if we inject full speech style)
+        $npcIsActuallyOrgasming = false;
+
         // If NPC is orgasming, build the context message
+        // IMPORTANT: Only inject orgasm prompt if THIS NPC ($actor) is the one orgasming
+        // Otherwise inject a "react to partner's orgasm" prompt
         if (!$isPlayerOrgasm) {
-            // First check if this NPC has a speak style with a climax_prompt
-            $npcManager = new NpcMaster();
-            $npcData = $npcManager->getByName($orgasmerName);
-            $extended = $npcManager->getExtendedData($npcData);
-            $npcOrgasmPrompt = '';
+            $isThisNpcOrgasming = (strcasecmp($actor, $orgasmerName) === 0);
+            $npcIsActuallyOrgasming = $isThisNpcOrgasming;
 
-            // Try to get climax_prompt from NPC's speak style
-            if (!empty($extended['sex_speech_style'])) {
-                $speakStyle = NsfwData::getSpeakStyle($extended['sex_speech_style']);
-                if (!empty($speakStyle['climax_prompt'])) {
-                    $npcOrgasmPrompt = $speakStyle['climax_prompt'];
-                    $npcOrgasmPrompt = str_replace('#NPC_NAME#', $orgasmerName, $npcOrgasmPrompt);
-                    error_log("[AIAGENT-NSFW] Using speak style climax_prompt for $orgasmerName: " . substr($npcOrgasmPrompt, 0, 50));
+            if ($isThisNpcOrgasming) {
+                // THIS NPC is orgasming - mark them as orgasmed for pillow talk eligibility
+                $intimacyStatus["orgasmed"] = true;
+                updateIntimacyForActor($actor, $intimacyStatus);
+                error_log("[AIAGENT-NSFW] Marked $actor as orgasmed (ext_nsfw_orgasm)");
+
+                // THIS NPC is orgasming - inject their climax prompt
+                // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+                $extended = NsfwNpcData::get($orgasmerName);
+                $npcOrgasmPrompt = '';
+
+                // Try to get climax_prompt from NPC's speak style
+                if (!empty($extended['sex_speech_style'])) {
+                    $speakStyle = NsfwData::getSpeakStyle($extended['sex_speech_style']);
+                    if (!empty($speakStyle['climax_prompt'])) {
+                        $npcOrgasmPrompt = $speakStyle['climax_prompt'];
+                        $npcOrgasmPrompt = str_replace('#NPC_NAME#', $orgasmerName, $npcOrgasmPrompt);
+                        error_log("[AIAGENT-NSFW] Using speak style climax_prompt for $orgasmerName: " . substr($npcOrgasmPrompt, 0, 50));
+                    }
                 }
-            }
 
-            // Fall back to global prompt if no speak style climax_prompt
-            if (empty($npcOrgasmPrompt)) {
-                $npcOrgasmPrompt = getGlobalPrompt('npc_orgasm_prompt');
+                // Fall back to global prompt from UI if no speak style climax_prompt
                 if (empty($npcOrgasmPrompt)) {
-                    $npcOrgasmPrompt = "#NPC# is cumming!";
+                    $npcOrgasmPrompt = getGlobalPrompt('npc_orgasm_prompt');
+                    if (!empty($npcOrgasmPrompt)) {
+                        $npcOrgasmPrompt = str_replace('#NPC#', $orgasmerName, $npcOrgasmPrompt);
+                        $npcOrgasmPrompt = str_replace('#NPC_NAME#', $orgasmerName, $npcOrgasmPrompt);
+                    }
+                    // No hardcoded fallback - if nothing in UI, $npcOrgasmPrompt stays empty
                 }
-                $npcOrgasmPrompt = str_replace('#NPC#', $orgasmerName, $npcOrgasmPrompt);
-            }
 
-            $GLOBALS["gameRequest"][3] = $npcOrgasmPrompt . " " . $gameRequest[3];
-            error_log("[AIAGENT-NSFW] NPC orgasm message: {$GLOBALS["gameRequest"][3]}");
+                // Only prepend prompt if we have one
+                if (!empty($npcOrgasmPrompt)) {
+                    $GLOBALS["gameRequest"][3] = $npcOrgasmPrompt . " " . $gameRequest[3];
+                    error_log("[AIAGENT-NSFW] NPC orgasm message for $actor: {$GLOBALS["gameRequest"][3]}");
+                } else {
+                    error_log("[AIAGENT-NSFW] No climax_prompt for $actor - using raw event data only");
+                }
+            } else {
+                // This NPC is NOT the one orgasming - they should REACT to their partner's orgasm
+                // Use their speak style's partner_climax_prompt if available
+                // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+                $extendedReact = NsfwNpcData::get($actor);
+                $partnerReactionPromptNpc = '';
+
+                if (!empty($extendedReact['sex_speech_style'])) {
+                    $speakStyleReact = NsfwData::getSpeakStyle($extendedReact['sex_speech_style']);
+                    if (!empty($speakStyleReact['partner_climax_prompt'])) {
+                        $partnerReactionPromptNpc = $speakStyleReact['partner_climax_prompt'];
+                        $partnerReactionPromptNpc = str_replace('#PARTNER#', $orgasmerName, $partnerReactionPromptNpc);
+                        error_log("[AIAGENT-NSFW] Using speak style partner_climax_prompt for $actor (reacting to NPC partner)");
+                    }
+                }
+
+                // Only inject if speak style has partner_climax_prompt - no hardcoded fallback
+                if (!empty($partnerReactionPromptNpc)) {
+                    $GLOBALS["HERIKA_PERSONALITY"] .= "\n<partner_orgasm>\n{$partnerReactionPromptNpc}\n</partner_orgasm>";
+                    error_log("[AIAGENT-NSFW] Injected partner climax reaction for $actor (partner NPC: $orgasmerName is orgasming, NOT $actor)");
+                } else {
+                    error_log("[AIAGENT-NSFW] No partner_climax_prompt for $actor - skipping partner reaction injection");
+                }
+            }
         }
 
         // Get contextual orgasm message if scene ID provided
@@ -681,9 +1280,51 @@ class NsfwOstimHandler {
             }
             error_log("[AIAGENT-NSFW] Contextual orgasm: $orgasmContext");
 
-            // Inject speech style for orgasm
-            self::setSexSpeechStyle($actor);
-            error_log("[AIAGENT-NSFW] Injected speech style for orgasm: $actor");
+            // Only inject climax prompt if THIS NPC is actually orgasming
+            // Speech style was already injected when scene started - don't re-inject on every orgasm
+            if ($npcIsActuallyOrgasming) {
+                // Get climax_prompt directly from NPC's speak style - don't call setSexSpeechStyle
+                // which would re-inject the full style (already done in prerequest.php)
+                $climaxCue = "";
+                $extendedClimax = NsfwNpcData::get($actor);
+                if (!empty($extendedClimax['sex_speech_style'])) {
+                    $speakStyleClimax = NsfwData::getSpeakStyle($extendedClimax['sex_speech_style']);
+                    if (!empty($speakStyleClimax['climax_prompt'])) {
+                        $climaxCue = $speakStyleClimax['climax_prompt'];
+                    }
+                }
+
+                if (!empty($climaxCue)) {
+                    $climaxCue = str_replace('#NPC_NAME#', $actor, $climaxCue);
+                    $GLOBALS["PROMPTS"]["ext_nsfw_orgasm"]["cue"] = ["<climax_instruction>\n{$climaxCue}\n</climax_instruction> " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")];
+                    error_log("[AIAGENT-NSFW] Applied climax_prompt for $actor: " . substr($climaxCue, 0, 80));
+                }
+            } else {
+                // CRITICAL: Override the default "cue" prompt to tell NPC to REACT to partner's orgasm
+                // NOT to express their own climax!
+                // Use NPC's speak style partner_climax_prompt if available
+                $partnerOrgasmCue = "";
+                // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+                $extendedCue = NsfwNpcData::get($actor);
+
+                if (!empty($extendedCue['sex_speech_style'])) {
+                    $speakStyleCue = NsfwData::getSpeakStyle($extendedCue['sex_speech_style']);
+                    if (!empty($speakStyleCue['partner_climax_prompt'])) {
+                        $partnerOrgasmCue = "(" . $speakStyleCue['partner_climax_prompt'] . ")";
+                        $partnerOrgasmCue = str_replace('#PARTNER#', $orgasmerName, $partnerOrgasmCue);
+                        error_log("[AIAGENT-NSFW] Using speak style partner_climax_prompt as cue for $actor: " . substr($partnerOrgasmCue, 0, 80));
+                    }
+                }
+
+                // Only override cue if we have a speak style partner_climax_prompt
+                // NO hardcoded fallback - if NPC has no profile, don't override their cue
+                if (!empty($partnerOrgasmCue)) {
+                    $GLOBALS["PROMPTS"]["ext_nsfw_orgasm"]["cue"] = [$partnerOrgasmCue . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")];
+                    error_log("[AIAGENT-NSFW] Overrode cue with speak style partner_climax_prompt - $actor reacting to partner's orgasm");
+                } else {
+                    error_log("[AIAGENT-NSFW] No partner_climax_prompt for $actor - using existing cue from prerequest.php");
+                }
+            }
         }
     }
 
@@ -696,58 +1337,63 @@ class NsfwOstimHandler {
      * Handles: speak style content, profanity level, kinks (affinity-gated)
      */
     public static function setSexSpeechStyle($actorName) {
-        $npcManager = new NpcMaster();
-        $npcData = $npcManager->getByName($actorName);
-        if (!$npcData) {
-            $npcData = $npcManager->getByName(ucFirst(strtolower($actorName)));
-        }
-        if (isset($npcData["extended_data"])) {
-            $extended = json_decode($npcData["extended_data"], true);
-        } else {
-            $extended = [];
-        }
+        // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+        $extended = NsfwNpcData::get($actorName);
 
-        // Load FULL speak style from JSONB storage (includes all phase prompts)
-        if (isset($extended["sex_speech_style"]) && !empty($extended["sex_speech_style"])) {
+        // Check if NPC has a custom speech style configured
+        $hasProfile = isset($extended["sex_speech_style"]) && !empty($extended["sex_speech_style"]) && $extended["sex_speech_style"] !== 'auto';
+        $styleContent = '';
+        $speakStyle = null;
+
+        if ($hasProfile) {
+            // NPC HAS PROFILE - use their custom speak style
             $styleName = $extended["sex_speech_style"];
+            error_log("[AIAGENTNSFW] NPC $actorName HAS PROFILE - using custom speech style: $styleName");
 
-            // Skip 'auto' - that means no override
-            if ($styleName !== 'auto') {
-                // Get full speak style object with all prompts
-                $speakStyle = NsfwData::getSpeakStyle($styleName);
-                $styleContent = $speakStyle['content'] ?? '';
+            // Get full speak style object with all prompts
+            $speakStyle = NsfwData::getSpeakStyle($styleName);
+            $styleContent = $speakStyle['content'] ?? '';
 
-                // Fallback: check if .txt file exists (legacy support)
-                if (empty($styleContent)) {
-                    $styleFile = __DIR__ . "/speakStyles/" . $styleName . ".txt";
-                    if (file_exists($styleFile)) {
-                        $styleContent = file_get_contents($styleFile);
-                    }
+            // Fallback: check if .txt file exists (legacy support)
+            if (empty($styleContent)) {
+                $styleFile = __DIR__ . "/speakStyles/" . $styleName . ".txt";
+                if (file_exists($styleFile)) {
+                    $styleContent = file_get_contents($styleFile);
+                }
+            }
+        } else {
+            // NPC has NO PROFILE - use default from UI prompts page (NPC backups)
+            $styleContent = getGlobalPrompt('default_speech_style');
+            if (!empty($styleContent)) {
+                error_log("[AIAGENTNSFW] NPC $actorName has NO PROFILE - using default_speech_style");
+            }
+        }
+
+        // Inject the speech style (either custom or default)
+        if (!empty($styleContent)) {
+            $speakStyleTemplate = getGlobalPrompt('speak_style_template');
+            if (empty($speakStyleTemplate)) {
+                $speakStyleTemplate = "#Sex Expressions\n#SPEAK_STYLE#";
+            }
+            $speakStyleOutput = str_replace('#SPEAK_STYLE#', $styleContent, $speakStyleTemplate);
+            $GLOBALS["HERIKA_SPEECHSTYLE"] .= "\n" . $speakStyleOutput;
+
+            // Only inject phase prompts if NPC has a profile (speakStyle object exists)
+            if ($speakStyle) {
+                // Inject init_prompt if present (core sex scene behavior)
+                if (!empty($speakStyle['init_prompt'])) {
+                    $GLOBALS["HERIKA_SPEECHSTYLE"] .= "\n#Sex Scene Behavior\n" . $speakStyle['init_prompt'];
                 }
 
-                if (!empty($styleContent)) {
-                    $speakStyleTemplate = getGlobalPrompt('speak_style_template');
-                    if (empty($speakStyleTemplate)) {
-                        $speakStyleTemplate = "#Sex Expressions\n#SPEAK_STYLE#";
-                    }
-                    $speakStyleOutput = str_replace('#SPEAK_STYLE#', $styleContent, $speakStyleTemplate);
-                    $GLOBALS["HERIKA_SPEECHSTYLE"] .= "\n" . $speakStyleOutput;
-
-                    // Inject init_prompt if present (core sex scene behavior)
-                    if (!empty($speakStyle['init_prompt'])) {
-                        $GLOBALS["HERIKA_SPEECHSTYLE"] .= "\n#Sex Scene Behavior\n" . $speakStyle['init_prompt'];
-                    }
-
-                    // Store phase prompts in globals for climax/pillow talk handlers
-                    if (!empty($speakStyle['climax_prompt'])) {
-                        $GLOBALS["AIAGENTNSFW_CLIMAX_PROMPT"] = $speakStyle['climax_prompt'];
-                    }
-                    if (!empty($speakStyle['pillow_talk_prompt'])) {
-                        $GLOBALS["AIAGENTNSFW_PILLOW_TALK_PROMPT"] = $speakStyle['pillow_talk_prompt'];
-                    }
-                    if (!empty($speakStyle['masturbation_prompt'])) {
-                        $GLOBALS["AIAGENTNSFW_MASTURBATION_PROMPT"] = $speakStyle['masturbation_prompt'];
-                    }
+                // Store phase prompts in globals for climax/pillow talk handlers
+                if (!empty($speakStyle['climax_prompt'])) {
+                    $GLOBALS["AIAGENTNSFW_CLIMAX_PROMPT"] = $speakStyle['climax_prompt'];
+                }
+                if (!empty($speakStyle['pillow_talk_prompt'])) {
+                    $GLOBALS["AIAGENTNSFW_PILLOW_TALK_PROMPT"] = $speakStyle['pillow_talk_prompt'];
+                }
+                if (!empty($speakStyle['masturbation_prompt'])) {
+                    $GLOBALS["AIAGENTNSFW_MASTURBATION_PROMPT"] = $speakStyle['masturbation_prompt'];
                 }
             }
         }
@@ -830,11 +1476,20 @@ class NsfwOstimHandler {
             $normalKinksThreshold = $extended["nsfw_kinks_unlock_tier"] ?? 56;  // Default: Fond
             $secretKinksThreshold = $extended["nsfw_secret_kinks_unlock_tier"] ?? 76;  // Default: Devoted
 
+            // Load kink templates from database (UI prompts)
+            $prompts = NsfwData::getBlob(NsfwData::KEY_PROMPTS);
+
             // Inject normal kinks if threshold met
             if ($hasNormalKinks && $affinity >= $normalKinksThreshold) {
                 $kinksList = implode(", ", $extended["nsfw_kinks"]);
-                $GLOBALS["HERIKA_SPEECHSTYLE"] .= "\n#Sexual Preferences/Kinks\nThis character is into: " . $kinksList;
-                error_log("[AIAGENTNSFW] Normal kinks unlocked for $actorName (affinity: $affinity >= $normalKinksThreshold)");
+                $normalKinksTemplate = $prompts['normal_kinks_template'] ?? '';
+                if (empty($normalKinksTemplate)) {
+                    error_log("[AIAGENTNSFW] No prompt for 'normal_kinks_template' - save in NSFW Config UI Prompts tab");
+                } else {
+                    $kinksOutput = str_replace('#KINKS#', $kinksList, $normalKinksTemplate);
+                    $GLOBALS["HERIKA_SPEECHSTYLE"] .= "\n" . $kinksOutput;
+                    error_log("[AIAGENTNSFW] Normal kinks unlocked for $actorName (affinity: $affinity >= $normalKinksThreshold)");
+                }
             } else if ($hasNormalKinks) {
                 error_log("[AIAGENTNSFW] Normal kinks gated for $actorName (affinity: $affinity < $normalKinksThreshold)");
             }
@@ -842,8 +1497,14 @@ class NsfwOstimHandler {
             // Inject secret kinks if threshold met
             if ($hasSecretKinks && $affinity >= $secretKinksThreshold) {
                 $secretKinksList = implode(", ", $extended["nsfw_secret_kinks"]);
-                $GLOBALS["HERIKA_SPEECHSTYLE"] .= "\n#Secret Desires\nTheir deepest, most private desires: " . $secretKinksList;
-                error_log("[AIAGENTNSFW] Secret kinks unlocked for $actorName (affinity: $affinity >= $secretKinksThreshold)");
+                $secretKinksTemplate = $prompts['secret_kinks_template'] ?? '';
+                if (empty($secretKinksTemplate)) {
+                    error_log("[AIAGENTNSFW] No prompt for 'secret_kinks_template' - save in NSFW Config UI Prompts tab");
+                } else {
+                    $secretKinksOutput = str_replace('#SECRET_KINKS#', $secretKinksList, $secretKinksTemplate);
+                    $GLOBALS["HERIKA_SPEECHSTYLE"] .= "\n" . $secretKinksOutput;
+                    error_log("[AIAGENTNSFW] Secret kinks unlocked for $actorName (affinity: $affinity >= $secretKinksThreshold)");
+                }
             } else if ($hasSecretKinks) {
                 error_log("[AIAGENTNSFW] Secret kinks gated for $actorName (affinity: $affinity < $secretKinksThreshold)");
             }
@@ -855,20 +1516,22 @@ class NsfwOstimHandler {
      * Also injects tier-based relationship context for multi-actor scenes
      */
     public static function setSexPrompt($actorName) {
-        $npcManager = new NpcMaster();
-        $npcData = $npcManager->getByName($actorName);
-        if (!$npcData) {
-            $npcData = $npcManager->getByName(ucFirst(strtolower($actorName)));
-        }
+        // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+        $extended = NsfwNpcData::get($actorName);
 
-        if (isset($npcData["extended_data"])) {
-            $extended = json_decode($npcData["extended_data"], true);
-        } else {
-            $extended = [];
-        }
-
-        // UI saves to sex_prompt in JSONB
+        // UI saves to sex_prompt in JSONB - if NPC has profile, use it
+        // If no profile, fall back to default_sex_personality from prompts page
         $sexPrompt = $extended["sex_prompt"] ?? null;
+        if (empty($sexPrompt)) {
+            // NPC has no profile - use default from UI prompts page
+            $sexPrompt = getGlobalPrompt('default_sex_personality');
+            if (!empty($sexPrompt)) {
+                error_log("[AIAGENTNSFW] NPC $actorName has NO PROFILE - using default_sex_personality");
+            }
+        } else {
+            error_log("[AIAGENTNSFW] NPC $actorName HAS PROFILE - using custom sex_prompt");
+        }
+
         if (!empty($sexPrompt)) {
             $sexPersonalityTemplate = getGlobalPrompt('sex_personality_template');
             if (empty($sexPersonalityTemplate)) {
@@ -903,7 +1566,7 @@ class NsfwOstimHandler {
 
             if (!empty($sceneContext)) {
                 $GLOBALS["HERIKA_PERSONALITY"] .= "\n" . $sceneContext;
-                error_log("[AIAGENTNSFW] Injected tier relationship context for $actorName: " . substr($sceneContext, 0, 200) . "...");
+                error_log("[AIAGENTNSFW] Injected tier relationship context for $actorName: " . $sceneContext);
             }
         }
     }
@@ -992,8 +1655,10 @@ class NsfwOstimHandler {
                 return;
             }
 
-            $GLOBALS["FORCE_MAX_TOKENS"] = 50;
-            $buffer = $connectionHandler->fast_request($contextData, ["max_tokens" => 50], "aiagent_nsfw");
+            // Use token limit from UI settings, not hardcoded
+            $climaxTokenLimit = _getNsfwSetting('TOKEN_LIMIT_CLIMAX', 100);
+            $GLOBALS["FORCE_MAX_TOKENS"] = $climaxTokenLimit;
+            $buffer = $connectionHandler->fast_request($contextData, ["max_tokens" => $climaxTokenLimit], "aiagent_nsfw");
 
             $original_speech = " ... Ohh .. " . (strtr(trim($buffer), ['"' => '', "{$GLOBALS["HERIKA_NAME"]}:" => ""]));
 

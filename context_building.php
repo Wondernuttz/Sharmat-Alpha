@@ -28,6 +28,18 @@ foreach ($GLOBALS["CONTEXT_BUILDING_DATA"] as $n => $line) {
     } else  if ($line["role"] == "ext_nsfw_npc_scene") {
         // NPC-to-NPC scenes (OStim NPCs)
         $GLOBALS["CONTEXT_BUILDING_DATA"][$n]["role"] = "user";
+
+    } else  if ($line["role"] == "ext_nsfw_npc_invite") {
+        // NPC-to-NPC invite phase (dom approaching sub)
+        $GLOBALS["CONTEXT_BUILDING_DATA"][$n]["role"] = "user";
+
+    } else  if ($line["role"] == "ext_nsfw_npc_orgasm") {
+        // NPC orgasm in NPC-to-NPC scene
+        $GLOBALS["CONTEXT_BUILDING_DATA"][$n]["role"] = "user";
+
+    } else  if ($line["role"] == "chatnf_npc_sl") {
+        // NPC-to-NPC scene speech
+        $GLOBALS["CONTEXT_BUILDING_DATA"][$n]["role"] = "user";
     }
 }
 ?>

@@ -7,6 +7,7 @@
  */
 
 require_once(__DIR__ . '/../../lib/scriptproxy_papyrus.php');
+require_once(__DIR__ . '/nsfw_data.php');  // NsfwNpcData class for per-NPC NSFW storage
 
 define('GOLD_FORM_ID', '0x0000000F'); // Skyrim Gold form ID
 
@@ -108,25 +109,21 @@ class PaymentHandler {
      * Record a favor debt (non-gold payment)
      */
     private function recordFavorDebt($npcName, $value, $serviceType) {
-        // Store in NPC's extended data
-        $npcData = $this->getNpcData($npcName);
+        // Store in NPC's NSFW data (nsfw_npc_data table)
+        $extended = NsfwNpcData::get($npcName);
 
-        if ($npcData) {
-            $extended = json_decode($npcData['extended_data'] ?? '{}', true);
-
-            if (!isset($extended['favor_debts'])) {
-                $extended['favor_debts'] = [];
-            }
-
-            $extended['favor_debts'][] = [
-                'value' => $value,
-                'service' => $serviceType,
-                'timestamp' => time(),
-                'collected' => false
-            ];
-
-            $this->updateNpcExtendedData($npcName, $extended);
+        if (!isset($extended['favor_debts'])) {
+            $extended['favor_debts'] = [];
         }
+
+        $extended['favor_debts'][] = [
+            'value' => $value,
+            'service' => $serviceType,
+            'timestamp' => time(),
+            'collected' => false
+        ];
+
+        NsfwNpcData::save($npcName, $extended);
 
         return [
             'success' => true,
@@ -140,25 +137,21 @@ class PaymentHandler {
      * Record a goods payment
      */
     private function recordGoodsPayment($npcName, $value, $serviceType) {
-        // Similar to favor debt but for goods
-        $npcData = $this->getNpcData($npcName);
+        // Store in NPC's NSFW data (nsfw_npc_data table)
+        $extended = NsfwNpcData::get($npcName);
 
-        if ($npcData) {
-            $extended = json_decode($npcData['extended_data'] ?? '{}', true);
-
-            if (!isset($extended['goods_owed'])) {
-                $extended['goods_owed'] = [];
-            }
-
-            $extended['goods_owed'][] = [
-                'value' => $value,
-                'service' => $serviceType,
-                'timestamp' => time(),
-                'delivered' => false
-            ];
-
-            $this->updateNpcExtendedData($npcName, $extended);
+        if (!isset($extended['goods_owed'])) {
+            $extended['goods_owed'] = [];
         }
+
+        $extended['goods_owed'][] = [
+            'value' => $value,
+            'service' => $serviceType,
+            'timestamp' => time(),
+            'delivered' => false
+        ];
+
+        NsfwNpcData::save($npcName, $extended);
 
         return [
             'success' => true,
@@ -243,14 +236,8 @@ class PaymentHandler {
      * Get NPC's pricing configuration
      */
     public function getNpcPricing($npcName) {
-        $npcData = $this->getNpcData($npcName);
-
-        if (!$npcData) {
-            return null;
-        }
-
-        $extended = json_decode($npcData['extended_data'] ?? '{}', true);
-
+        // Get from nsfw_npc_data table (NOT core_npc_master.extended_data)
+        $extended = NsfwNpcData::get($npcName);
         return $extended['prostitute_pricing'] ?? null;
     }
 
@@ -268,36 +255,13 @@ class PaymentHandler {
             return $result['refid'];
         }
 
-        // Try npc_defs
-        $npcData = $this->getNpcData($npcName);
-        if ($npcData) {
-            $extended = json_decode($npcData['extended_data'] ?? '{}', true);
-            if (!empty($extended['refid'])) {
-                return $extended['refid'];
-            }
+        // Try nsfw_npc_data for stored refid
+        $extended = NsfwNpcData::get($npcName);
+        if (!empty($extended['refid'])) {
+            return $extended['refid'];
         }
 
         return null;
-    }
-
-    /**
-     * Get NPC data from npc_defs table
-     */
-    private function getNpcData($npcName) {
-        return $this->db->fetchOne(
-            "SELECT * FROM npc_defs WHERE name = :name",
-            ['name' => $npcName]
-        );
-    }
-
-    /**
-     * Update NPC extended data
-     */
-    private function updateNpcExtendedData($npcName, $extended) {
-        $this->db->execQuery(
-            "UPDATE npc_defs SET extended_data = :extended WHERE name = :name",
-            ['extended' => json_encode($extended), 'name' => $npcName]
-        );
     }
 
     /**

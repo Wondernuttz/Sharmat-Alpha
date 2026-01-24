@@ -1,57 +1,198 @@
 <?php
 
 // This is called at the very beginning, before any context is created
-// Add info_sexscene to external_fast_commands for non-locking processing
+// These events are NOT fast commands - they trigger NPC dialogue responses
+// Fast commands bypass normal LLM flow and don't generate dialogue
 
-$GLOBALS["external_fast_commands"][]="ext_nsfw_sexcene";
-$GLOBALS["external_fast_commands"][]="ext_nsfw_npc_scene";  // NPC-to-NPC scenes (OStim NPCs)
+// These events trigger dialogue:
+// - ext_nsfw_sexcene: Scene changes
+// - ext_nsfw_npc_scene: NPC-to-NPC scenes
+// - ext_nsfw_npc_invite: NPC-to-NPC invite phase
+// - ext_nsfw_npc_orgasm: NPC orgasm in NPC-to-NPC scene
+// - ext_nsfw_physics / ext_nsfw_physics_raw: HIGGS grabs, CBPC touches
+
+// Only VR item events and fertility notifications stay as fast commands (silent processing)
 $GLOBALS["external_fast_commands"][]="fertility_notification";
 $GLOBALS["external_fast_commands"][]="ext_vr_item_raw";  // VR item pickup/drop (HIGGS)
 $GLOBALS["external_fast_commands"][]="ext_vr_item_pickup";  // Rewritten from ext_vr_item_raw
 $GLOBALS["external_fast_commands"][]="ext_vr_item_drop";    // Rewritten from ext_vr_item_raw
-$GLOBALS["external_fast_commands"][]="ext_nsfw_physics_raw";  // HIGGS grab / CBPC touch on body parts
+
+// BLOCKED events - these should NOT hit the LLM at all
+$GLOBALS["external_fast_commands"][]="nsfw_blocked_cooldown";
+$GLOBALS["external_fast_commands"][]="nsfw_blocked_duplicate";
 
 
 require_once(__DIR__."/common.php");
 
 
 if (isset($GLOBALS["gameRequest"])) {
-    // Rewrite info_sexscene to ext_nsfw_sexcene for scene processing
-    // Papyrus sends info_sexscene, but our handler expects ext_nsfw_sexcene
-    if ($GLOBALS["gameRequest"][0] == "info_sexscene") {
-        error_log("Rewriting info_sexscene data " . $GLOBALS["gameRequest"][3]);
-        $GLOBALS["gameRequest"][0] = "ext_nsfw_sexcene";
+    $currentEvent = $GLOBALS["gameRequest"][0] ?? '';
+    $currentActor = $GLOBALS["HERIKA_NAME"] ?? 'unknown';
+
+    // Mark scene as active when we get scene events
+    if (in_array($currentEvent, ['ext_nsfw_sexcene', 'info_sexscene', 'chatnf_sl', 'chatnf_sl_nr'])) {
+        @file_put_contents(sys_get_temp_dir() . "/nsfw_scene_active.txt", time());
     }
 
-    // Main
-    // Disposal data should be handled by CHIM engine.
-    // On game load (init), clear "future" intimacy state to prevent context bleed
-    if ($GLOBALS["gameRequest"][0]=="init") {
-        // Get the save timestamp from the game request
-        $saveTimestamp = $GLOBALS["gameRequest"][2] ?? 0;
-
-        // Clear NSFW intimacy data only for NPCs where the intimacy gamets is in "the future"
-        // This prevents NPCs from "remembering" intimacy from a different timeline
-        try {
-            $clearResult = $GLOBALS["db"]->execQuery("
-                UPDATE core_npc_master
-                SET extended_data = extended_data::jsonb - 'aiagent_nsfw_intimacy_data'
-                WHERE extended_data IS NOT NULL
-                  AND extended_data::jsonb ? 'aiagent_nsfw_intimacy_data'
-                  AND (
-                      (extended_data::jsonb->'aiagent_nsfw_intimacy_data'->>'gamets')::float > $saveTimestamp
-                      OR (extended_data::jsonb->'aiagent_nsfw_intimacy_data'->>'gamets') IS NULL
-                  )
-            ");
-            error_log("[AIAGENTNSFW] Game load (init): Cleared future intimacy state (gamets > $saveTimestamp)");
-        } catch (Exception $e) {
-            error_log("[AIAGENTNSFW] Error clearing future intimacy data on init: " . $e->getMessage());
+    // Physics cooldown (outside scenes only - scene blocking handled by Papyrus routing)
+    $physicsEvents = ['ext_nsfw_physics_raw', 'ext_nsfw_physics'];
+    if (in_array($currentEvent, $physicsEvents)) {
+        $rawData = $GLOBALS["gameRequest"][3] ?? '';
+        $parts = explode('^', $rawData);
+        $isGrab = (($parts[2] ?? 'touch') === 'grab');
+        $cooldownSeconds = $isGrab ? 10 : 180;
+        $cooldownFile = sys_get_temp_dir() . "/nsfw_physics_" . ($isGrab ? 'grab_' : 'touch_') . md5($currentActor) . ".txt";
+        $lastTime = @file_get_contents($cooldownFile);
+        if ($lastTime !== false && (time() - (int)$lastTime) < $cooldownSeconds) {
+            $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
+        } else {
+            @file_put_contents($cooldownFile, time());
         }
     }
 
-    if ($GLOBALS["gameRequest"][0]=="infosave") {
+    // Scene dedup - OStim fires ostim_scenechanged twice
+    if ($currentEvent === 'ext_nsfw_sexcene') {
+        $sceneHash = md5($GLOBALS["gameRequest"][3] ?? '');
+        $dedupFile = sys_get_temp_dir() . "/nsfw_scene_dedup_" . $sceneHash . ".txt";
+        $lastTime = @file_get_contents($dedupFile);
+        $lastTime = $lastTime !== false ? (float)$lastTime : 0;
+        $now = microtime(true);
+        if (($now - $lastTime) < 1.0) {
+            $GLOBALS["gameRequest"][0] = "nsfw_blocked_duplicate";
+        } else {
+            @file_put_contents($dedupFile, $now);
+        }
+    }
 
+    // Scene dialogue cooldown
+    if (in_array($currentEvent, ['chatnf_sl', 'chatnf_sl_nr'])) {
+        require_once(__DIR__."/prompts.php");
+        $sceneCooldown = _getNsfwSetting('COOLDOWN_SEX_SCENE', 15);
+        $cooldownFile = sys_get_temp_dir() . "/nsfw_scene_dialogue_" . md5($currentActor) . ".txt";
+        $lastTime = @file_get_contents($cooldownFile);
+        $lastTime = $lastTime !== false ? (int)$lastTime : 0;
+        if ((time() - $lastTime) < $sceneCooldown) {
+            $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
+        } else {
+            @file_put_contents($cooldownFile, time());
+        }
+    }
 
+    // Orgasm/climax handling - cooldown only (speak style prompt injection happens in prompts.php)
+    if (in_array($currentEvent, ['ext_nsfw_orgasm', 'ext_nsfw_npc_orgasm', 'chatnf_sl_climax'])) {
+        require_once(__DIR__."/prompts.php");  // Loads _getNsfwSetting()
+        $climaxCooldown = _getNsfwSetting('COOLDOWN_CLIMAX', 30);
+
+        // Extract orgasmer name from event data since HERIKA_NAME isn't set yet
+        // Format: "(Context location: X)PlayerName:OrgasmerName/SceneId/Index/Partner"
+        // OR with profile param: The third parameter of requestMessageForActor sets $_GET["profile"]
+        // which contains the MD5 hash of the NPC name - but we need the actual name for meaningful cooldown
+        $rawOrgasmData = $GLOBALS["gameRequest"][3] ?? '';
+        $orgasmActorName = '';
+
+        // Parse the orgasmer name from the event data
+        if (!empty($rawOrgasmData)) {
+            $orgasmParts = explode("/", $rawOrgasmData);
+            $firstPart = trim($orgasmParts[0] ?? '');
+            if (strpos($firstPart, ':') !== false) {
+                $colonParts = explode(':', $firstPart);
+                $orgasmActorName = trim(end($colonParts));
+            }
+        }
+
+        // If we couldn't parse it, use the profile hash for per-request cooldown
+        if (empty($orgasmActorName)) {
+            $orgasmActorName = $_GET["profile"] ?? 'fallback';
+            error_log("[AIAGENT-NSFW] Orgasm cooldown: couldn't parse actor name, using profile: $orgasmActorName");
+        }
+
+        $cooldownFile = sys_get_temp_dir() . "/nsfw_climax_cooldown_" . md5($orgasmActorName) . ".txt";
+        $lastTime = @file_get_contents($cooldownFile);
+        $lastTime = $lastTime !== false ? (int)$lastTime : 0;
+        $timeSinceLast = time() - $lastTime;
+
+        error_log("[AIAGENT-NSFW] Orgasm cooldown check for '$orgasmActorName': {$timeSinceLast}s since last (cooldown: {$climaxCooldown}s)");
+
+        if ($timeSinceLast < $climaxCooldown) {
+            error_log("[AIAGENT-NSFW] BLOCKING orgasm for '$orgasmActorName' - cooldown not expired");
+            $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
+        } else {
+            @file_put_contents($cooldownFile, time());
+        }
+    }
+
+    // Rewrite info_sexscene to ext_nsfw_sexcene
+    if ($GLOBALS["gameRequest"][0] == "info_sexscene") {
+        $GLOBALS["gameRequest"][0] = "ext_nsfw_sexcene";
+    }
+
+    // Physics event preprocessing - rewrite to chatnf_physics for dialogue flow
+    if ($GLOBALS["gameRequest"][0] == "ext_nsfw_physics_raw") {
+        require_once(__DIR__."/nsfw_physics.php");
+        $rawData = $GLOBALS["gameRequest"][3] ?? '';
+        if (!empty($rawData)) {
+            $result = NsfwPhysics::processPhysicsEvent($rawData);
+            if ($result) {
+                $GLOBALS["gameRequest"][0] = "chatnf_physics";
+                $GLOBALS["gameRequest"][3] = $result['message'];
+            }
+        }
+    }
+
+    // On game load (init), clear stale scene state and future intimacy data
+    if ($GLOBALS["gameRequest"][0]=="init") {
+        $saveTimestamp = $GLOBALS["gameRequest"][2] ?? 0;
+
+        // Clear active scene data - OStim scenes don't persist across save/load
+        try {
+            $GLOBALS["db"]->execQuery("
+                UPDATE nsfw_npc_data
+                SET extended_data = jsonb_set(
+                    jsonb_set(
+                        jsonb_set(
+                            jsonb_set(
+                                jsonb_set(
+                                    jsonb_set(
+                                        extended_data,
+                                        '{aiagent_nsfw_intimacy_data,level}', '0'::jsonb, false
+                                    ),
+                                    '{aiagent_nsfw_intimacy_data,scene_actors}', 'null'::jsonb, false
+                                ),
+                                '{aiagent_nsfw_intimacy_data,scene_phase}', 'null'::jsonb, false
+                            ),
+                            '{aiagent_nsfw_intimacy_data,scene_start_time}', 'null'::jsonb, false
+                        ),
+                        '{aiagent_nsfw_intimacy_data,is_npc_scene}', 'false'::jsonb, false
+                    ),
+                    '{aiagent_nsfw_intimacy_data,npc_scene_partner}', 'null'::jsonb, false
+                )
+                WHERE extended_data IS NOT NULL
+                  AND extended_data ? 'aiagent_nsfw_intimacy_data'
+                  AND (
+                      (extended_data->'aiagent_nsfw_intimacy_data'->>'level')::int > 0
+                      OR extended_data->'aiagent_nsfw_intimacy_data' ? 'scene_actors'
+                  )
+            ");
+        } catch (Exception $e) {}
+
+        // Clear future intimacy data (from different timeline/save)
+        try {
+            $GLOBALS["db"]->execQuery("
+                UPDATE nsfw_npc_data
+                SET extended_data = extended_data - 'aiagent_nsfw_intimacy_data'
+                WHERE extended_data IS NOT NULL
+                  AND extended_data ? 'aiagent_nsfw_intimacy_data'
+                  AND (
+                      (extended_data->'aiagent_nsfw_intimacy_data'->>'gamets')::float > $saveTimestamp
+                      OR (extended_data->'aiagent_nsfw_intimacy_data'->>'gamets') IS NULL
+                  )
+            ");
+        } catch (Exception $e) {}
+    }
+
+    // Blocked events terminate immediately - no LLM processing
+    if (in_array($GLOBALS["gameRequest"][0], ['nsfw_blocked_cooldown', 'nsfw_blocked_duplicate'])) {
+        exit();
     }
 }
 
@@ -63,13 +204,16 @@ $GLOBALS["HOOKS"]["PERSONALITY_BUILDER"]["fmr_fertility_prompt"]=function($curre
         return $currentPersonality;
     }
 
-    // Only inject if we have NPC data with fertility state
-    if (!$currentNpcData || !isset($currentNpcData["extended_data"])) {
+    // Get NPC name from current NPC data
+    $npcName = $currentNpcData["npc_name"] ?? ($GLOBALS["HERIKA_NAME"] ?? null);
+    if (!$npcName) {
         return $currentPersonality;
     }
 
-    $extended = json_decode($currentNpcData["extended_data"], true);
-    if (!$extended) return $currentPersonality;
+    // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+    require_once __DIR__ . "/nsfw_data.php";
+    $extended = NsfwNpcData::get($npcName);
+    if (!$extended || empty($extended)) return $currentPersonality;
 
     // Check if prompts.php has been loaded (has the getFertilityPromptForNpc function)
     if (!function_exists('getFertilityPromptForNpc')) {
@@ -78,7 +222,6 @@ $GLOBALS["HOOKS"]["PERSONALITY_BUILDER"]["fmr_fertility_prompt"]=function($curre
         return $currentPersonality;
     }
 
-    $npcName = $currentNpcData["npc_name"] ?? ($GLOBALS["HERIKA_NAME"] ?? "She");
     $fertilityPrompt = getFertilityPromptForNpc($extended, $npcName);
 
     if ($fertilityPrompt) {
@@ -97,10 +240,14 @@ $GLOBALS["HOOKS"]["BIOGRAPHY_BUILDER"]["fertility_handler"]=function($currentBio
          return $currentBio;
      }
 
-     $extended = json_decode($currentNpcData["extended_data"], true);
-     if (!$extended) return $currentBio;
+     $npcName = $currentNpcData["npc_name"] ?? null;
+     if (!$npcName) return $currentBio;
 
-     $npcName = $currentNpcData["npc_name"];
+     // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+     require_once __DIR__ . "/nsfw_data.php";
+     $extended = NsfwNpcData::get($npcName);
+     if (!$extended || empty($extended)) return $currentBio;
+
      $fertilityInfo = [];
 
      // Pregnancy status with details

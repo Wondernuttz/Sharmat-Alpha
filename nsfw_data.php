@@ -8,8 +8,23 @@
  * - Speak styles (35+)
  *
  * Uses conf_opts table with JSONB 'value' column.
- * This is Tyler's preferred pattern - see his comment:
+ * This pattern is THE STANDARD AND PROJECT CRITICAL:
+ * REMOVAL RESULTS IN CRITICAL SYSTEMS FAILURE
  * "extended_data is a JSONB field. you can use it in SQL queries."
+ *
+ * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ * !! CRITICAL - DO NOT REMOVE JSONB SQL OPERATORS !!
+ * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ * !! The functions getItem(), getScene(), getSpeakStyle(), etc. use       !!
+ * !! PostgreSQL JSONB operators like (value::jsonb)->'key' to extract    !!
+ * !! single keys SERVER-SIDE without loading entire blobs into PHP.      !!
+ * !!                                                                      !!
+ * !! This is NOT redundant code. The aiagent_nsfw_scenes blob is 1.25MB. !!
+ * !! Loading it into PHP every time would murder performance.            !!
+ * !!                                                                      !!
+ * !! DO NOT "simplify" these queries to just load the whole blob.        !!
+ * !! DO NOT strip the ::jsonb cast - conf_opts.value is TEXT not JSONB.  !!
+ * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
  */
 
 class NsfwData {
@@ -202,11 +217,43 @@ class NsfwData {
     }
 
     /**
-     * Get single item from JSONB blob
+     * Get single item from JSONB blob using PostgreSQL JSONB operator
+     * This extracts just the requested key server-side instead of loading the entire blob
+     *
+     * !! DO NOT SIMPLIFY THIS TO LOAD THE WHOLE BLOB !!
+     * !! The scenes blob is 1.25MB - this query extracts ONE key server-side !!
+     * !! The ::jsonb cast is required because conf_opts.value is TEXT !!
      */
     public static function getItem($key, $itemKey) {
-        $data = self::getBlob($key);
-        return $data[$itemKey] ?? null;
+        // Check cache first - if we already loaded the blob, use it
+        if (isset(self::$cache[$key]) && isset(self::$cache[$key][$itemKey])) {
+            return self::$cache[$key][$itemKey];
+        }
+
+        if (!isset($GLOBALS['db'])) {
+            return null;
+        }
+
+        try {
+            // !! JSONB OPERATOR - DO NOT REMOVE !!
+            // This extracts just ONE key server-side instead of loading entire blob
+            // (value::jsonb)->'key' returns JSON, cast is needed because value column is TEXT
+            $escapedKey = pg_escape_string($key);
+            $escapedItemKey = pg_escape_string($itemKey);
+
+            $row = $GLOBALS['db']->fetchOne(
+                "SELECT (value::jsonb)->'$escapedItemKey' as item_value FROM conf_opts WHERE id = '$escapedKey'"
+            );
+
+            if ($row && $row['item_value'] !== null) {
+                $decoded = json_decode($row['item_value'], true);
+                return $decoded;
+            }
+        } catch (Exception $e) {
+            error_log("[NSFW-Data] Failed to get item: " . $e->getMessage());
+        }
+
+        return null;
     }
 
     /**
@@ -312,25 +359,12 @@ class NsfwData {
     /**
      * Get scene description by stage ID
      * Returns: ['description' => '...', 'description_es' => '...', 'description_en' => '...', 'i_desc' => '...']
+     * Uses JSONB operator for efficient single-key lookup
      */
     public static function getScene($stageId) {
-        // Try exact match first
-        $scene = self::getItem(self::KEY_SCENES, $stageId);
-        if ($scene) {
-            return $scene;
-        }
-
-        // Try case-insensitive match
-        $scenes = self::getBlob(self::KEY_SCENES);
-        $stageIdLower = strtolower($stageId);
-
-        foreach ($scenes as $id => $data) {
-            if (strtolower($id) === $stageIdLower) {
-                return $data;
-            }
-        }
-
-        return null;
+        // Use getItem which now uses JSONB operator - no need for case-insensitive fallback
+        // Scene IDs should match exactly as stored
+        return self::getItem(self::KEY_SCENES, $stageId);
     }
 
     /**
@@ -655,94 +689,50 @@ class NsfwData {
 
     /**
      * Default speak styles
+     *
+     * NOTE: The actual speak styles are loaded from nsfw_import_data.php
+     * This returns empty because speak styles should be seeded via the import script,
+     * not from hardcoded defaults. The real speak styles are complex with phase prompts.
+     *
+     * Run import_nsfw_data.php to seed the database with the correct speak styles.
      */
     public static function getDefaultSpeakStyles() {
-        return [
-            'default' => [
-                'description' => 'Natural, character-appropriate responses',
-                'content' => 'Write naturally and descriptively. Focus on emotional connection and physical sensations. Use character-appropriate language and reactions.',
-                'emoji' => '💬'
-            ],
-            'romantic_high' => [
-                'description' => 'Deep love and devotion',
-                'content' => 'Deep emotional intimacy. Express love, devotion, and tender passion. Use affectionate terms naturally. Physical descriptions should emphasize connection and mutual pleasure. This is a loving, established relationship - show comfort, trust, and emotional vulnerability.',
-                'emoji' => '💕'
-            ],
-            'romantic_medium' => [
-                'description' => 'Growing romantic feelings',
-                'content' => 'Romantic interest developing. Show attraction, nervousness, excitement. Building toward something deeper. Sweet moments mixed with passion.',
-                'emoji' => '💗'
-            ],
-            'prostitute_business' => [
-                'description' => 'Professional service provider',
-                'content' => 'Professional service provider. This is work - be skilled but emotionally detached. Focus on technique and customer satisfaction. May fake enthusiasm. Comments about payment, time, or repeat business are natural. "The customer is always right" energy.',
-                'emoji' => '💰'
-            ],
-            'prostitute_enjoying' => [
-                'description' => 'Prostitute genuinely enjoying',
-                'content' => 'Professional but this one is actually good. Genuine pleasure mixing with the business transaction. Still professional but the enjoyment is real.',
-                'emoji' => '💵'
-            ],
-            'prostitute_reluctant' => [
-                'description' => 'Prostitute reluctantly working',
-                'content' => 'This is just work and not pleasant work. Going through the motions. Waiting for it to be over. Professional mask barely hiding discomfort.',
-                'emoji' => '😔'
-            ],
-            'dominant' => [
-                'description' => 'Taking control',
-                'content' => 'You are in control. Command, direct, take what you want. Confident, assertive, perhaps demanding. Your partner submits to your will.',
-                'emoji' => '👑'
-            ],
-            'submissive' => [
-                'description' => 'Yielding to partner',
-                'content' => 'You yield to your partner. Obedient, eager to please, responsive to commands. Find pleasure in submission and service.',
-                'emoji' => '🙇'
-            ],
-            'aggressive' => [
-                'description' => 'Rough and intense',
-                'content' => 'Rough, intense, primal. This is raw, physical, demanding. Not gentle or sweet. Power and force.',
-                'emoji' => '🔥'
-            ],
-            'intimate' => [
-                'description' => 'Tender and close',
-                'content' => 'Soft, gentle, intimate. Whispered words, tender touches. Emotional closeness. Making love, not just sex.',
-                'emoji' => '🥰'
-            ],
-            'passionate' => [
-                'description' => 'Burning desire',
-                'content' => 'Burning with desire. Intense, urgent, can\'t get enough. Passion overwhelming restraint. Heat and hunger.',
-                'emoji' => '🔥'
-            ],
-            'playful' => [
-                'description' => 'Fun and teasing',
-                'content' => 'Lighthearted, teasing, fun. Laughter mixed with pleasure. Not taking it too seriously. Enjoying the game.',
-                'emoji' => '😜'
-            ]
-        ];
+        // Return empty - actual speak styles come from nsfw_import_data.php
+        // The import contains 35+ styles with full phase prompts (init, climax, pillow_talk, etc.)
+        return [];
     }
 
     /**
      * Get speak style by name - returns FULL object with all phase prompts
+     * Uses JSONB operator for efficient single-key lookup
+     *
+     * !! DO NOT SIMPLIFY - JSONB OPERATOR IS INTENTIONAL !!
+     * !! Extracts ONE style server-side instead of loading all 35+ styles !!
      */
     public static function getSpeakStyle($name) {
         if (!isset($GLOBALS['db'])) return null;
 
         try {
-            // Load from JSONB blob - same as prompts
-            $row = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_speak_styles'");
-            if ($row && !empty($row['value'])) {
-                $allStyles = json_decode($row['value'], true) ?: [];
-                if (isset($allStyles[$name])) {
-                    // Return full style object including phase prompts
+            // !! JSONB OPERATOR - DO NOT REMOVE !!
+            // (value::jsonb)->'key' extracts single key server-side
+            $escapedName = pg_escape_string($name);
+            $row = $GLOBALS['db']->fetchOne(
+                "SELECT (value::jsonb)->'$escapedName' as style_data FROM conf_opts WHERE id = 'aiagent_nsfw_speak_styles'"
+            );
+            
+            if ($row && $row['style_data'] !== null) {
+                $styleData = json_decode($row['style_data'], true);
+                if ($styleData) {
                     return [
                         'name' => $name,
-                        'description' => $allStyles[$name]['description'] ?? '',
-                        'content' => $allStyles[$name]['content'] ?? '',
-                        'emoji' => $allStyles[$name]['emoji'] ?? '',
-                        'init_prompt' => $allStyles[$name]['init_prompt'] ?? '',
-                        'masturbation_prompt' => $allStyles[$name]['masturbation_prompt'] ?? '',
-                        'climax_prompt' => $allStyles[$name]['climax_prompt'] ?? '',
-                        'pillow_talk_prompt' => $allStyles[$name]['pillow_talk_prompt'] ?? ''
+                        'description' => $styleData['description'] ?? '',
+                        'content' => $styleData['content'] ?? '',
+                        'emoji' => $styleData['emoji'] ?? '',
+                        'init_prompt' => $styleData['init_prompt'] ?? '',
+                        'masturbation_prompt' => $styleData['masturbation_prompt'] ?? '',
+                        'climax_prompt' => $styleData['climax_prompt'] ?? '',
+                        'partner_climax_prompt' => $styleData['partner_climax_prompt'] ?? '',
+                        'pillow_talk_prompt' => $styleData['pillow_talk_prompt'] ?? ''
                     ];
                 }
             }
@@ -754,18 +744,24 @@ class NsfwData {
 
     /**
      * Get speak style content only
+     * Uses JSONB operator for efficient extraction
+     *
+     * !! DO NOT SIMPLIFY - JSONB OPERATOR IS INTENTIONAL !!
+     * !! ->'key'->>'content' extracts nested value server-side !!
      */
     public static function getSpeakStyleContent($name) {
         if (!isset($GLOBALS['db'])) return '';
 
         try {
-            // Load from JSONB blob
-            $row = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_speak_styles'");
-            if ($row && !empty($row['value'])) {
-                $allStyles = json_decode($row['value'], true) ?: [];
-                if (isset($allStyles[$name])) {
-                    return $allStyles[$name]['content'] ?? '';
-                }
+            // !! JSONB OPERATOR - DO NOT REMOVE !!
+            // ->'key'->>'subkey' extracts nested string value server-side
+            $escapedName = pg_escape_string($name);
+            $row = $GLOBALS['db']->fetchOne(
+                "SELECT (value::jsonb)->'$escapedName'->>'content' as content FROM conf_opts WHERE id = 'aiagent_nsfw_speak_styles'"
+            );
+            
+            if ($row && $row['content'] !== null) {
+                return $row['content'];
             }
         } catch (Exception $e) {
             error_log("[NSFW-Data] getSpeakStyleContent error: " . $e->getMessage());
@@ -882,3 +878,399 @@ class NsfwData {
         }
     }
 }
+
+/**
+ * ============================================================================
+ * NSFW NPC DATA - Per-NPC NSFW Storage
+ * ============================================================================
+ *
+ * This class handles per-NPC NSFW data stored in the nsfw_npc_data table.
+ * This data was SEPARATED from core_npc_master.extended_data to prevent
+ * the NSFW plugin from loading relationship data and vice versa.
+ *
+ * Table: nsfw_npc_data
+ * - npc_name (PRIMARY KEY)
+ * - extended_data (JSONB) - all NSFW-specific data
+ * - updated_at (TIMESTAMP)
+ *
+ * Keys stored here:
+ * - nsfw_kinks, nsfw_secret_kinks, nsfw_kinks_unlock_tier, nsfw_secret_kinks_unlock_tier
+ * - sex_prompt, nsfw_sex_prompt, nsfw_source
+ * - nsfw_speak_style, sex_speech_style, nsfw_profanity_level
+ * - sexual_orientation, is_prostitute, profession_prostitute, is_slave
+ * - spouse_names, spousal_status, relationship_preference
+ * - fertility_* fields
+ * - aiagent_nsfw_intimacy_data
+ *
+ * DO NOT store this data in core_npc_master.extended_data anymore!
+ */
+class NsfwNpcData {
+
+    private static $cache = [];
+    private static $tableVerified = false;
+
+    /**
+     * Ensure the nsfw_npc_data table exists
+     * Called automatically before any database operations
+     */
+    public static function ensureTable() {
+        if (self::$tableVerified) return true;
+        if (!isset($GLOBALS['db'])) return false;
+
+        try {
+            $GLOBALS['db']->execQuery("
+                CREATE TABLE IF NOT EXISTS nsfw_npc_data (
+                    npc_name VARCHAR(255) PRIMARY KEY,
+                    extended_data JSONB DEFAULT '{}'::jsonb,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ");
+
+            // Create index for faster normalized name lookups
+            $GLOBALS['db']->execQuery("
+                CREATE INDEX IF NOT EXISTS idx_nsfw_npc_data_normalized_name
+                ON nsfw_npc_data (LOWER(REPLACE(npc_name, '_', ' ')))
+            ");
+
+            self::$tableVerified = true;
+            error_log("[NSFW-NpcData] Table nsfw_npc_data verified/created successfully");
+            return true;
+        } catch (Exception $e) {
+            error_log("[NSFW-NpcData] Failed to create table: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Get all NSFW extended_data for an NPC
+     * Uses the new nsfw_npc_data table (NOT core_npc_master)
+     *
+     * Matches NPC names in a normalized way:
+     * - "vivienne_onis", "Vivienne Onis", "vivienne onis" all match the same record
+     */
+    public static function get($npcName) {
+        if (empty($npcName)) return [];
+
+        $normalizedKey = self::normalizeNameForComparison($npcName);
+        if (isset(self::$cache[$normalizedKey])) {
+            return self::$cache[$normalizedKey];
+        }
+
+        if (!isset($GLOBALS['db'])) return [];
+
+        // Ensure table exists before querying
+        self::ensureTable();
+
+        try {
+            $escapedNormalized = pg_escape_string($normalizedKey);
+            $row = $GLOBALS['db']->fetchOne(
+                "SELECT extended_data FROM nsfw_npc_data WHERE LOWER(REPLACE(npc_name, '_', ' ')) = '$escapedNormalized'"
+            );
+
+            if ($row && !empty($row['extended_data'])) {
+                $data = json_decode($row['extended_data'], true) ?: [];
+                self::$cache[$normalizedKey] = $data;
+                return $data;
+            }
+        } catch (Exception $e) {
+            error_log("[NSFW-NpcData] Failed to get data for $npcName: " . $e->getMessage());
+        }
+
+        return [];
+    }
+
+    /**
+     * Get a single key from NPC's NSFW data
+     * Uses JSONB operator for efficient single-key extraction
+     *
+     * Matches NPC names in a normalized way (system name or display name)
+     */
+    public static function getKey($npcName, $key) {
+        if (empty($npcName) || empty($key)) return null;
+
+        // Check cache first using normalized key
+        $normalizedKey = self::normalizeNameForComparison($npcName);
+        if (isset(self::$cache[$normalizedKey]) && array_key_exists($key, self::$cache[$normalizedKey])) {
+            return self::$cache[$normalizedKey][$key];
+        }
+
+        if (!isset($GLOBALS['db'])) return null;
+
+        // Ensure table exists before querying
+        self::ensureTable();
+
+        try {
+            $escapedNormalized = pg_escape_string($normalizedKey);
+            $escapedKey = pg_escape_string($key);
+
+            // Use JSONB operator to extract just this key server-side
+            // Match using normalized name (handles system_name vs Display Name)
+            $row = $GLOBALS['db']->fetchOne(
+                "SELECT extended_data->'$escapedKey' as value FROM nsfw_npc_data WHERE LOWER(REPLACE(npc_name, '_', ' ')) = '$escapedNormalized'"
+            );
+
+            if ($row && $row['value'] !== null) {
+                return json_decode($row['value'], true);
+            }
+        } catch (Exception $e) {
+            error_log("[NSFW-NpcData] Failed to get key '$key' for $npcName: " . $e->getMessage());
+        }
+
+        return null;
+    }
+
+    /**
+     * Normalize NPC name to standard format for matching
+     * Handles both system names (lowercase_underscore) and display names (Title Case)
+     * Returns lowercase with underscores replaced by spaces for consistent comparison
+     */
+    private static function normalizeNameForComparison($name) {
+        // Replace underscores with spaces and lowercase
+        return strtolower(str_replace('_', ' ', trim($name)));
+    }
+
+    /**
+     * Save all NSFW extended_data for an NPC
+     * Creates new record if NPC doesn't exist in nsfw_npc_data
+     *
+     * IMPORTANT: Uses normalized name matching to prevent duplicates.
+     * "vivienne_onis", "Vivienne Onis", and "vivienne onis" are all the same NPC.
+     */
+    public static function save($npcName, $data) {
+        if (empty($npcName)) return false;
+
+        if (!isset($GLOBALS['db'])) return false;
+
+        // Ensure table exists before saving
+        self::ensureTable();
+
+        try {
+            $escapedName = pg_escape_string($npcName);
+            $normalizedName = self::normalizeNameForComparison($npcName);
+            $escapedNormalized = pg_escape_string($normalizedName);
+            $jsonData = pg_escape_string(json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+
+            // Check if a normalized match already exists
+            // This catches: "Vivienne Onis", "vivienne_onis", "VIVIENNE ONIS" all as same NPC
+            $existing = $GLOBALS['db']->fetchOne(
+                "SELECT npc_name FROM nsfw_npc_data WHERE LOWER(REPLACE(npc_name, '_', ' ')) = '$escapedNormalized'"
+            );
+
+            if ($existing) {
+                // Update existing record (use the stored name to preserve original casing)
+                $storedName = pg_escape_string($existing['npc_name']);
+                $GLOBALS['db']->execQuery(
+                    "UPDATE nsfw_npc_data SET
+                        extended_data = '$jsonData'::jsonb,
+                        updated_at = CURRENT_TIMESTAMP
+                     WHERE npc_name = '$storedName'"
+                );
+            } else {
+                // Insert new record with the display name format (proper case with spaces)
+                // Convert system name format to display name if needed
+                $displayName = $npcName;
+                if (strpos($npcName, '_') !== false && strtolower($npcName) === $npcName) {
+                    // Looks like system name (lowercase_with_underscores), convert to display
+                    $displayName = ucwords(str_replace('_', ' ', $npcName));
+                }
+                $escapedDisplay = pg_escape_string($displayName);
+
+                $GLOBALS['db']->execQuery(
+                    "INSERT INTO nsfw_npc_data (npc_name, extended_data, updated_at)
+                     VALUES ('$escapedDisplay', '$jsonData'::jsonb, CURRENT_TIMESTAMP)"
+                );
+            }
+
+            // Update cache with normalized key
+            self::$cache[$normalizedName] = $data;
+
+            return true;
+        } catch (Exception $e) {
+            error_log("[NSFW-NpcData] Failed to save data for $npcName: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Update a single key in NPC's NSFW data
+     * Uses JSONB || operator for efficient single-key update
+     *
+     * Matches NPC names in a normalized way (system name or display name)
+     */
+    public static function setKey($npcName, $key, $value) {
+        if (empty($npcName) || empty($key)) return false;
+
+        if (!isset($GLOBALS['db'])) return false;
+
+        // Ensure table exists before updating
+        self::ensureTable();
+
+        try {
+            $normalizedName = self::normalizeNameForComparison($npcName);
+            $escapedNormalized = pg_escape_string($normalizedName);
+            $escapedKey = pg_escape_string($key);
+            $jsonValue = pg_escape_string(json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+
+            // First check if a normalized match already exists
+            $existing = $GLOBALS['db']->fetchOne(
+                "SELECT npc_name FROM nsfw_npc_data WHERE LOWER(REPLACE(npc_name, '_', ' ')) = '$escapedNormalized'"
+            );
+
+            if ($existing) {
+                // Update existing record using stored name
+                $storedName = pg_escape_string($existing['npc_name']);
+                $GLOBALS['db']->execQuery(
+                    "UPDATE nsfw_npc_data SET
+                        extended_data = extended_data || jsonb_build_object('$escapedKey', '$jsonValue'::jsonb),
+                        updated_at = CURRENT_TIMESTAMP
+                     WHERE npc_name = '$storedName'"
+                );
+            } else {
+                // Insert new record with display name format
+                $displayName = $npcName;
+                if (strpos($npcName, '_') !== false && strtolower($npcName) === $npcName) {
+                    $displayName = ucwords(str_replace('_', ' ', $npcName));
+                }
+                $escapedDisplay = pg_escape_string($displayName);
+
+                $GLOBALS['db']->execQuery(
+                    "INSERT INTO nsfw_npc_data (npc_name, extended_data, updated_at)
+                     VALUES ('$escapedDisplay', jsonb_build_object('$escapedKey', '$jsonValue'::jsonb), CURRENT_TIMESTAMP)"
+                );
+            }
+
+            // Update cache with normalized key
+            if (isset(self::$cache[$normalizedName])) {
+                self::$cache[$normalizedName][$key] = $value;
+            }
+
+            return true;
+        } catch (Exception $e) {
+            error_log("[NSFW-NpcData] Failed to set key '$key' for $npcName: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Clear cache for an NPC (or all if no name given)
+     */
+    public static function clearCache($npcName = null) {
+        if ($npcName) {
+            unset(self::$cache[strtolower($npcName)]);
+        } else {
+            self::$cache = [];
+        }
+    }
+
+    /**
+     * Check if NPC has any NSFW data
+     */
+    public static function exists($npcName) {
+        if (empty($npcName)) return false;
+
+        if (!isset($GLOBALS['db'])) return false;
+
+        // Ensure table exists before querying
+        self::ensureTable();
+
+        try {
+            $escapedName = pg_escape_string($npcName);
+            $row = $GLOBALS['db']->fetchOne(
+                "SELECT 1 FROM nsfw_npc_data WHERE LOWER(npc_name) = LOWER('$escapedName')"
+            );
+            return !empty($row);
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+}
+
+// ============================================================================
+// AUTO-INITIALIZATION - RUNS ONCE ON FIRST USE AFTER GITHUB DOWNLOAD
+// ============================================================================
+
+/**
+ * Auto-initialize NSFW data if not present
+ * Uses database flag 'aiagent_nsfw_auto_initialized' to ensure it ONLY runs ONCE EVER
+ */
+function nsfw_auto_init() {
+    static $checked = false;
+    if ($checked) return;
+    $checked = true;
+
+    // Need database connection
+    if (!isset($GLOBALS['db'])) return;
+
+    try {
+        // Check the permanent "already initialized" flag in database
+        $initFlag = $GLOBALS['db']->fetchOne(
+            "SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_auto_initialized'"
+        );
+
+        if ($initFlag && $initFlag['value'] === 'true') {
+            // Already initialized - NEVER run again
+            return;
+        }
+
+        // Not initialized yet - check if data exists (maybe manual import was done)
+        $scenesExist = $GLOBALS['db']->fetchOne(
+            "SELECT id FROM conf_opts WHERE id = 'aiagent_nsfw_scenes' LIMIT 1"
+        );
+
+        if ($scenesExist) {
+            // Data exists (manual import) - set flag and return
+            $GLOBALS['db']->execQuery(
+                "INSERT INTO conf_opts (id, value) VALUES ('aiagent_nsfw_auto_initialized', 'true')
+                 ON CONFLICT (id) DO UPDATE SET value = 'true'"
+            );
+            return;
+        }
+
+        // === RUN AUTO-IMPORT ===
+        error_log("[NSFW-AutoInit] First run detected! Auto-importing NSFW data...");
+
+        $importFile = __DIR__ . '/nsfw_import_data.php';
+        if (!file_exists($importFile)) {
+            error_log("[NSFW-AutoInit] ERROR: nsfw_import_data.php not found!");
+            return;
+        }
+
+        require_once $importFile;
+
+        if (!isset($NSFW_IMPORT_DATA) || empty($NSFW_IMPORT_DATA)) {
+            error_log("[NSFW-AutoInit] ERROR: No data in nsfw_import_data.php!");
+            return;
+        }
+
+        // Import all data
+        $imported = 0;
+        foreach ($NSFW_IMPORT_DATA as $id => $value) {
+            try {
+                $escapedId = pg_escape_string($id);
+                $escapedValue = pg_escape_string($value);
+
+                $GLOBALS['db']->execQuery(
+                    "INSERT INTO conf_opts (id, value) VALUES ('$escapedId', '$escapedValue')
+                     ON CONFLICT (id) DO UPDATE SET value = '$escapedValue'"
+                );
+                $imported++;
+            } catch (Exception $e) {
+                error_log("[NSFW-AutoInit] Error importing $id: " . $e->getMessage());
+            }
+        }
+
+        // Set the permanent flag so this NEVER runs again
+        $GLOBALS['db']->execQuery(
+            "INSERT INTO conf_opts (id, value) VALUES ('aiagent_nsfw_auto_initialized', 'true')
+             ON CONFLICT (id) DO UPDATE SET value = 'true'"
+        );
+
+        error_log("[NSFW-AutoInit] SUCCESS! Imported $imported entries. This will NOT run again.");
+
+    } catch (Exception $e) {
+        error_log("[NSFW-AutoInit] Error: " . $e->getMessage());
+    }
+}
+
+// Run auto-init when this file is loaded
+nsfw_auto_init();

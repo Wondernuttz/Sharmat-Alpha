@@ -122,9 +122,15 @@ if ($GLOBALS["gameRequest"][0]=="chatnf_sl_end") {
         }
         error_log("[AIAGENTNSFW] Post-service context for prostitute (paid: " . ($paymentConfirmed ? 'yes' : 'no') . ")");
     } else {
-        // REGULAR NPC PILLOW TALK
-        $postScenePrompt = "The intimate moment has ended. Share a brief, genuine post-intimacy reaction in character.";
-        error_log("[AIAGENTNSFW] Pillow talk context for regular NPC");
+        // REGULAR NPC PILLOW TALK - Only if NPC actually orgasmed
+        $actorOrgasmed = !empty($currentIntimacy["orgasmed"]);
+        if ($actorOrgasmed) {
+            $postScenePrompt = "The intimate moment has ended. Share a brief, genuine post-intimacy reaction in character.";
+            error_log("[AIAGENTNSFW] Pillow talk context for regular NPC $actor (orgasmed)");
+        } else {
+            // No orgasm = no pillow talk
+            error_log("[AIAGENTNSFW] Skipping pillow talk for $actor - no orgasm occurred");
+        }
     }
 
     // Inject into personality for configured NPCs (only if not slave - slave uses XML wrapper above)
@@ -144,9 +150,9 @@ if ($GLOBALS["gameRequest"][0]=="chatnf_sl") {
 // Drunk status handling
 
 $actorName=$GLOBALS["HERIKA_NAME"];
-$npcManager=new NpcMaster();
-$npcData=$npcManager->getByName($actorName);
-$extended_data=$npcManager->getExtendedData($npcData);
+// Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+require_once __DIR__ . "/nsfw_data.php";
+$extended_data = NsfwNpcData::get($actorName);
 
 if (in_array(getLastIssuedMood($GLOBALS["HERIKA_NAME"],$GLOBALS["gameRequest"][2]),["drunk","tipsy"])) {
     error_log("Forcing drunk mood: {$GLOBALS["HERIKA_NAME"]} {$GLOBALS["gameRequest"][2]}");
@@ -162,8 +168,8 @@ if (in_array(getLastIssuedMood($GLOBALS["HERIKA_NAME"],$GLOBALS["gameRequest"][2
     }
 }
 
-$npcData=$npcManager->setExtendedData($npcData,$extended_data);
-$npcManager->updateByArray($npcData);
+// Save to nsfw_npc_data table (NOT core_npc_master.extended_data)
+NsfwNpcData::save($actorName, $extended_data);
 
 // Add note if player is naked
 if (playerIsNaked()) {

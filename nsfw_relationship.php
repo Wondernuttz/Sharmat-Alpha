@@ -54,8 +54,12 @@ class NsfwRelationship {
         // Determine which prompt set to use
         $promptKey = $isProstitute ? "tier_prost_{$tier}" : "tier_{$tier}";
 
-        // Get the prompt, fallback to default if not found
-        $prompt = $prompts[$promptKey] ?? self::getDefaultPrompt($tier, $isProstitute);
+        // Get the prompt from database - NO FALLBACK TO HARDCODED DEFAULTS
+        // If prompt is not in DB, log error and return empty (user must save prompts in UI first)
+        $prompt = $prompts[$promptKey] ?? '';
+        if (empty($prompt)) {
+            error_log("[NSFW_REL] ERROR: No prompt found for key '{$promptKey}' - user must save prompts in NSFW Config UI");
+        }
 
         // Replace placeholders
         $partner = $partnerName ?? 'Player';
@@ -117,7 +121,11 @@ class NsfwRelationship {
         $prompts = self::loadPromptSettings();
         $promptKey = $isProstitute ? "tier_prost_{$tier}" : "tier_{$tier}";
 
-        $prompt = $prompts[$promptKey] ?? self::getDefaultPrompt($tier, $isProstitute);
+        // Get prompt from database - NO HARDCODED FALLBACKS
+        $prompt = $prompts[$promptKey] ?? '';
+        if (empty($prompt)) {
+            error_log("[NSFW_REL] ERROR: No prompt for '{$promptKey}' - save prompts in NSFW Config UI");
+        }
         $prompt = str_replace('#PARTNER#', $partnerName, $prompt);
         $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
         $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
@@ -147,7 +155,11 @@ class NsfwRelationship {
         $prompts = self::loadPromptSettings();
         $promptKey = "tier_slave_{$tier}";
 
-        $prompt = $prompts[$promptKey] ?? self::getDefaultSlavePrompt($tier);
+        // Get prompt from database - NO HARDCODED FALLBACKS
+        $prompt = $prompts[$promptKey] ?? '';
+        if (empty($prompt)) {
+            error_log("[NSFW_REL] ERROR: No prompt for '{$promptKey}' - save prompts in NSFW Config UI");
+        }
         $prompt = str_replace('#PARTNER#', $partnerName, $prompt);
         $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
         $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
@@ -172,50 +184,25 @@ class NsfwRelationship {
         return $prompts['slavery_fiction_frame'] ?? '';
     }
 
-    /**
-     * Get default slave prompt for a tier (fallback if not configured)
-     *
-     * @param string $tier The tier name (lowercase)
-     * @return string Default slave prompt
-     */
-    private static function getDefaultSlavePrompt($tier) {
-        $defaults = [
-            'hostile' => 'You are a slave. #PARTNER# is your owner. You DESPISE them with every fiber of your being. But you have no choice. Comply with bitter hatred in your eyes.',
-            'hateful' => 'You are a slave. #PARTNER# is your owner. You HATE them. You obey because you must, not because you want to. Your compliance is mechanical, your eyes dead.',
-            'resentful' => 'You are a slave. #PARTNER# is your owner. You resent this life, this bondage. You comply but with passive aggression, bitter undertones.',
-            'cold' => 'You are a slave. #PARTNER# is your owner. You feel nothing. You have shut down emotionally to survive. Obey mechanically, go through the motions.',
-            'wary' => 'You are a slave. #PARTNER# is your owner. You are cautious, uncertain. You obey but watch them carefully. Compliance is survival.',
-            'neutral' => 'You are a slave. #PARTNER# is your owner. This is your life now. You have accepted your role. Obey without emotion.',
-            'acquaintance' => 'You are a slave. #PARTNER# is your owner. They are not cruel. You obey more willingly now. A hint of gratitude for not being mistreated.',
-            'friendly' => 'You are a slave. #PARTNER# is your owner. They treat you well. You find yourself wanting to please them. Obedience comes easier.',
-            'fond' => 'You are a slave. #PARTNER# is your owner. But you have grown fond of them. You serve with genuine warmth.',
-            'devoted' => 'You are a slave. #PARTNER# is your owner. You love them. The bondage no longer matters - you would serve them freely.',
-            'bonded' => 'You are a slave. #PARTNER# is your owner. Your soul belongs to them completely. You serve with total devotion and love.',
-        ];
-        return $defaults[$tier] ?? $defaults['neutral'];
-    }
+    // REMOVED: getDefaultSlavePrompt() - prompts come from database only (conf_opts.aiagent_nsfw_prompts)
+    // Lookup key: tier_slave_{tier} e.g. tier_slave_hostile, tier_slave_neutral
 
     /**
-     * Get NPC's spousal information from extended_data
+     * Get NPC's spousal information from nsfw_npc_data table
      *
      * @param string $npcName The NPC's name
      * @return array ['spousal_status' => string, 'spouse_names' => array]
      */
     private static function getNpcSpousalInfo($npcName) {
         try {
-            require_once __DIR__ . "/../../lib/core/npc_master.class.php";
-            $npcManager = new NpcMaster();
-            $npcData = $npcManager->getByName($npcName);
+            // Get from nsfw_npc_data table (NOT core_npc_master.extended_data)
+            require_once __DIR__ . "/nsfw_data.php";
+            $extended = NsfwNpcData::get($npcName);
 
-            if (!$npcData) {
-                $npcData = $npcManager->getByName(ucfirst(strtolower($npcName)));
-            }
-
-            if (!$npcData || empty($npcData['extended_data'])) {
+            if (empty($extended)) {
                 return ['spousal_status' => 'single', 'spouse_names' => []];
             }
 
-            $extended = json_decode($npcData['extended_data'], true);
             $status = $extended['spousal_status'] ?? 'single';
             $namesStr = $extended['spouse_names'] ?? '';
 
@@ -335,7 +322,10 @@ class NsfwRelationship {
         $prompts = self::loadPromptSettings();
         $promptKey = "marriage_spouse_{$tier}";
 
-        $prompt = $prompts[$promptKey] ?? self::getDefaultMarriageSpousePrompt($tier);
+        $prompt = $prompts[$promptKey] ?? '';
+        if (empty($prompt)) {
+            error_log("[NSFW_REL] ERROR: No prompt for '{$promptKey}' - save prompts in NSFW Config UI");
+        }
         $prompt = str_replace('#SPOUSE#', $spouseName, $prompt);
 
         return $prompt;
@@ -391,7 +381,10 @@ class NsfwRelationship {
         $prompts = self::loadPromptSettings();
         $promptKey = "affair_{$tier}";
 
-        $prompt = $prompts[$promptKey] ?? self::getDefaultAffairPrompt($tier);
+        $prompt = $prompts[$promptKey] ?? '';
+        if (empty($prompt)) {
+            error_log("[NSFW_REL] ERROR: No prompt for '{$promptKey}' - save prompts in NSFW Config UI");
+        }
         $prompt = str_replace('#PARTNER#', $partnerName, $prompt);
         $prompt = str_replace('#SPOUSE#', $spouseName, $prompt);
 
@@ -531,8 +524,9 @@ class NsfwRelationship {
         ];
 
         foreach ($tiers as $tier) {
-            $result['regular'][$tier] = $prompts["tier_{$tier}"] ?? self::getDefaultPrompt($tier, false);
-            $result['prostitute'][$tier] = $prompts["tier_prost_{$tier}"] ?? self::getDefaultPrompt($tier, true);
+            // Get prompts from database - NO HARDCODED FALLBACKS
+            $result['regular'][$tier] = $prompts["tier_{$tier}"] ?? '';
+            $result['prostitute'][$tier] = $prompts["tier_prost_{$tier}"] ?? '';
         }
 
         return $result;
@@ -586,12 +580,28 @@ class NsfwRelationship {
             $row = $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_prompts'");
             if ($row && !empty($row['value'])) {
                 self::$promptCache = json_decode($row['value'], true) ?: [];
+                // Debug: Log what tier prompts we loaded from DB
+                $tierNeutral = self::$promptCache['tier_neutral'] ?? 'NOT SET';
+                $tierNeutralLen = strlen($tierNeutral);
+                error_log("[NSFW_REL] SUCCESS: Loaded prompts from DB. tier_neutral length: {$tierNeutralLen}");
+                // Log full tier_neutral prompt
+                if ($tierNeutralLen > 0) {
+                    error_log("[NSFW_REL] tier_neutral: " . $tierNeutral);
+                }
+                // Check for the custom "RefuseSex" keyword
+                if (strpos($tierNeutral, 'RefuseSex') !== false) {
+                    error_log("[NSFW_REL] FOUND RefuseSex in tier_neutral - custom UI prompt loaded!");
+                }
                 return self::$promptCache;
+            } else {
+                error_log("[NSFW_REL] WARNING: No prompt settings in DB - using hardcoded defaults");
             }
         } catch (Exception $e) {
-            error_log("[NSFW_REL] Failed to load prompt settings: " . $e->getMessage());
+            error_log("[NSFW_REL] ERROR loading prompt settings: " . $e->getMessage());
         }
 
+        // If we get here, DB is empty or errored - use hardcoded defaults
+        // This should only happen on first install before user saves anything
         self::$promptCache = [];
         return self::$promptCache;
     }
@@ -603,45 +613,9 @@ class NsfwRelationship {
         self::$promptCache = null;
     }
 
-    /**
-     * Get default prompt for a tier
-     *
-     * @param string $tier The tier name (lowercase)
-     * @param bool $isProstitute Whether to get prostitute default
-     * @return string The default prompt
-     */
-    private static function getDefaultPrompt($tier, $isProstitute) {
-        $regularDefaults = [
-            'hostile' => 'You despise #PARTNER#. This is assault. Fight, resist, express hatred and disgust.',
-            'hateful' => 'You hate #PARTNER#. Cold, distant, unresponsive. Make them feel unwanted.',
-            'resentful' => 'You resent #PARTNER#. Bitter compliance. Passive aggressive remarks.',
-            'cold' => 'You feel nothing for #PARTNER#. Mechanical, detached, going through motions.',
-            'wary' => 'You are cautious around #PARTNER#. Hesitant, nervous, not fully committed.',
-            'neutral' => '#PARTNER# is a stranger. Curious but reserved. Testing the waters.',
-            'acquaintance' => 'You know #PARTNER# a little. Friendly, willing, but still feeling things out.',
-            'friendly' => 'You like #PARTNER#. Enthusiastic, playful, enjoying the moment.',
-            'fond' => 'You care for #PARTNER#. Tender, passionate, emotionally present.',
-            'devoted' => 'You love #PARTNER#. Deep connection, vulnerability, complete trust.',
-            'bonded' => 'Complete soul connection with #PARTNER#. Anything goes. Total surrender.'
-        ];
-
-        $prostituteDefaults = [
-            'hostile' => 'This client is dangerous. Get it over with fast. Survival mode.',
-            'hateful' => 'Terrible client. Do the bare minimum. No fake enthusiasm.',
-            'resentful' => 'Bad customer. Professional but cold. Count the minutes.',
-            'cold' => 'Just another job. Fake the basics. Think about payment.',
-            'wary' => 'New client, uncertain. Standard service. Stay guarded.',
-            'neutral' => '#PARTNER# is a customer. Professional charm. Business as usual.',
-            'acquaintance' => 'Familiar face. Warmer service. Maybe a regular soon.',
-            'friendly' => 'Good client. Genuine enjoyment mixed with professionalism.',
-            'fond' => 'Favorite regular. Real affection underneath the transaction.',
-            'devoted' => 'You have feelings for #PARTNER#. The line between work and love blurs.',
-            'bonded' => 'You love #PARTNER#. Consider quitting the trade. This is real.'
-        ];
-
-        $defaults = $isProstitute ? $prostituteDefaults : $regularDefaults;
-        return $defaults[$tier] ?? "Relationship tier: {$tier}";
-    }
+    // REMOVED: getDefaultPrompt() - prompts come from database only (conf_opts.aiagent_nsfw_prompts)
+    // Lookup keys: tier_{tier} for regular NPCs, tier_prost_{tier} for prostitutes
+    // e.g. tier_neutral, tier_hostile, tier_prost_neutral, tier_prost_hostile
 
     /**
      * Get relationship emoji for UI display
@@ -739,7 +713,11 @@ class NsfwRelationship {
             error_log("[NSFW_REL] Group affair scenario detected for $npcName with $lowestPartner (spouse: $spouseName)");
         } else {
             $promptKey = $isProstitute ? "tier_prost_{$lowestTier}" : "tier_{$lowestTier}";
-            $tierPrompt = $prompts[$promptKey] ?? self::getDefaultPrompt($lowestTier, $isProstitute);
+            // Get prompt from database - NO HARDCODED FALLBACKS
+            $tierPrompt = $prompts[$promptKey] ?? '';
+            if (empty($tierPrompt)) {
+                error_log("[NSFW_REL] ERROR: No prompt for '{$promptKey}' - save prompts in NSFW Config UI");
+            }
             // Replace placeholder with the problematic partner's name
             $tierPrompt = str_replace('#PARTNER#', $lowestPartner, $tierPrompt);
         }
@@ -749,11 +727,15 @@ class NsfwRelationship {
 
         // Add note about group dynamics (configurable)
         if (count($otherActors) > 1) {
-            $groupDynamicsMsg = $prompts['group_dynamics'] ?? 'Your feelings are most affected by #PARTNER# (#TIER#)';
-            $groupDynamicsMsg = str_replace('#PARTNER#', $lowestPartner, $groupDynamicsMsg);
-            $groupDynamicsMsg = str_replace('#TIER#', $lowestTier, $groupDynamicsMsg);
-            $groupDynamicsMsg = str_replace('#PLAYER_NAME#', $GLOBALS['PLAYER_NAME'] ?? 'the player', $groupDynamicsMsg);
-            $participantsContent .= "\n\n" . $groupDynamicsMsg;
+            $groupDynamicsMsg = $prompts['group_dynamics'] ?? '';
+            if (empty($groupDynamicsMsg)) {
+                error_log("[NSFW_REL] No prompt for 'group_dynamics' - save in NSFW Config UI");
+            } else {
+                $groupDynamicsMsg = str_replace('#PARTNER#', $lowestPartner, $groupDynamicsMsg);
+                $groupDynamicsMsg = str_replace('#TIER#', $lowestTier, $groupDynamicsMsg);
+                $groupDynamicsMsg = str_replace('#PLAYER_NAME#', $GLOBALS['PLAYER_NAME'] ?? 'the player', $groupDynamicsMsg);
+                $participantsContent .= "\n\n" . $groupDynamicsMsg;
+            }
         }
 
         // Combine profile context with participants
@@ -779,22 +761,27 @@ class NsfwRelationship {
      * @return string XML-wrapped profile context
      */
     private static function buildNpcProfileContext($npcName, $partners) {
+        error_log("[NSFW_REL] ========== buildNpcProfileContext CALLED for $npcName ==========");
         try {
             require_once __DIR__ . "/../../lib/core/npc_master.class.php";
             require_once __DIR__ . "/common.php";
+            require_once __DIR__ . "/nsfw_data.php";
 
-            $npcManager = new \NpcMaster();
-            $npcData = $npcManager->getByName($npcName);
+            // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+            $extended = NsfwNpcData::get($npcName);
+            error_log("[NSFW_REL] extended data for $npcName: " . (empty($extended) ? 'EMPTY' : 'has ' . count($extended) . ' keys'));
 
-            if (!$npcData) {
-                $npcData = $npcManager->getByName(ucfirst(strtolower($npcName)));
-            }
-
-            if (!$npcData || empty($npcData['extended_data'])) {
+            if (empty($extended)) {
+                error_log("[NSFW_REL] No profile data for $npcName - returning early");
                 return ''; // No profile data
             }
 
-            $extended = json_decode($npcData['extended_data'], true);
+            // Get NPC data for basic info (gender, etc.) - NOT for NSFW data
+            $npcManager = new \NpcMaster();
+            $npcData = $npcManager->getByName($npcName);
+            if (!$npcData) {
+                $npcData = $npcManager->getByName(ucfirst(strtolower($npcName)));
+            }
 
             // Load configurable prompts
             $prompts = self::loadPromptSettings();
@@ -811,19 +798,44 @@ class NsfwRelationship {
 
             // Get player info
             $playerName = $GLOBALS['PLAYER_NAME'] ?? 'Player';
-            $playerSex = $GLOBALS['PLAYER_SEX'] ?? 0; // 0 = male, 1 = female
-            $playerGender = ($playerSex == 1) ? 'female' : 'male';
-
-            // Get NPC sex (from metadata or extended_data)
-            $npcSex = $extended['sex'] ?? null;
-            if ($npcSex === null) {
-                // Try to get from base NPC data
-                $npcSex = $npcData['sex'] ?? 'unknown';
+            // Get player gender - check multiple sources
+            $playerGender = 'male'; // default
+            if (isset($GLOBALS['PLAYER_SEX'])) {
+                $playerGender = ($GLOBALS['PLAYER_SEX'] == 1) ? 'female' : 'male';
+            } elseif (isset($GLOBALS['PLAYER_GENDER'])) {
+                $playerGender = strtolower($GLOBALS['PLAYER_GENDER']);
             }
-            $npcGender = ($npcSex == 1 || strtolower($npcSex) == 'female') ? 'female' : 'male';
+
+            // Get NPC gender - check multiple sources in priority order:
+            // 1. core_npc_master.gender (most reliable)
+            // 2. extended_data.sex
+            // 3. default to 'unknown'
+            $npcGender = 'male'; // default fallback
+            if (!empty($npcData['gender'])) {
+                // core_npc_master has a 'gender' column with 'male'/'female'
+                $npcGender = strtolower($npcData['gender']);
+            } elseif (!empty($extended['sex'])) {
+                // Check NSFW extended data
+                $npcSex = $extended['sex'];
+                $npcGender = ($npcSex == 1 || strtolower($npcSex) == 'female') ? 'female' : 'male';
+            } elseif (!empty($npcData['sex'])) {
+                // Legacy field
+                $npcSex = $npcData['sex'];
+                $npcGender = ($npcSex == 1 || strtolower($npcSex) == 'female') ? 'female' : 'male';
+            }
+
+            // DEBUG: Log gender detection values
+            error_log("[NSFW_REL] ORIENTATION DEBUG for $npcName:");
+            error_log("[NSFW_REL]   PLAYER_SEX global = " . var_export($GLOBALS['PLAYER_SEX'] ?? 'NOT SET', true));
+            error_log("[NSFW_REL]   PLAYER_GENDER global = " . var_export($GLOBALS['PLAYER_GENDER'] ?? 'NOT SET', true));
+            error_log("[NSFW_REL]   playerGender = $playerGender");
+            error_log("[NSFW_REL]   npcData['gender'] = " . var_export($npcData['gender'] ?? 'NOT SET', true));
+            error_log("[NSFW_REL]   npcGender = $npcGender");
+            error_log("[NSFW_REL]   orientation = $orientation");
 
             // Check orientation compatibility with player
             $orientationMatch = self::checkOrientationMatch($orientation, $npcGender, $playerGender);
+            error_log("[NSFW_REL]   orientationMatch result = $orientationMatch (npc=$npcGender, player=$playerGender)");
 
             // Get relationship type from RelationshipManager
             $relationship = RelationshipManager::getPlayerRelationship($npcName);
@@ -834,63 +846,123 @@ class NsfwRelationship {
 
             // ===== SPOUSAL STATUS =====
             if ($spousalStatus === 'married' && !empty($spouseNames)) {
-                $statusPrompt = $prompts['profile_status_married'] ?? 'You are married to #SPOUSE#.';
-                $statusPrompt = str_replace('#SPOUSE#', $spouseNames, $statusPrompt);
-                $lines[] = $statusPrompt;
+                $statusPrompt = $prompts['profile_status_married'] ?? '';
+                if (empty($statusPrompt)) {
+                    error_log("[NSFW_REL] No prompt for 'profile_status_married' - save in NSFW Config UI");
+                } else {
+                    $statusPrompt = str_replace('#SPOUSE#', $spouseNames, $statusPrompt);
+                    $lines[] = $statusPrompt;
+                }
             } elseif ($spousalStatus === 'married') {
-                $statusPrompt = $prompts['profile_status_married'] ?? 'You are married to #SPOUSE#.';
-                $statusPrompt = str_replace('#SPOUSE#', 'someone', $statusPrompt);
-                $lines[] = $statusPrompt;
+                $statusPrompt = $prompts['profile_status_married'] ?? '';
+                if (empty($statusPrompt)) {
+                    error_log("[NSFW_REL] No prompt for 'profile_status_married' - save in NSFW Config UI");
+                } else {
+                    $statusPrompt = str_replace('#SPOUSE#', 'someone', $statusPrompt);
+                    $lines[] = $statusPrompt;
+                }
             } elseif ($spousalStatus === 'widowed') {
-                $lines[] = $prompts['profile_status_widowed'] ?? 'You are widowed.';
+                $widowedPrompt = $prompts['profile_status_widowed'] ?? '';
+                if (empty($widowedPrompt)) {
+                    error_log("[NSFW_REL] No prompt for 'profile_status_widowed' - save in NSFW Config UI");
+                } else {
+                    $lines[] = $widowedPrompt;
+                }
             } else {
-                $lines[] = $prompts['profile_status_single'] ?? 'You are single.';
+                $singlePrompt = $prompts['profile_status_single'] ?? '';
+                if (empty($singlePrompt)) {
+                    error_log("[NSFW_REL] No prompt for 'profile_status_single' - save in NSFW Config UI");
+                } else {
+                    $lines[] = $singlePrompt;
+                }
             }
 
             // ===== SEXUAL ORIENTATION =====
             $orientationLabel = ucfirst($orientation);
             if ($orientation === 'asexual') {
                 // Asexual = refuse everything
-                $orientPrompt = $prompts['profile_orientation_asexual'] ?? 'You are asexual. You do not experience sexual attraction. Refuse sex/intimacy.';
-                $lines[] = $orientPrompt;
+                $orientPrompt = $prompts['profile_orientation_asexual'] ?? '';
+                if (empty($orientPrompt)) {
+                    error_log("[NSFW_REL] No prompt for 'profile_orientation_asexual' - save in NSFW Config UI");
+                    $lines[] = "Sexual orientation: Asexual.";
+                } else {
+                    $lines[] = $orientPrompt;
+                }
             } elseif ($orientationMatch === 'match') {
-                $orientPrompt = $prompts['profile_orientation_match'] ?? '#PARTNER# matches your sexual preference.';
-                $orientPrompt = str_replace('#PARTNER#', $playerName, $orientPrompt);
-                $lines[] = "Sexual orientation: {$orientationLabel}. " . $orientPrompt;
+                $orientPrompt = $prompts['profile_orientation_match'] ?? '';
+                if (empty($orientPrompt)) {
+                    error_log("[NSFW_REL] No prompt for 'profile_orientation_match' - save in NSFW Config UI");
+                    $lines[] = "Sexual orientation: {$orientationLabel}.";
+                } else {
+                    $orientPrompt = str_replace('#PARTNER#', $playerName, $orientPrompt);
+                    $lines[] = "Sexual orientation: {$orientationLabel}. " . $orientPrompt;
+                }
             } elseif ($orientationMatch === 'mismatch') {
-                $orientPrompt = $prompts['profile_orientation_mismatch'] ?? 'Regardless of how you feel about them, #PARTNER# does not match your sexual preference. Refuse sex/intimacy.';
-                $orientPrompt = str_replace('#PARTNER#', $playerName, $orientPrompt);
-                $lines[] = "Sexual orientation: {$orientationLabel}. " . $orientPrompt;
+                $orientPrompt = $prompts['profile_orientation_mismatch'] ?? '';
+                if (empty($orientPrompt)) {
+                    error_log("[NSFW_REL] No prompt for 'profile_orientation_mismatch' - save in NSFW Config UI");
+                    $lines[] = "Sexual orientation: {$orientationLabel}.";
+                } else {
+                    $orientPrompt = str_replace('#PARTNER#', $playerName, $orientPrompt);
+                    $lines[] = "Sexual orientation: {$orientationLabel}. " . $orientPrompt;
+                }
             } else {
                 $lines[] = "Sexual orientation: {$orientationLabel}.";
             }
 
+            // ===== PLAYER BODY TYPE =====
+            // Tell the NPC what body parts the player has so dialogue matches reality
+            $playerBodyPart = ($playerGender === 'male') ? 'cock/penis' : 'pussy/vagina';
+            $lines[] = "{$playerName} has a {$playerBodyPart}.";
+
             // ===== RELATIONSHIP PREFERENCE =====
             $prefPrompts = [
-                'monogamous' => $prompts['profile_pref_monogamous'] ?? 'You prefer monogamous relationships.',
-                'polyamorous' => $prompts['profile_pref_polyamorous'] ?? 'You are open to multiple partners.',
-                'uncommitted' => $prompts['profile_pref_uncommitted'] ?? 'You prefer casual, no-strings encounters.',
-                'not_interested' => $prompts['profile_pref_not_interested'] ?? 'You are not interested in relationships. Sex is fine but do not get emotionally attached.'
+                'monogamous' => $prompts['profile_pref_monogamous'] ?? '',
+                'polyamorous' => $prompts['profile_pref_polyamorous'] ?? '',
+                'uncommitted' => $prompts['profile_pref_uncommitted'] ?? '',
+                'not_interested' => $prompts['profile_pref_not_interested'] ?? ''
             ];
-            $lines[] = $prefPrompts[$preference] ?? "Relationship style: {$preference}.";
+            $prefPrompt = $prefPrompts[$preference] ?? '';
+            if (!empty($prefPrompt)) {
+                $lines[] = $prefPrompt;
+            } elseif (!empty($preference)) {
+                error_log("[NSFW_REL] No prompt for 'profile_pref_{$preference}' - save in NSFW Config UI");
+                $lines[] = "Relationship style: {$preference}.";
+            }
 
             // ===== AROUSAL =====
+            // Only include arousal prompts if sex_disposal checkbox is enabled in UI
             // Positive = >= 5, Negative = < 0, Neutral = 0-4 (no prompt)
-            if ($arousal >= 5) {
-                $arousalPrompt = $prompts['profile_arousal_positive'] ?? 'You are feeling aroused. Your body is receptive to intimacy.';
-                $lines[] = $arousalPrompt;
-            } elseif ($arousal < 0) {
-                $arousalPrompt = $prompts['profile_arousal_negative'] ?? 'You are not in the mood. Your body is unresponsive to intimacy.';
-                $lines[] = $arousalPrompt;
+            if (function_exists('isSexDisposalEnabled') && isSexDisposalEnabled()) {
+                if ($arousal >= 5) {
+                    $arousalPrompt = $prompts['profile_arousal_positive'] ?? '';
+                    if (empty($arousalPrompt)) {
+                        error_log("[NSFW_REL] No prompt for 'profile_arousal_positive' - save in NSFW Config UI");
+                    } else {
+                        $lines[] = $arousalPrompt;
+                    }
+                } elseif ($arousal < 0) {
+                    $arousalPrompt = $prompts['profile_arousal_negative'] ?? '';
+                    if (empty($arousalPrompt)) {
+                        error_log("[NSFW_REL] No prompt for 'profile_arousal_negative' - save in NSFW Config UI");
+                    } else {
+                        $lines[] = $arousalPrompt;
+                    }
+                }
+                // Neutral (0-4): no arousal prompt added
             }
-            // Neutral (0-4): no arousal prompt added
 
             // ===== RELATIONSHIP TYPE =====
             if (!empty($relType) && $relType !== 'unknown') {
-                $relTypePrompt = $prompts['profile_rel_type'] ?? 'Your relationship with #PARTNER# is: #REL_TYPE#.';
-                $relTypePrompt = str_replace('#PARTNER#', $playerName, $relTypePrompt);
-                $relTypePrompt = str_replace('#REL_TYPE#', $relType, $relTypePrompt);
-                $lines[] = $relTypePrompt;
+                $relTypePrompt = $prompts['profile_rel_type'] ?? '';
+                if (empty($relTypePrompt)) {
+                    error_log("[NSFW_REL] No prompt for 'profile_rel_type' - save in NSFW Config UI");
+                    $lines[] = "Your relationship with {$playerName}: {$relType}.";
+                } else {
+                    $relTypePrompt = str_replace('#PARTNER#', $playerName, $relTypePrompt);
+                    $relTypePrompt = str_replace('#REL_TYPE#', $relType, $relTypePrompt);
+                    $lines[] = $relTypePrompt;
+                }
             }
 
             $content = implode("\n", $lines);
@@ -985,7 +1057,11 @@ class NsfwRelationship {
         $prompts = self::loadPromptSettings();
         $promptKey = $isProstitute ? "tier_prost_{$tier}" : "tier_{$tier}";
 
-        $prompt = $prompts[$promptKey] ?? self::getDefaultPrompt($tier, $isProstitute);
+        // Get prompt from database - NO HARDCODED FALLBACKS
+        $prompt = $prompts[$promptKey] ?? '';
+        if (empty($prompt)) {
+            error_log("[NSFW_REL] ERROR: No prompt for '{$promptKey}' - save prompts in NSFW Config UI");
+        }
         $prompt = str_replace('#PARTNER#', $partnerName, $prompt);
         $prompt = str_replace('#AFFINITY#', $relationship['aff'], $prompt);
         $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);

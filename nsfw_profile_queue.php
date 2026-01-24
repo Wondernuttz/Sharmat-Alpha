@@ -328,68 +328,19 @@ function _nsfwGenerateProfileWithContext($npcName, $gameContext = []) {
             }
         }
 
-        // Example kinks
-        $normalKinksStr = 'rough sex, doggy style, riding, oral, outdoors, public, hair pulling, biting, spanking, dirty talk, praise kink, exhibition, voyeur, gentle, passionate, roleplay';
-        $secretKinksStr = 'breeding, creampie, facials, deepthroat, choking, bondage, degradation, humiliation, anal, titfucking, domination, submission, gangbang, cuckolding';
+        // Load custom or default prompt template from config_manager
+        require_once __DIR__ . '/config_manager.php';
+        $templateRow = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_ai_prompt_template'");
+        $promptTemplate = '';
+        if ($templateRow && !empty($templateRow['value'])) {
+            $promptTemplate = $templateRow['value'];
+        } else {
+            $promptTemplate = getDefaultAiPromptTemplate();
+        }
 
-        // Build the prompt with FULL context
-        $prompt = <<<PROMPT
-You are generating an NSFW character profile for a Skyrim NPC based on their full biography, personality, AND CURRENT GAME STATE.
-
-NPC FULL CONTEXT:
-{$npcContext}
-
-CRITICAL: Pay attention to the GAME STATE section above! If the NPC is a SLAVE, their profile should reflect their enslaved status. If they are a PROSTITUTE, their profile should reflect their profession.
-
-Based on this character's personality, occupation, speech style, background, AND CURRENT GAME STATE, generate a complete NSFW profile.
-
-Return this EXACT JSON structure:
-{
-  "sex_prompt": "A 2-4 sentence description in SECOND PERSON (use 'You' not the NPC's name) of how this character behaves during intimate encounters. If they are a SLAVE, this should reflect their enslaved mentality. If a PROSTITUTE, reflect their professional approach.",
-  "speak_style": "one_of_the_valid_options",
-  "profanity_level": 3,
-  "kinks": ["kink1", "kink2", "kink3"],
-  "secret_kinks": ["secret1", "secret2", "secret3"],
-  "is_prostitute": false,
-  "prostitute_type": null,
-  "is_slave": false,
-  "spousal_status": "single",
-  "spouse_names": "",
-  "sexual_orientation": "heterosexual",
-  "relationship_preference": "monogamous"
-}
-
-SPEAK STYLE - Pick EXACTLY ONE:
-{$speakStylesWithDesc}
-
-PROFANITY LEVEL (1-4):
-1 = Soft/tasteful (no crude words)
-2 = Moderate (some explicit terms)
-3 = Hard (crude, vulgar language)
-4 = Extreme (maximum explicitness)
-
-KINKS: Pick 3 that fit their personality and current status.
-Examples: {$normalKinksStr}
-
-SECRET KINKS: Pick 3 darker desires.
-Examples: {$secretKinksStr}
-
-SLAVE DETECTION:
-- is_slave: Set to TRUE if the GAME STATE indicates they are a slave!
-- If slave, speak_style should likely be "submissive" unless they are hateful/resentful
-
-PROSTITUTE DETECTION:
-- is_prostitute: TRUE if occupation or GAME STATE indicates sex work
-- prostitute_type: "streetwalker", "courtesan", "escort", "tavern_worker", "temple_prostitute", "camp_follower", or null
-
-RELATIONSHIP STATUS:
-- spousal_status: "single", "married", "widowed"
-- spouse_names: List from relationships if married
-- sexual_orientation: "heterosexual", "homosexual", "bisexual", "asexual"
-- relationship_preference: "monogamous", "polyamorous", "uncommitted", "not_interested"
-
-Output ONLY valid JSON. No markdown, no explanation.
-PROMPT;
+        // Replace placeholders in the template
+        $prompt = str_replace('{NPC_CONTEXT}', $npcContext, $promptTemplate);
+        $prompt = str_replace('{SPEAK_STYLES}', $speakStylesWithDesc, $prompt);
 
         // Get connector
         $settingsRow = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_settings'");
@@ -445,17 +396,11 @@ PROMPT;
             return ['success' => false, 'error' => 'Invalid JSON response from LLM'];
         }
 
-        // Save the profile
-        $npcMaster = new NpcMaster();
-        $npcData = $npcMaster->getByName($npcName);
+        // Save the profile to nsfw_npc_data table (NOT core_npc_master.extended_data)
+        require_once __DIR__ . '/nsfw_data.php';
+        $extData = NsfwNpcData::get($npcName);
 
-        if (!$npcData) {
-            return ['success' => false, 'error' => 'NPC not found in database'];
-        }
-
-        $extData = $npcMaster->getExtendedData($npcData);
-
-        // Update extended data with generated profile
+        // Update NSFW data with generated profile
         $extData['sex_prompt'] = $parsed['sex_prompt'];
         $extData['sex_speech_style'] = $parsed['speak_style'] ?? 'auto';
         $extData['profanity_level'] = $parsed['profanity_level'] ?? 3;
@@ -471,8 +416,8 @@ PROMPT;
         $extData['source'] = 'auto-generated';
         $extData['nsfw_generation_completed'] = time();
 
-        $npcMaster->setExtendedData($npcData, $extData);
-        $npcMaster->save($npcData);
+        // Save to nsfw_npc_data table
+        NsfwNpcData::save($npcName, $extData);
 
         return ['success' => true, 'profile' => $parsed];
 

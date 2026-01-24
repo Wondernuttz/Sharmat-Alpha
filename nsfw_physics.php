@@ -61,56 +61,82 @@ class NsfwPhysics {
     public static function processEvent() {
         global $gameRequest;
 
-        // Only process physics events (raw events from PSC)
-        if ($gameRequest[0] != "ext_nsfw_physics_raw") {
+        // Handle both raw AND already-processed physics events
+        // Raw events need full processing; processed events just need tier prompt injection
+        $isRawEvent = ($gameRequest[0] == "ext_nsfw_physics_raw");
+        $isProcessedEvent = ($gameRequest[0] == "ext_nsfw_physics");
+
+        if (!$isRawEvent && !$isProcessedEvent) {
             return;
         }
 
-        // Get raw physics data from event
-        $rawData = $gameRequest[3] ?? '';
-        if (empty($rawData)) {
-            return;
+        // For raw events: process and rewrite (fallback if preprocessing didn't handle it)
+        if ($isRawEvent) {
+            $rawData = $gameRequest[3] ?? '';
+            if (empty($rawData)) {
+                return;
+            }
+
+            $result = self::processPhysicsEvent($rawData);
+            if (!$result) {
+                return;
+            }
+
+            // Rewrite the game request
+            $gameRequest[0] = "ext_nsfw_physics";
+            $gameRequest[3] = $result['message'];
+
+            // Update PROMPTS array if it exists
+            if (isset($GLOBALS["PROMPTS"]["ext_nsfw_physics"])) {
+                $GLOBALS["PROMPTS"]["ext_nsfw_physics"]["player_request"] = [$result['message']];
+            }
+
+            // LOG TO CHIM
+            $action = $result['action'];
+            $actorName = $result['actorName'];
+            $bodyPart = $result['bodyPart'] ?? 'Body';
+            $verb = ($action === 'grab') ? 'grabbed' : 'touched';
+            Logger::info("[VR] Player {$verb} {$actorName}'s {$bodyPart}");
+
+            // Inject tier prompt for sensitive grabs
+            $isSensitive = $result['isSensitive'] ?? false;
+            $isBlocked = $result['isBlocked'] ?? false;
+            if ($action === 'grab' && $isSensitive && !$isBlocked) {
+                self::injectTierPromptForGrab($result);
+            }
         }
+        // For already-processed events: just update the prompt (preprocessing already did the rewrite)
+        else if ($isProcessedEvent) {
+            // The message is already in gameRequest[3], just ensure PROMPTS is updated
+            if (isset($GLOBALS["PROMPTS"]["ext_nsfw_physics"])) {
+                $GLOBALS["PROMPTS"]["ext_nsfw_physics"]["player_request"] = [$gameRequest[3]];
+            }
 
-        // Process through internal handler
-        $result = self::processPhysicsEvent($rawData);
-        if (!$result) {
-            return;
+            // For tier prompt injection on processed events, we need to re-parse the message
+            // to determine if it was a sensitive grab. Check for grab verbs in the message.
+            $message = $gameRequest[3] ?? '';
+            $isSensitiveGrab = (
+                strpos($message, 'groped') !== false ||
+                strpos($message, 'grabbed between the legs') !== false ||
+                strpos($message, 'grabbed the ass') !== false ||
+                strpos($message, 'grabbed the crotch') !== false
+            );
+
+            if ($isSensitiveGrab) {
+                // Extract actor name from message format "Player groped ActorName's BodyPart"
+                if (preg_match("/Player (?:groped|grabbed[^']+) ([^']+)'s/", $message, $matches)) {
+                    $actorName = trim($matches[1]);
+                    // Create minimal result for tier prompt injection
+                    $result = [
+                        'actorName' => $actorName,
+                        'action' => 'grab',
+                        'isSensitive' => true,
+                        'isBlocked' => false
+                    ];
+                    self::injectTierPromptForGrab($result);
+                }
+            }
         }
-
-        $actorName = $result['actorName'];
-        $action = $result['action'];
-        $bodyPart = $result['bodyPart'] ?? 'Body';
-        $isSensitive = $result['isSensitive'] ?? false;
-        $isBlocked = $result['isBlocked'] ?? false;
-
-        // Rewrite the game request with the formatted physics message
-        // This ensures the model sees the physics event info
-        $gameRequest[0] = "ext_nsfw_physics";  // Change from _raw to processed
-        $gameRequest[3] = $result['message'];  // The formatted <PHYSICS_INFO> message
-
-        // CRITICAL: Update the PROMPTS array with the new message
-        // prompts.php is loaded BEFORE this runs, so PROMPTS["ext_nsfw_physics"]["player_request"]
-        // contains the old raw data. We must update it with the formatted message.
-        if (isset($GLOBALS["PROMPTS"]["ext_nsfw_physics"])) {
-            $GLOBALS["PROMPTS"]["ext_nsfw_physics"]["player_request"] = [$result['message']];
-        }
-
-        // LOG TO CHIM: Simple "Player grabbed/touched NPC's bodypart" format
-        $verb = ($action === 'grab') ? 'grabbed' : 'touched';
-        $chimLogMsg = "Player {$verb} {$actorName}'s {$bodyPart}";
-        Logger::info("[VR] {$chimLogMsg}");
-
-        // Only sensitive grabs (not blocked) trigger tier prompt
-        if ($action !== 'grab' || !$isSensitive || $isBlocked) {
-            return;
-        }
-
-        // ============================================
-        // SENSITIVE GRAB - INJECT TIER PROMPT IMMEDIATELY
-        // Same pattern as scene start: Slave → Prostitute → Affair → Regular
-        // ============================================
-        self::injectTierPromptForGrab($result);
     }
 
     /**
@@ -126,7 +152,9 @@ class NsfwPhysics {
         // Load NPC data for type detection
         $npcManager = new NpcMaster();
         $npcData = $npcManager->getByName($actor);
-        $extended_data = $npcManager->getExtendedData($npcData);
+        // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+        require_once __DIR__ . "/nsfw_data.php";
+        $extended_data = NsfwNpcData::get($actor);
         $metadata = $npcManager->getMetadata($npcData);
 
         // Detect NPC type (same logic as processInfoSexScene)
@@ -283,6 +311,11 @@ class NsfwPhysics {
         $playerName = $GLOBALS["PLAYER_NAME"] ?? "Player";
         $isSensitive = self::isSensitiveBodyPart($bodyPart);
 
+        // Check if we're in an active scene (for context-aware messages)
+        $sceneActiveFile = sys_get_temp_dir() . "/nsfw_scene_active.txt";
+        $sceneActive = @file_get_contents($sceneActiveFile);
+        $inScene = ($sceneActive !== false && (time() - (int)$sceneActive) < 600);
+
         // Build message - GRAB is INTENTIONAL (unlike touch which could be accidental)
         if ($isBlocked) {
             $message = "{$playerName} tried to grab {$actorName}'s {$bodyPart} but was prevented by the {$blockedBy}";
@@ -291,6 +324,9 @@ class NsfwPhysics {
             if ($isSensitive) {
                 $grabVerb = self::getSensitiveGrabVerb($bodyPart);
                 $message = "{$playerName} {$grabVerb} {$actorName}'s {$bodyPart}";
+            } elseif ($bodyPart === 'Head' && $inScene) {
+                // During scene: head grab = pulling hair
+                $message = "{$playerName} grabbed {$actorName}'s hair and pulled";
             } else {
                 $message = "{$playerName} grabbed {$actorName}'s {$bodyPart}";
             }

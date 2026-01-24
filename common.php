@@ -1,6 +1,8 @@
 <?php
 
 require_once __DIR__ . "/../../lib/chat_helper_functions.php";
+require_once __DIR__ . "/nsfw_data.php";  // NsfwNpcData class - MUST be loaded first (functions.php uses it on include)
+require_once __DIR__ . "/helpers.php";  // Helper functions (isSexDisposalEnabled, etc.) - separated from function definitions
 require_once __DIR__ . "/scene_lookup.php";  // OStim JSON parsing + dual lookup
 require_once __DIR__ . "/nsfw_relationship.php";  // Tier-based relationship prompts
 require_once __DIR__ . "/nsfw_npc_scene.php";  // NPC-to-NPC scene handling
@@ -44,18 +46,44 @@ function processInfoFertility()
 
     if ($gameRequest[0] == "fertility_notification") {
         $actor = $GLOBALS["HERIKA_NAME"];
-
-        $npcManager = new NpcMaster();
-        $npcData    = $npcManager->getByName($actor);
-
-        if (! $npcData) {
-            $npcData = $npcManager->getByName(ucFirst(strtolower($actor)));
-        }
-        $extended = json_decode($npcData["extended_data"], true);
-        if (!$extended) $extended = [];
-
         $subCmd = explode("@", $gameRequest[3]);
         $eventType = $subCmd[1] ?? '';
+
+        // THROTTLE: Safety net to prevent duplicate processing even if FMR sends extras
+        // Critical events (birth, death, miscarriage) bypass throttle
+        $criticalEvents = ['birth', 'baby_death', 'miscarriage', 'mother_death', 'aborted'];
+        $throttleSeconds = 30;
+
+        if (!in_array($eventType, $criticalEvents)) {
+            $cacheKey = "fertility_" . strtolower($actor) . "_" . $eventType;
+            $cacheFile = sys_get_temp_dir() . "/" . md5($cacheKey) . ".fmr_cache";
+
+            // For pregnancy progress, also cache the milestone (10% increments)
+            $currentValue = $subCmd[2] ?? '';
+            if ($eventType == 'pregnant') {
+                $milestone = intval(intval($currentValue) / 10) * 10;
+                $cacheKey .= "_" . $milestone;
+                $cacheFile = sys_get_temp_dir() . "/" . md5($cacheKey) . ".fmr_cache";
+            }
+
+            if (file_exists($cacheFile)) {
+                $cacheData = @json_decode(file_get_contents($cacheFile), true);
+                $lastProcessed = $cacheData['time'] ?? 0;
+                $lastValue = $cacheData['value'] ?? '';
+
+                // Skip if same value processed recently
+                if ((time() - $lastProcessed) < $throttleSeconds && $lastValue == $currentValue) {
+                    $gameRequest[0] = "info";
+                    terminate();
+                    return;
+                }
+            }
+            // Update cache
+            file_put_contents($cacheFile, json_encode(['time' => time(), 'value' => $currentValue]));
+        }
+
+        // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+        $extended = NsfwNpcData::get($actor);
 
         error_log("[CHIM-NSFW FERTILITY] Processing: " . $gameRequest[3]);
 
@@ -124,9 +152,16 @@ function processInfoFertility()
                 break;
         }
 
-        $npcData["extended_data"] = json_encode($extended);
-        $npcData["gamets_last_updated"] = $gameRequest[2];
-        $npcManager->updateByArray($npcData);
+        // Save to nsfw_npc_data table
+        NsfwNpcData::save($actor, $extended);
+
+        // Update gamets in core_npc_master (timestamp only)
+        $npcManager = new NpcMaster();
+        $npcData = $npcManager->getByName($actor);
+        if ($npcData) {
+            $npcData["gamets_last_updated"] = $gameRequest[2];
+            $npcManager->updateByArray($npcData);
+        }
 
         $gameRequest[0] = "info";
         logEvent($gameRequest);
@@ -136,21 +171,11 @@ function processInfoFertility()
 
 function getIntimacyForActor($actorName)
 {
-
-    $npcManager = new NpcMaster();
-    $npcData    = $npcManager->getByName($actorName);
-    if (! $npcData) {
-        $npcData = $npcManager->getByName(ucFirst(strtolower($actorName)));
-    }
-    if (isset($npcData["extended_data"])) {
-        $extended = json_decode($npcData["extended_data"], true);
-    } else {
-        $extended = [];
-    }
+    // Get from nsfw_npc_data table (NOT core_npc_master.extended_data)
+    $extended = NsfwNpcData::get($actorName);
 
     if (isset($extended["aiagent_nsfw_intimacy_data"]) && isNonEmptyArray($extended["aiagent_nsfw_intimacy_data"])) {
         $intimacyStatus = $extended["aiagent_nsfw_intimacy_data"];
-
     } else {
         $intimacyStatus = ["level" => 0, "sex_disposal" => 0];
     }
@@ -189,22 +214,14 @@ function setSexPrompt($actorName)
 
 function updateIntimacyForActor($actorName, $idata)
 {
-
     if ($actorName == $GLOBALS["PLAYER_NAME"]) {
         return;
     }
 
     error_log("[AIAGENTNSFW] Updating intimacy for $actorName. " . json_encode($idata));
 
-    $currentIntimacy = getIntimacyForActor($actorName);
-    $npcManager      = new NpcMaster();
-    $npcData         = $npcManager->getByName($actorName);
-
-    if (! $npcData) {
-        $npcData = $npcManager->getByName(ucFirst(strtolower($actorName)));
-    }
-
-    $extended = json_decode($npcData["extended_data"], true);
+    // Get from nsfw_npc_data table (NOT core_npc_master.extended_data)
+    $extended = NsfwNpcData::get($actorName);
 
     // Always add/update the gamets timestamp to track when this intimacy data was created
     // This allows us to detect and clear "future" data when loading older saves
@@ -216,9 +233,8 @@ function updateIntimacyForActor($actorName, $idata)
         $extended["aiagent_nsfw_intimacy_data"] = $idata;
     }
 
-    $npcData["extended_data"] = json_encode($extended);
-    $npcManager->updateByArray($npcData);
-
+    // Save to nsfw_npc_data table
+    NsfwNpcData::save($actorName, $extended);
 }
 
 function saveAllDisposals()
@@ -443,21 +459,16 @@ function isProstitute($actorName) {
         $npcData = $npcManager->getByName(ucFirst(strtolower($actorName)));
     }
     if (!$npcData) return false;
-    $extended = json_decode($npcData["extended_data"] ?? '{}', true) ?: [];
+    // Get from nsfw_npc_data table (NOT core_npc_master.extended_data)
+    $extended = NsfwNpcData::get($actorName);
     return !empty($extended['is_prostitute']) ||
            !empty($extended['profession_prostitute']) ||
            !empty($extended['adult_entertainment_services_autodetected']);
 }
 
 function setNpcProstituteStatus($actorName, $isProstitute) {
-    $npcManager = new NpcMaster();
-    $npcData = $npcManager->getByName($actorName);
-    if (!$npcData) {
-        $npcData = $npcManager->getByName(ucFirst(strtolower($actorName)));
-    }
-    if (!$npcData) return false;
-
-    $extended = json_decode($npcData["extended_data"] ?? '{}', true) ?: [];
+    // Get from nsfw_npc_data table (NOT core_npc_master.extended_data)
+    $extended = NsfwNpcData::get($actorName);
 
     if ($isProstitute) {
         $extended['is_prostitute'] = true;
@@ -467,7 +478,8 @@ function setNpcProstituteStatus($actorName, $isProstitute) {
         unset($extended['adult_entertainment_services_autodetected']);
     }
 
-    $npcManager->update($npcData['name'], ['extended_data' => json_encode($extended)]);
+    // Save to nsfw_npc_data table
+    NsfwNpcData::save($actorName, $extended);
     return true;
 }
 
@@ -499,25 +511,14 @@ function getGlobalPrompt($promptKey) {
 }
 
 function isNpcSlave($actorName) {
-    $npcManager = new NpcMaster();
-    $npcData = $npcManager->getByName($actorName);
-    if (!$npcData) {
-        $npcData = $npcManager->getByName(ucFirst(strtolower($actorName)));
-    }
-    if (!$npcData) return false;
-    $extended = json_decode($npcData["extended_data"] ?? '{}', true) ?: [];
+    // Get from nsfw_npc_data table (NOT core_npc_master.extended_data)
+    $extended = NsfwNpcData::get($actorName);
     return !empty($extended['is_slave']);
 }
 
 function setNpcSlaveStatus($actorName, $isSlave) {
-    $npcManager = new NpcMaster();
-    $npcData = $npcManager->getByName($actorName);
-    if (!$npcData) {
-        $npcData = $npcManager->getByName(ucFirst(strtolower($actorName)));
-    }
-    if (!$npcData) return false;
-
-    $extended = json_decode($npcData["extended_data"] ?? '{}', true) ?: [];
+    // Get from nsfw_npc_data table (NOT core_npc_master.extended_data)
+    $extended = NsfwNpcData::get($actorName);
 
     if ($isSlave) {
         $extended['is_slave'] = true;
@@ -525,7 +526,8 @@ function setNpcSlaveStatus($actorName, $isSlave) {
         unset($extended['is_slave']);
     }
 
-    $npcManager->update($npcData['name'], ['extended_data' => json_encode($extended)]);
+    // Save to nsfw_npc_data table
+    NsfwNpcData::save($actorName, $extended);
     return true;
 }
 
@@ -534,7 +536,7 @@ function freeNpcSlave($actorName) {
 }
 
 /**
- * Build negotiation context for prostitute after AcceptTransaction
+ * Build negotiation context for prostitute at tier_prompt phase
  * Uses the full prostitute configuration from is_prostitute checkbox:
  * - prostitute_type: streetwalker, courtesan, escort, tavern_worker, temple_prostitute, camp_follower
  * - prostitute_pricing: individual_acts, time_bookings, style_addons, group_premiums
@@ -550,13 +552,8 @@ function freeNpcSlave($actorName) {
 function buildProstituteNegotiationContext($npcName, $clientName, $affinity) {
     $context = "";
 
-    // Get NPC's extended data for all prostitute configuration
-    $npcManager = new NpcMaster();
-    $npcData = $npcManager->getByName($npcName);
-    $extended = [];
-    if ($npcData) {
-        $extended = json_decode($npcData["extended_data"] ?? '{}', true) ?: [];
-    }
+    // Get NPC's NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
+    $extended = NsfwNpcData::get($npcName);
 
     // Get global prompts for pricing modifiers
     $globalPrompts = getGlobalNsfwPrompts();
@@ -738,11 +735,11 @@ function buildProstituteNegotiationContext($npcName, $clientName, $affinity) {
         $context .= $priceList;
     }
 
-    $context .= "\n\n#Instructions: Discuss what {$clientName} wants. Quote your prices based on the list above. ";
-    $context .= "Once you agree on services and price, use RequestPayment(amount, service) to request payment. ";
-    $context .= "Example: RequestPayment(50, \"oral\") or RequestPayment(100, \"full service\"). ";
-    $context .= "When {$clientName} agrees to pay, the gold will be taken automatically. ";
-    $context .= "Wait for payment confirmation before proceeding with intimate acts.";
+    $context .= "\n\n#Instructions: Based on how you feel about {$clientName} and your prices above, decide: ";
+    $context .= "Use AcceptSex to agree to do business, or RefuseSex to reject the client. ";
+    $context .= "If you accept, negotiate what {$clientName} wants and quote your prices. ";
+    $context .= "Use CollectPayment(amount, service) to take payment (e.g., CollectPayment(100, \"full service\")). ";
+    $context .= "After collecting payment, use StartSex or other intimate commands to begin.";
 
     error_log("[AIAGENTNSFW] Built negotiation context for {$npcName} (type: {$prostituteType}, payment: {$paymentType}, tier: {$tierName})");
 

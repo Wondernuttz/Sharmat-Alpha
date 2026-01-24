@@ -78,11 +78,11 @@ while (true) {
  */
 function isOstimSceneActive() {
     try {
-        // Check for any NPC with intimacy level > 0
+        // Check for any NPC with intimacy level 2 in nsfw_npc_data table
+        // Uses JSONB operator to check aiagent_nsfw_intimacy_data->level
         $result = $GLOBALS['db']->fetchOne("
-            SELECT COUNT(*) as cnt FROM core_npc_master
-            WHERE extended_data::text LIKE '%\"level\":2%'
-            OR extended_data::text LIKE '%\"level\": 2%'
+            SELECT COUNT(*) as cnt FROM nsfw_npc_data
+            WHERE (extended_data->'aiagent_nsfw_intimacy_data'->>'level')::int = 2
         ");
         return ($result['cnt'] ?? 0) > 0;
     } catch (Exception $e) {
@@ -198,43 +198,19 @@ function generateProfileForNpc($npcName, $queueDataJson) {
         }
     }
 
-    // Build prompt
-    $prompt = <<<PROMPT
-You are generating an NSFW character profile for a Skyrim NPC.
+    // Load custom or default prompt template from config_manager
+    require_once __DIR__ . '/config_manager.php';
+    $templateRow = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_ai_prompt_template'");
+    $promptTemplate = '';
+    if ($templateRow && !empty($templateRow['value'])) {
+        $promptTemplate = $templateRow['value'];
+    } else {
+        $promptTemplate = getDefaultAiPromptTemplate();
+    }
 
-NPC CONTEXT:
-{$npcContext}
-
-Return this EXACT JSON structure:
-{
-  "sex_prompt": "2-4 sentences in SECOND PERSON describing intimate behavior. If SLAVE, reflect enslaved mentality. If PROSTITUTE, reflect professional approach.",
-  "speak_style": "one_of_the_valid_options",
-  "profanity_level": 3,
-  "kinks": ["kink1", "kink2", "kink3"],
-  "secret_kinks": ["secret1", "secret2", "secret3"],
-  "is_slave": false,
-  "slave_speak_style": null,
-  "slave_obedience": null,
-  "slave_resentment": null,
-  "is_prostitute": false,
-  "prostitute_type": null,
-  "prostitute_price_modifier": null,
-  "prostitute_services": null,
-  "spousal_status": "single",
-  "spouse_names": "",
-  "sexual_orientation": "heterosexual",
-  "relationship_preference": "monogamous"
-}
-
-SPEAK STYLES (pick ONE):
-{$speakStylesWithDesc}
-
-SLAVE DETECTION: Set is_slave=true if enslaved. Fill slave_speak_style, slave_obedience (1-10), slave_resentment (1-10).
-
-PROSTITUTE DETECTION: Set is_prostitute=true if sex worker. Fill prostitute_type, prostitute_price_modifier (0.5-2.0), prostitute_services array.
-
-Output ONLY valid JSON.
-PROMPT;
+    // Replace placeholders in the template
+    $prompt = str_replace('{NPC_CONTEXT}', $npcContext, $promptTemplate);
+    $prompt = str_replace('{SPEAK_STYLES}', $speakStylesWithDesc, $prompt);
 
     // Get Grok connector
     $connectorName = getGrokConnector();
@@ -265,11 +241,12 @@ PROMPT;
         return ['success' => false, 'error' => 'Invalid JSON from Grok'];
     }
 
-    // Save to database with advisory locking
+    // Save to nsfw_npc_data table (NOT core_npc_master.extended_data)
     // This prevents conflicts if player is editing the same NPC in the UI
-    // Uses the same advisory lock pattern as NsfwData for consistency
+    // Uses advisory lock pattern for consistency
+    require_once __DIR__ . '/nsfw_data.php';
 
-    $lockKey = "npc_extended_data_" . strtolower($npcName);
+    $lockKey = "nsfw_npc_data_" . strtolower($npcName);
     $lockId = crc32($lockKey);
 
     // Try to acquire lock - non-blocking so we don't stall if UI has it
@@ -279,43 +256,31 @@ PROMPT;
     }
 
     try {
-        // Get current NPC data
-        $escapedName = $GLOBALS['db']->escape($npcName);
-        $npcRow = $GLOBALS['db']->fetchOne("
-            SELECT id, extended_data FROM core_npc_master
-            WHERE LOWER(npc_name) = LOWER('{$escapedName}')
-        ");
+        // Get current NSFW data from nsfw_npc_data table
+        $extData = NsfwNpcData::get($npcName);
 
-        if (!$npcRow) {
-            $GLOBALS['db']->execQuery("SELECT pg_advisory_unlock($lockId)");
-            return ['success' => false, 'error' => 'NPC not found'];
+        // Save all fields
+        $extData['sex_prompt'] = $parsed['sex_prompt'];
+        $extData['sex_speech_style'] = $parsed['speak_style'] ?? 'passionate';
+        $extData['nsfw_profanity_level'] = $parsed['profanity_level'] ?? 3;
+        $extData['kinks'] = $parsed['kinks'] ?? [];
+        $extData['secret_kinks'] = $parsed['secret_kinks'] ?? [];
+
+        // Slave fields
+        $extData['is_slave'] = $parsed['is_slave'] ?? false;
+        if (!empty($parsed['is_slave'])) {
+            $extData['slave_speak_style'] = $parsed['slave_speak_style'] ?? 'submissive';
+            $extData['slave_obedience'] = $parsed['slave_obedience'] ?? 5;
+            $extData['slave_resentment'] = $parsed['slave_resentment'] ?? 5;
         }
 
-        // Get current extended_data
-        $extData = json_decode($npcRow['extended_data'] ?? '{}', true) ?: [];
-
-    // Save all fields
-    $extData['sex_prompt'] = $parsed['sex_prompt'];
-    $extData['sex_speech_style'] = $parsed['speak_style'] ?? 'passionate';
-    $extData['nsfw_profanity_level'] = $parsed['profanity_level'] ?? 3;
-    $extData['kinks'] = $parsed['kinks'] ?? [];
-    $extData['secret_kinks'] = $parsed['secret_kinks'] ?? [];
-
-    // Slave fields
-    $extData['is_slave'] = $parsed['is_slave'] ?? false;
-    if (!empty($parsed['is_slave'])) {
-        $extData['slave_speak_style'] = $parsed['slave_speak_style'] ?? 'submissive';
-        $extData['slave_obedience'] = $parsed['slave_obedience'] ?? 5;
-        $extData['slave_resentment'] = $parsed['slave_resentment'] ?? 5;
-    }
-
-    // Prostitute fields
-    $extData['is_prostitute'] = $parsed['is_prostitute'] ?? false;
-    if (!empty($parsed['is_prostitute'])) {
-        $extData['prostitute_type'] = $parsed['prostitute_type'] ?? 'streetwalker';
-        $extData['prostitute_price_modifier'] = $parsed['prostitute_price_modifier'] ?? 1.0;
-        $extData['prostitute_services'] = $parsed['prostitute_services'] ?? ['standard'];
-    }
+        // Prostitute fields
+        $extData['is_prostitute'] = $parsed['is_prostitute'] ?? false;
+        if (!empty($parsed['is_prostitute'])) {
+            $extData['prostitute_type'] = $parsed['prostitute_type'] ?? 'streetwalker';
+            $extData['prostitute_price_modifier'] = $parsed['prostitute_price_modifier'] ?? 1.0;
+            $extData['prostitute_services'] = $parsed['prostitute_services'] ?? ['standard'];
+        }
 
         $extData['spousal_status'] = $parsed['spousal_status'] ?? 'single';
         $extData['spouse_names'] = $parsed['spouse_names'] ?? '';
@@ -324,14 +289,8 @@ PROMPT;
         $extData['nsfw_source'] = 'ai-background';
         $extData['nsfw_generated_at'] = time();
 
-        // Write directly with our lock held
-        $newExtData = $GLOBALS['db']->escape(json_encode($extData));
-        $npcId = $npcRow['id'];
-        $GLOBALS['db']->execQuery("
-            UPDATE core_npc_master
-            SET extended_data = '{$newExtData}'
-            WHERE id = {$npcId}
-        ");
+        // Save to nsfw_npc_data table
+        NsfwNpcData::save($npcName, $extData);
 
         // Release advisory lock
         $GLOBALS['db']->execQuery("SELECT pg_advisory_unlock($lockId)");
