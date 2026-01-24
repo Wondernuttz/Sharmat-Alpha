@@ -688,21 +688,6 @@ class NsfwData {
     // ==========================================
 
     /**
-     * Default speak styles
-     *
-     * NOTE: The actual speak styles are loaded from nsfw_import_data.php
-     * This returns empty because speak styles should be seeded via the import script,
-     * not from hardcoded defaults. The real speak styles are complex with phase prompts.
-     *
-     * Run import_nsfw_data.php to seed the database with the correct speak styles.
-     */
-    public static function getDefaultSpeakStyles() {
-        // Return empty - actual speak styles come from nsfw_import_data.php
-        // The import contains 35+ styles with full phase prompts (init, climax, pillow_talk, etc.)
-        return [];
-    }
-
-    /**
      * Get speak style by name - returns FULL object with all phase prompts
      * Uses JSONB operator for efficient single-key lookup
      *
