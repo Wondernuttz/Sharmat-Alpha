@@ -706,11 +706,17 @@ class NsfwRelationship {
         $lowestTier = strtolower(RelationshipManager::getTierLabel($lowestAffinity));
         $prompts = self::loadPromptSettings();
 
-        // Check for affair scenario with the lowest-affinity partner
-        if (self::isAffairScenario($npcName, $lowestPartner)) {
+        // Check for marriage/affair scenario with the lowest-affinity partner
+        if (self::isMarriageScenario($npcName, $lowestPartner)) {
+            // Partner IS the spouse - use marriage prompts
+            $tierPrompt = self::getMarriageSpousePrompt($lowestTier, $lowestPartner);
+            $tierPrompt = str_replace('#PARTNER#', $lowestPartner, $tierPrompt);
+            error_log("[NSFW_REL] Group marriage scene detected for $npcName with spouse $lowestPartner");
+        } else if (self::isAffairScenario($npcName, $lowestPartner)) {
+            // Married but partner is NOT spouse - affair prompts
             $spouseName = self::getSpouseName($npcName);
-            $tierPrompt = self::getMarriageTierPrompt($lowestTier, $lowestPartner, $spouseName);
-            error_log("[NSFW_REL] Group affair scenario detected for $npcName with $lowestPartner (spouse: $spouseName)");
+            $tierPrompt = self::getAffairTierPrompt($lowestTier, $lowestPartner, $spouseName);
+            error_log("[NSFW_REL] Group affair detected for $npcName with $lowestPartner (spouse: $spouseName)");
         } else {
             $promptKey = $isProstitute ? "tier_prost_{$lowestTier}" : "tier_{$lowestTier}";
             // Get prompt from database - NO HARDCODED FALLBACKS
@@ -1043,17 +1049,29 @@ class NsfwRelationship {
     private static function getTierPromptForRelationship($relationship, $isProstitute, $partnerName, $npcName = null) {
         $tier = strtolower($relationship['tier']);
 
-        // Check for affair scenario: NPC is married but partner is not their spouse
-        if ($npcName && self::isAffairScenario($npcName, $partnerName)) {
-            $spouseName = self::getSpouseName($npcName);
-            $prompt = self::getMarriageTierPrompt($tier, $partnerName, $spouseName);
-            $prompt = str_replace('#AFFINITY#', $relationship['aff'], $prompt);
-            $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
-            error_log("[NSFW_REL] Affair scenario detected for $npcName with $partnerName (spouse: $spouseName) - using marriage tier prompt");
-            return $prompt;
+        if ($npcName) {
+            // MARRIAGE: Partner IS the spouse - use marriage-specific prompts
+            if (self::isMarriageScenario($npcName, $partnerName)) {
+                $prompt = self::getMarriageSpousePrompt($tier, $partnerName);
+                $prompt = str_replace('#PARTNER#', $partnerName, $prompt);
+                $prompt = str_replace('#AFFINITY#', $relationship['aff'], $prompt);
+                $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
+                error_log("[NSFW_REL] Marriage scene detected for $npcName with spouse $partnerName (tier: $tier)");
+                return $prompt;
+            }
+
+            // AFFAIR: Married but partner is NOT spouse - use affair prompts
+            if (self::isAffairScenario($npcName, $partnerName)) {
+                $spouseName = self::getSpouseName($npcName);
+                $prompt = self::getAffairTierPrompt($tier, $partnerName, $spouseName);
+                $prompt = str_replace('#AFFINITY#', $relationship['aff'], $prompt);
+                $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
+                error_log("[NSFW_REL] Affair detected for $npcName with $partnerName (spouse: $spouseName, tier: $tier)");
+                return $prompt;
+            }
         }
 
-        // Regular prompt selection (not an affair)
+        // Regular prompt selection (not married, or partner info not available)
         $prompts = self::loadPromptSettings();
         $promptKey = $isProstitute ? "tier_prost_{$tier}" : "tier_{$tier}";
 

@@ -10,6 +10,19 @@ require_once __DIR__ . "/nsfw_physics.php";  // VR touch/physics handling
 require_once __DIR__ . "/nsfw_ostim_handler.php";  // OStim scene handling
 
 /**
+ * Apply TTS settings to whichever TTS engine is active.
+ * Supports XTTS FastAPI, PocketTTS, and Chatterbox.
+ */
+function apply_tts_settings($settings, $resetAfter = false) {
+    if (function_exists('xtts_fastapi_settings'))
+        xtts_fastapi_settings($settings, $resetAfter);
+    else if (function_exists('pockettts_settings'))
+        pockettts_settings($settings, $resetAfter);
+    else if (function_exists('chatterbox_settings'))
+        chatterbox_settings($settings, $resetAfter);
+}
+
+/**
  * Process OStim/SexLab scene events
  * Wrapper function for backwards compatibility.
  * @see NsfwOstimHandler::processEvent() for implementation
@@ -92,7 +105,14 @@ function processInfoFertility()
                 // Format: name@pregnant@progress@fatherName (from FMR_ActorStatus)
                 $extended["fertility_is_pregnant"] = true;
                 $extended["fertility_progress"] = intval($subCmd[2] ?? 0);
-                $extended["fertility_father"] = $subCmd[3] ?? '';
+                $fatherRaw = $subCmd[3] ?? '';
+                // FMR sometimes tracks The Narrator NPC (a CHIM AI character) as the inseminator
+                // instead of the actual player, because The Narrator is a physical NPC that can
+                // be present near OStim scenes. Fall back to the real player name in this case.
+                if ($fatherRaw === 'The Narrator' || $fatherRaw === '') {
+                    $fatherRaw = $GLOBALS['PLAYER_NAME'] ?? $fatherRaw;
+                }
+                $extended["fertility_father"] = $fatherRaw;
                 break;
 
             case 'recovery':
@@ -781,4 +801,36 @@ function getAffinityTierName($affinity) {
     if ($affinity >= -75) return 'resentful';
     if ($affinity >= -90) return 'hateful';
     return 'hostile';
+}
+
+/**
+ * Load NSFW general settings from database (conf_opts 'aiagent_nsfw_settings')
+ * Used by preprocessing, prompts, prerequest — lives in common.php so it's
+ * always available without loading the heavy prompts.php file.
+ */
+function _getNsfwSetting($key, $default = null) {
+    static $cache = null;
+    static $dbWasAvailable = false;
+
+    // If cache was initialized before db was available, re-init now that db exists
+    if ($cache !== null && !$dbWasAvailable && isset($GLOBALS["db"])) {
+        $cache = null;
+    }
+
+    if ($cache === null) {
+        $cache = [];
+        $dbWasAvailable = isset($GLOBALS["db"]);
+        if ($dbWasAvailable) {
+            try {
+                $row = $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_settings'");
+                if ($row && !empty($row['value'])) {
+                    $cache = json_decode($row['value'], true) ?: [];
+                }
+            } catch (Exception $e) {
+                // Silently fail, use defaults
+            }
+        }
+    }
+
+    return isset($cache[$key]) ? $cache[$key] : $default;
 }

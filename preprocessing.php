@@ -20,6 +20,7 @@ $GLOBALS["external_fast_commands"][]="ext_vr_item_drop";    // Rewritten from ex
 // BLOCKED events - these should NOT hit the LLM at all
 $GLOBALS["external_fast_commands"][]="nsfw_blocked_cooldown";
 $GLOBALS["external_fast_commands"][]="nsfw_blocked_duplicate";
+$GLOBALS["external_fast_commands"][]="nsfw_blocked_scene_ended";
 
 
 require_once(__DIR__."/common.php");
@@ -29,9 +30,81 @@ if (isset($GLOBALS["gameRequest"])) {
     $currentEvent = $GLOBALS["gameRequest"][0] ?? '';
     $currentActor = $GLOBALS["HERIKA_NAME"] ?? 'unknown';
 
+    // BACKLOG FIX — Scene end early detection.
+    // preprocessing.php runs BEFORE the semaphore (main.php:181 vs semaphore at main.php:221).
+    // When chatnf_sl_end arrives, chatnf_sl events from the scene are already PAST preprocessing
+    // and waiting for the semaphore. By setting pillow_talk_pending=true in the DB here (before
+    // the semaphore), the existing prerequest.php:139-188 pillow_talk system fires for those
+    // stale events when they acquire the semaphore — converting moaning to post-scene dialogue.
+    if ($currentEvent === 'chatnf_sl_end') {
+        @file_put_contents(sys_get_temp_dir() . "/nsfw_scene_ended.txt", time());
+
+        // Prime pillow talk for all NPCs with an active scene. Generic prompt is used for
+        // any stale chatnf_sl events still in flight. handleSceneEnd() (when chatnf_sl_end
+        // finally processes) will overwrite with the NPC-specific pillow talk prompt.
+        $genericPillowTalk = "The intimate scene has just ended. React naturally to the quiet afterglow — warmly and briefly. Do NOT moan or continue sexual expressions.";
+        try {
+            $GLOBALS["db"]->execQuery("
+                UPDATE nsfw_npc_data
+                SET extended_data = jsonb_set(
+                    jsonb_set(
+                        extended_data,
+                        '{aiagent_nsfw_intimacy_data,pillow_talk_pending}', 'true'::jsonb, false
+                    ),
+                    '{aiagent_nsfw_intimacy_data,pillow_talk_prompt}',
+                    " . $GLOBALS["db"]->escapeLiteral(json_encode($genericPillowTalk)) . "::jsonb, false
+                )
+                WHERE extended_data IS NOT NULL
+                  AND extended_data ? 'aiagent_nsfw_intimacy_data'
+                  AND (
+                      (extended_data->'aiagent_nsfw_intimacy_data'->>'level')::int > 0
+                      OR (extended_data->'aiagent_nsfw_intimacy_data'->>'scene_phase') IS NOT NULL
+                  )
+            ");
+        } catch (Exception $e) {
+            error_log("[AIAGENTNSFW] Failed to set early pillow talk: " . $e->getMessage());
+        }
+    }
+
     // Mark scene as active when we get scene events
     if (in_array($currentEvent, ['ext_nsfw_sexcene', 'info_sexscene', 'chatnf_sl', 'chatnf_sl_nr'])) {
         @file_put_contents(sys_get_temp_dir() . "/nsfw_scene_active.txt", time());
+    }
+
+    // Block stale sex-scene events that arrive AFTER the scene has ended (future HTTP requests
+    // that haven't started processing yet). Compares nsfw_scene_ended.txt vs nsfw_scene_active.txt:
+    //   scene_ended newer → scene over, no new scene started → BLOCK immediately
+    //   scene_active newer (ext_nsfw_sexcene fired for new scene) → allow through
+    // 60s TTL is a fallback; handleSceneEnd() clears the file explicitly on proper scene end.
+    $staleSceneEventTypes = ['chatnf_sl', 'chatnf_sl_moan', 'chatnf_sl_climax'];
+    if (in_array($currentEvent, $staleSceneEventTypes)) {
+        $sceneEndedFile = sys_get_temp_dir() . "/nsfw_scene_ended.txt";
+        $sceneEndedRaw  = @file_get_contents($sceneEndedFile);
+        if ($sceneEndedRaw !== false) {
+            $sceneEndedTime  = (int)$sceneEndedRaw;
+            $sceneActiveTime = (int)(@file_get_contents(sys_get_temp_dir() . "/nsfw_scene_active.txt") ?: 0);
+            if ($sceneEndedTime > $sceneActiveTime && (time() - $sceneEndedTime) < 60) {
+                $GLOBALS["gameRequest"][0] = "nsfw_blocked_scene_ended";
+            }
+        }
+    }
+
+    // Block ALL rechat/narration while any scene is active.
+    // Uses nsfw_scene_active.txt file marker (written by scene events).
+    // NOTE: HERIKA_NAME is NOT set to the correct NPC in preprocessing — it's the
+    // default from conf.php. So we CANNOT do per-actor checks here. Instead we
+    // block ALL rechat/narration during scenes. This prevents event backlog that
+    // clogs the main semaphore and delays scene/orgasm processing.
+    if (in_array($currentEvent, ['rechat', 'narration'])) {
+        $blockRechat = _getNsfwSetting('BLOCK_RECHAT_IN_SCENE', true);
+        if ($blockRechat) {
+            $blockTimeout = _getNsfwSetting('BLOCK_RECHAT_TIMEOUT', 300);
+            $sceneActiveFile = sys_get_temp_dir() . "/nsfw_scene_active.txt";
+            $sceneActiveTime = @file_get_contents($sceneActiveFile);
+            if ($sceneActiveTime !== false && (time() - (int)$sceneActiveTime) < $blockTimeout) {
+                $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
+            }
+        }
     }
 
     // Physics cooldown (outside scenes only - scene blocking handled by Papyrus routing)
@@ -50,28 +123,47 @@ if (isset($GLOBALS["gameRequest"])) {
         }
     }
 
-    // Scene dedup - OStim fires ostim_scenechanged twice
+    // Rewrite info_sexscene FIRST so dedup catches both event names
+    if ($currentEvent === 'info_sexscene' || $GLOBALS["gameRequest"][0] === 'info_sexscene') {
+        $GLOBALS["gameRequest"][0] = "ext_nsfw_sexcene";
+        $currentEvent = "ext_nsfw_sexcene";
+    }
+
+    // Scene dedup - OStim fires scene events repeatedly (~500ms)
+    // Hash-based: process each unique scene data ONCE, block all repeats.
+    // When OStim changes position/animation, the data changes → new hash → passes through.
     if ($currentEvent === 'ext_nsfw_sexcene') {
         $sceneHash = md5($GLOBALS["gameRequest"][3] ?? '');
-        $dedupFile = sys_get_temp_dir() . "/nsfw_scene_dedup_" . $sceneHash . ".txt";
-        $lastTime = @file_get_contents($dedupFile);
-        $lastTime = $lastTime !== false ? (float)$lastTime : 0;
-        $now = microtime(true);
-        if (($now - $lastTime) < 1.0) {
+        $dedupFile = sys_get_temp_dir() . "/nsfw_scene_last_hash.txt";
+        $lastHash = @file_get_contents($dedupFile);
+        if ($lastHash === $sceneHash) {
+            // Same scene data as last processed event — block completely
             $GLOBALS["gameRequest"][0] = "nsfw_blocked_duplicate";
         } else {
-            @file_put_contents($dedupFile, $now);
+            // New scene data (position change or new scene) — process it
+            @file_put_contents($dedupFile, $sceneHash);
+            // Mark that a scene CHANGE occurred — bypass chatnf_sl cooldown briefly
+            @file_put_contents(sys_get_temp_dir() . "/nsfw_scene_changed.txt", time());
         }
     }
 
-    // Scene dialogue cooldown
+    // Scene dialogue cooldown — but bypass for 5 seconds after a scene CHANGE
+    // so the NPC can respond to the new position/animation immediately.
+    // NOTE: $currentActor is DEFAULT HERIKA_NAME (not actual NPC) in preprocessing,
+    // so we use $_GET["profile"] hash for per-NPC cooldown files instead.
     if (in_array($currentEvent, ['chatnf_sl', 'chatnf_sl_nr'])) {
-        require_once(__DIR__."/prompts.php");
         $sceneCooldown = _getNsfwSetting('COOLDOWN_SEX_SCENE', 15);
-        $cooldownFile = sys_get_temp_dir() . "/nsfw_scene_dialogue_" . md5($currentActor) . ".txt";
+        $profileHash = $_GET["profile"] ?? md5($currentActor);
+        $cooldownFile = sys_get_temp_dir() . "/nsfw_scene_dialogue_" . $profileHash . ".txt";
         $lastTime = @file_get_contents($cooldownFile);
         $lastTime = $lastTime !== false ? (int)$lastTime : 0;
-        if ((time() - $lastTime) < $sceneCooldown) {
+
+        // Check if scene just changed — bypass cooldown so NPC responds to new position
+        $sceneChangedFile = sys_get_temp_dir() . "/nsfw_scene_changed.txt";
+        $sceneChangedTime = @file_get_contents($sceneChangedFile);
+        $recentSceneChange = ($sceneChangedTime !== false && (time() - (int)$sceneChangedTime) < 5);
+
+        if (!$recentSceneChange && (time() - $lastTime) < $sceneCooldown) {
             $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
         } else {
             @file_put_contents($cooldownFile, time());
@@ -80,7 +172,6 @@ if (isset($GLOBALS["gameRequest"])) {
 
     // Orgasm/climax handling - cooldown only (speak style prompt injection happens in prompts.php)
     if (in_array($currentEvent, ['ext_nsfw_orgasm', 'ext_nsfw_npc_orgasm', 'chatnf_sl_climax'])) {
-        require_once(__DIR__."/prompts.php");  // Loads _getNsfwSetting()
         $climaxCooldown = _getNsfwSetting('COOLDOWN_CLIMAX', 30);
 
         // Extract orgasmer name from event data since HERIKA_NAME isn't set yet
@@ -121,10 +212,7 @@ if (isset($GLOBALS["gameRequest"])) {
         }
     }
 
-    // Rewrite info_sexscene to ext_nsfw_sexcene
-    if ($GLOBALS["gameRequest"][0] == "info_sexscene") {
-        $GLOBALS["gameRequest"][0] = "ext_nsfw_sexcene";
-    }
+    // info_sexscene rewrite is now above the dedup check (moved up)
 
     // Physics event preprocessing - rewrite to chatnf_physics for dialogue flow
     if ($GLOBALS["gameRequest"][0] == "ext_nsfw_physics_raw") {
@@ -191,7 +279,7 @@ if (isset($GLOBALS["gameRequest"])) {
     }
 
     // Blocked events terminate immediately - no LLM processing
-    if (in_array($GLOBALS["gameRequest"][0], ['nsfw_blocked_cooldown', 'nsfw_blocked_duplicate'])) {
+    if (in_array($GLOBALS["gameRequest"][0], ['nsfw_blocked_cooldown', 'nsfw_blocked_duplicate', 'nsfw_blocked_scene_ended'])) {
         exit();
     }
 }

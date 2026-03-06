@@ -28,6 +28,15 @@ class NsfwOstimHandler {
     public static function processEvent() {
         global $gameRequest;
 
+        // Track if this is The Narrator profile. Scene state updates (handleSceneUpdate)
+        // MUST still run for Narrator — Papyrus routes scene events through The Narrator,
+        // and handleSceneUpdate() updates intimacy data for the ACTUAL scene actors
+        // (from OStim event data, not from HERIKA_NAME). But The Narrator must never
+        // generate scene dialogue — FORCE_STOP handles that inside handleSceneUpdate().
+        $herikaName = $GLOBALS["HERIKA_NAME"] ?? '';
+        $isNarratorProfile = ($herikaName === "The Narrator" || $herikaName === "Character");
+        $GLOBALS["AIAGENTNSFW_IS_NARRATOR_PROFILE"] = $isNarratorProfile;
+
         if ($gameRequest[0] == "ext_nsfw_sexcene") {
             self::handleSceneUpdate();
         } else if ($gameRequest[0] == "ext_nsfw_npc_scene") {
@@ -61,18 +70,12 @@ class NsfwOstimHandler {
         global $gameRequest;
 
         // Parse info_sexscene data
-        // Format: Arrok Standing Foreplay/["Loving", "Standing", "LeadIn", ...]/Arrok_StandingForeplay_A1_S1/Actor1Æctor2
-        // Multi-actor scenes may have multiple stage names separated by | (pipe)
-        error_log("[NSFW-SCENE] Raw info_sexscene data: {$gameRequest[3]}");
+        // Format: SceneName/Tags/StageName/Actor1/Actor2/...
         $infoSexSceneParts = explode("/", $gameRequest[3]);
         $sexSceneName      = $infoSexSceneParts[0];
         $sexTags           = explode(",", strtolower($infoSexSceneParts[1]));
         $sexStageName      = strtr($infoSexSceneParts[2], ["_A1" => ""]);
         $actorInfos        = array_slice($infoSexSceneParts, 3);
-
-        // Debug: Log all parsed parts for multi-actor scene analysis
-        error_log("[NSFW-SCENE] Parsed - SceneName: $sexSceneName | StageName: $sexStageName | Tags: " . implode(",", $sexTags));
-        error_log("[NSFW-SCENE] Actor parts (" . count($actorInfos) . "): " . implode(" | ", $actorInfos));
 
         // Build ordered actor list with player at index 0, preserving relative order of other actors
         // OStim sends actors in animation-defined order, we just need player first for {actor0}
@@ -96,10 +99,30 @@ class NsfwOstimHandler {
         // Append non-player actors in their original relative order
         $orderedActorList = array_merge($orderedActorList, $otherActors);
 
-        error_log("[AIAGENTNSFW] Erotic Scene. Actors" . json_encode($orderedActorList));
+        // Primary partner = first non-player actor in OStim's ordering (Actor0/Actor1)
+        // When user changes positions, OStim reorders actors — this updates automatically
+        $primaryPartner = !empty($otherActors) ? $otherActors[0] : null;
 
         // Store actor list globally for tier prompt injection
         $GLOBALS["AIAGENTNSFW_SCENE_ACTORS"] = $orderedActorList;
+
+        // ============================================
+        // IMMEDIATE LOG WRITE — before any complex processing
+        // ============================================
+        // This MUST happen first so scene events show in CHIM log
+        // regardless of what crashes later in intimacy/tier/description code.
+        // ============================================
+        $partnerNamesEarly = array_filter($orderedActorList, function($a) { return $a !== $GLOBALS["PLAYER_NAME"]; });
+        $partnerStrEarly = ($primaryPartner && count($partnerNamesEarly) > 1) ? "$primaryPartner (and " . implode(", ", array_filter($partnerNamesEarly, function($a) use ($primaryPartner) { return $a !== $primaryPartner; })) . ")" : implode(" and ", $partnerNamesEarly);
+        try {
+            $earlyLogData = $GLOBALS["gameRequest"];
+            $earlyLogData[0] = "info";
+            $earlyLogData[3] = "[SCENE] with $partnerStrEarly | Stage: $sexStageName | Tags: " . implode(",", $sexTags);
+            logEvent($earlyLogData);
+            error_log("[AIAGENTNSFW] SCENE LOGGED: $partnerStrEarly | $sexStageName | " . implode(",", $sexTags));
+        } catch (Exception $e) {
+            error_log("[AIAGENTNSFW] ERROR writing scene log: " . $e->getMessage());
+        }
 
         // ============================================
         // Scene triggers tier prompt FIRST
@@ -142,7 +165,8 @@ class NsfwOstimHandler {
                 $intimacyStatus["scene_is_idle"] = in_array("idle", $sexTags);
                 $intimacyStatus["scene_start_time"] = time();
                 $intimacyStatus["scene_actors"] = $orderedActorList;
-                error_log("[AIAGENTNSFW] New scene for $actor - starting tier_prompt phase (actors: " . implode(", ", $orderedActorList) . ")");
+                $intimacyStatus["current_primary_partner"] = $primaryPartner;
+                error_log("[AIAGENTNSFW] New scene for $actor - starting tier_prompt phase (actors: " . implode(", ", $orderedActorList) . ", primary: $primaryPartner)");
 
                 // ============================================
                 // STORE TIER PROMPT INFO FOR ALL ACTORS
@@ -243,7 +267,7 @@ class NsfwOstimHandler {
                 }
             } else {
                 // CONTINUING SCENE: Progress through phases
-                error_log("[AIAGENTNSFW] Continuing scene for $actor - phase: {$intimacyStatus["scene_phase"]}");
+                // Continuing scene for $actor
 
                 // ============================================
                 // DETECT TRANSITION: Idle → Actual Sex
@@ -288,11 +312,29 @@ class NsfwOstimHandler {
             if (empty($otherIntimacy["scene_actors"]) || $otherIntimacy["scene_actors"] !== $orderedActorList) {
                 $otherIntimacy["scene_actors"] = $orderedActorList;
                 updateIntimacyForActor($otherActor, $otherIntimacy);
-                error_log("[AIAGENTNSFW] Propagated scene_actors to $otherActor: " . implode(",", $orderedActorList));
+                // Propagated scene_actors to $otherActor
             }
         }
 
-        error_log("Searching for description $sexStageName");
+        // ============================================
+        // CLEAR STALE EVENTS FOR SCENE PARTICIPANTS
+        // ============================================
+        // On scene position changes, remove pending prechat/rechat events for
+        // participants. This forces NPCs to respond to the CURRENT scene state
+        // instead of processing a stale dialogue backlog.
+        // ============================================
+        if (isset($GLOBALS["db"])) {
+            foreach ($orderedActorList as $clearActor) {
+                if ($clearActor === $GLOBALS["PLAYER_NAME"]) continue;
+                $escapedActor = $GLOBALS["db"]->escape($clearActor);
+                $GLOBALS["db"]->delete("eventlog",
+                    "type in ('prechat','rechat') and people like '%|$escapedActor|%' and localts>" . (time() - 300)
+                );
+            }
+            // Cleared stale events for scene participants
+        }
+
+        // Look up scene description
 
         // Fill descriptions - DUAL LOOKUP: SQL first (user custom), then OStim JSON (automatic)
         $cleanedSceneDesc = getSceneDescription($sexStageName, $orderedActorList);
@@ -311,31 +353,32 @@ class NsfwOstimHandler {
         }
 
         // ============================================
-        // FORCE_STOP LOGIC: Control LLM triggering
+        // STORE SCENE DESCRIPTION IN INTIMACY DATA
         // ============================================
-        // tier_prompt phase = NEW SCENE = NPC should SPEAK (tier prompt as chat event)
-        // other phases = scene update = just log, no LLM (unless sex_started triggers kinks)
-        //
-        // When FORCE_STOP = true, context.php terminates without LLM
-        // When FORCE_STOP = false, the event flows through to LLM with the prompt
+        // So NPC events (chatnf_sl) know the current scene when they speak.
+        // Without this, the NPC has no idea what position/animation is happening.
         // ============================================
+        foreach ($orderedActorList as $storeActor) {
+            if ($storeActor === $GLOBALS["PLAYER_NAME"]) continue;
+            $storeIntimacy = getIntimacyForActor($storeActor);
+            $storeIntimacy["current_scene_desc"] = $cleanedSceneDesc;
+            $storeIntimacy["current_scene_tags"] = $sexTags;
+            $storeIntimacy["current_scene_name"] = $sexSceneName;
+            $storeIntimacy["current_primary_partner"] = $primaryPartner;
+            $storeIntimacy["scene_actors"] = $orderedActorList;
+            updateIntimacyForActor($storeActor, $storeIntimacy);
+        }
 
         // Check if ANY actor in this scene is in tier_prompt phase (new scene)
-        // We check all actors because HERIKA_NAME might not be set yet in preprocessing
         $anyActorInTierPrompt = false;
-        error_log("[AIAGENTNSFW] Checking tier_prompt phase for actors: " . implode(", ", $orderedActorList));
         foreach ($orderedActorList as $checkActor) {
-            if ($checkActor === $GLOBALS["PLAYER_NAME"]) continue;  // Skip player
+            if ($checkActor === $GLOBALS["PLAYER_NAME"]) continue;
             $checkIntimacy = getIntimacyForActor($checkActor);
-            $currentPhase = $checkIntimacy["scene_phase"] ?? "NOT_SET";
-            error_log("[AIAGENTNSFW] Actor $checkActor scene_phase = $currentPhase");
             if (($checkIntimacy["scene_phase"] ?? null) === "tier_prompt") {
                 $anyActorInTierPrompt = true;
-                error_log("[AIAGENTNSFW] Actor $checkActor is in tier_prompt phase - will inject tier prompt!");
                 break;
             }
         }
-        error_log("[AIAGENTNSFW] anyActorInTierPrompt = " . ($anyActorInTierPrompt ? "TRUE" : "FALSE"));
 
         // ============================================
         // CONTEXT INJECTION: tier_prompt vs engaged
@@ -378,7 +421,11 @@ class NsfwOstimHandler {
             }
         } else {
             // ACCEPTED/ENGAGED: Full intimate scene context
-            $GLOBALS["gameRequest"][3] = "#INTIMATE SCENE: $cleanedSceneDesc. Scene tags:" . implode(",", $sexTags);
+            // Explicitly name the primary partner so the model knows who the player is focused on
+            $partnerNames = array_filter($orderedActorList, function($a) { return $a !== $GLOBALS["PLAYER_NAME"]; });
+            $partnerStr = implode(" and ", $partnerNames);
+            $primaryNote = ($primaryPartner && count($partnerNames) > 1) ? " (currently focused on $primaryPartner)" : "";
+            $GLOBALS["gameRequest"][3] = "#INTIMATE SCENE with $partnerStr$primaryNote: $cleanedSceneDesc. Scene tags:" . implode(",", $sexTags);
         }
 
         // ============================================
@@ -390,20 +437,33 @@ class NsfwOstimHandler {
         // ============================================
         if (isset($GLOBALS["PROMPTS"]["ext_nsfw_sexcene"])) {
             $GLOBALS["PROMPTS"]["ext_nsfw_sexcene"]["player_request"] = [$GLOBALS["gameRequest"][3]];
-            error_log("[AIAGENTNSFW] Updated PROMPTS[ext_nsfw_sexcene][player_request] with: " . substr($GLOBALS["gameRequest"][3], 0, 100));
         }
 
-        // NEW SCENE (tier_prompt) = Let it trigger LLM for tier prompt response
-        // This makes scene start work like orgasm events - fires as its own chat event
-        if ($anyActorInTierPrompt) {
-            $GLOBALS["AIAGENTNSFW_FORCE_STOP"] = false;
-            error_log("[AIAGENTNSFW] tier_prompt phase detected - allowing LLM trigger for scene start");
+        // FORCE_STOP controls whether LLM runs for this event.
+        // With hash-based dedup, ONLY events with NEW scene data reach here.
+        // So every event here is either a NEW scene or a SCENE CHANGE — never a repeat.
+        //
+        // Narrator + new scene (tier_prompt): FORCE_STOP=true — NPC handles via chatnf_sl
+        // Narrator + scene CHANGE: FORCE_STOP=false — Narrator narrates the position change
+        //   (OStim doesn't fire chatnf_sl on position changes, so nobody else will respond)
+        // NPC + tier_prompt: FORCE_STOP=false — NPC responds to accept/refuse
+        // NPC + continuing: FORCE_STOP=false — NPC responds to scene change
+        if (!empty($GLOBALS["AIAGENTNSFW_IS_NARRATOR_PROFILE"])) {
+            if ($anyActorInTierPrompt) {
+                // New scene — NPC will handle via separate chatnf_sl event
+                $GLOBALS["AIAGENTNSFW_FORCE_STOP"] = true;
+            } else {
+                // Scene CHANGE — let Narrator narrate it (only way it shows in log)
+                $GLOBALS["AIAGENTNSFW_FORCE_STOP"] = false;
+            }
         } else {
-            // Continuing scene - just update state, no LLM spam
-            $GLOBALS["AIAGENTNSFW_FORCE_STOP"] = true;
-            error_log("[AIAGENTNSFW] No tier_prompt phase - FORCE_STOP=true (continuing scene)");
+            // NPC profile — always let them respond (dedup prevents repeats)
+            $GLOBALS["AIAGENTNSFW_FORCE_STOP"] = false;
         }
 
+        error_log("[AIAGENTNSFW] Scene processed: $sexSceneName | Actors: " . implode(",", $orderedActorList) . " | Primary: " . ($primaryPartner ?? "none") . " | Desc: $cleanedSceneDesc | FORCE_STOP=" . ($GLOBALS["AIAGENTNSFW_FORCE_STOP"] ? "Y" : "N"));
+
+        // Log the full event (with description) now that we have it computed
         logEvent($GLOBALS["gameRequest"]);
     }
 
@@ -684,6 +744,27 @@ class NsfwOstimHandler {
             $sceneActors = $GLOBALS["AIAGENTNSFW_SCENE_ACTORS"];
         }
         error_log("[AIAGENT_NSFW] Scene ended - actors in scene: " . implode(", ", $sceneActors));
+
+        // ============================================
+        // PURGE SEX EVENT BACKLOG — scene is over, nothing queued should fire
+        // ============================================
+        if (isset($GLOBALS["db"]) && !empty($sceneActors)) {
+            $sexTypes = "'chatnf_sl','chatnf_sl_moan','chatnf_sl_naked','chatnf_sl_climax',"
+                      . "'ext_nsfw_sexcene','ext_nsfw_orgasm','ext_nsfw_action','ext_nsfw_scene',"
+                      . "'prechat','rechat','narration'";
+            foreach ($sceneActors as $clearActor) {
+                if (strcasecmp($clearActor, $playerName) === 0) continue;
+                $escapedActor = $GLOBALS["db"]->escape($clearActor);
+                $GLOBALS["db"]->delete("eventlog",
+                    "type in ($sexTypes) and people like '%|$escapedActor|%'"
+                );
+            }
+            error_log("[AIAGENT_NSFW] Purged sex event backlog for all scene actors");
+        }
+        // Clear scene-active marker, dedup hash, and backlog-blocking flag so state is clean
+        @unlink(sys_get_temp_dir() . "/nsfw_scene_active.txt");
+        @unlink(sys_get_temp_dir() . "/nsfw_scene_last_hash.txt");
+        @unlink(sys_get_temp_dir() . "/nsfw_scene_ended.txt");
 
         // Reset response counters for all scene actors (cooldown system)
         if (function_exists('apcu_delete')) {
@@ -1003,9 +1084,29 @@ class NsfwOstimHandler {
      * Handle chatnf_sl_moan - Moan event during scene
      */
     private static function handleMoan() {
-        $randomMoans = ["...Ahh ... Ohh..", "Yeah oh...yes", "... Mmmh ... ", "... Ahmmm ...", "..Ouch!... "];
-        $moan = $randomMoans[array_rand($randomMoans)];
-        returnLines([$moan]);
+        // Safety net: if the scene has ended (flag written by preprocessing when chatnf_sl_end
+        // arrived), don't generate moan audio. prerequest.php's pillow_talk_pending system
+        // handles the NPC's post-scene response for this request instead.
+        $sceneEndedRaw = @file_get_contents(sys_get_temp_dir() . "/nsfw_scene_ended.txt");
+        if ($sceneEndedRaw !== false) {
+            $sceneEndedTime  = (int)$sceneEndedRaw;
+            $sceneActiveTime = (int)(@file_get_contents(sys_get_temp_dir() . "/nsfw_scene_active.txt") ?: 0);
+            if ($sceneEndedTime > $sceneActiveTime && (time() - $sceneEndedTime) < 60) {
+                return; // Scene ended — prerequest.php pillow_talk_pending handles the response
+            }
+        }
+
+        // Gate moans behind the UI toggle AND relationship affinity threshold
+        $moansEnabled = !empty($GLOBALS["AIAGENTNSFW_ENABLE_RANDOM_MOANS"]);
+
+        if ($moansEnabled) {
+            $randomMoans = $GLOBALS["AIAGENTNSFW_RANDOM_MOANS_LIST"] ?? [" ... oh ... ", " ... ah ... ", " ... mmm ... "];
+            $moan = $randomMoans[array_rand($randomMoans)];
+            returnLines([$moan]);
+        } else {
+            error_log("[AIAGENTNSFW] Moan suppressed - toggle off or affinity too low");
+            returnLines([""]);
+        }
 
         $actor = $GLOBALS["HERIKA_NAME"];
         $intimacyStatus = getIntimacyForActor($actor);
@@ -1676,7 +1777,9 @@ class NsfwOstimHandler {
                 $result = substr_replace($result, $randomStrings[$randomIndex], $insertPosition, 0);
                 error_log("Applying text modifier for XTTS (speed=>0.6) $text => $result " . __FILE__);
 
-                xtts_fastapi_settings(["temperature" => 1, "speed" => 0.6, "enable_text_splitting" => false, "top_p" => 1, "top_k" => 100], true);
+                if (function_exists('xtts_fastapi_settings')) {
+                    xtts_fastapi_settings(["temperature" => 1, "speed" => 0.6, "enable_text_splitting" => false, "top_p" => 1, "top_k" => 100], true);
+                }
                 return $result;
             };
 

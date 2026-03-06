@@ -918,7 +918,6 @@ class NsfwNpcData {
             ");
 
             self::$tableVerified = true;
-            error_log("[NSFW-NpcData] Table nsfw_npc_data verified/created successfully");
             return true;
         } catch (Exception $e) {
             error_log("[NSFW-NpcData] Failed to create table: " . $e->getMessage());

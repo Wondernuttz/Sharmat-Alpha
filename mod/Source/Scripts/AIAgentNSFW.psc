@@ -253,10 +253,10 @@ string Function GetPlayerConsent(string npcName, string actionDescription)
 		endif
 	else
 		; Flatscreen mode - use SkyMessage
-		; SkyMessage.Show returns int (button index), not string
+		; SkyMessage.Show returns the button label as a String
 		; 0 = first button (Yes), 1 = second button (No), -1 = cancelled/timeout
-		int choice = SkyMessage.Show(npcName + " " + actionDescription, "Yes, please!", "No, thanks")
-		if choice == 0
+		string choice = SkyMessage.Show(npcName + " " + actionDescription, "Yes, please!", "No, thanks")
+		if choice == "Yes, please!"
 			return "Yes, please!"
 		else
 			return "No, thanks"
@@ -2692,19 +2692,18 @@ Event OstimOrgasm(string eventName, string strArg, float numArg, Form sender)
 		Debug.Trace("[CHIM-NSFW] NPC orgasm - sending to: " + orgasmer.GetDisplayName())
 		AIAgentFunctions.requestMessageForActor(orgasmData, "ext_nsfw_orgasm", orgasmer.GetDisplayName())
 	else
-		; Player orgasmed - send to ALL NPCs in the scene so they react
-		Debug.Trace("[CHIM-NSFW] Player orgasm - notifying scene partners")
-		if (threadID >= 0)
-			Actor[] actors = OThread.GetActors(threadID)
-			int j = 0
-			while (j < actors.Length)
-				Actor sceneActor = actors[j]
-				if (sceneActor != orgasmer)
-					Debug.Trace("[CHIM-NSFW] Sending player orgasm to NPC: " + sceneActor.GetDisplayName())
-					AIAgentFunctions.requestMessageForActor(orgasmData, "ext_nsfw_orgasm", sceneActor.GetDisplayName())
-				endif
-				j += 1
-			endWhile
+		; Player orgasmed - ask OStim who the actual sex partner is (handles threesomes correctly)
+		string targetName = partnerName  ; fallback to first non-player found
+		OSexIntegrationMain ostim = Game.GetFormFromFile(0x000801, "Ostim.esp") as OSexIntegrationMain
+		if (ostim)
+			Actor sexPartner = ostim.GetSexPartner(orgasmer)
+			if (sexPartner)
+				targetName = sexPartner.GetDisplayName()
+			endif
+		endif
+		if (targetName != "")
+			Debug.Trace("[CHIM-NSFW] Player orgasm - routing to: " + targetName)
+			AIAgentFunctions.requestMessageForActor(orgasmData, "ext_nsfw_orgasm", targetName)
 		endif
 	endif
 EndEvent
@@ -2765,28 +2764,38 @@ Event OStimSceneChanged(string EventName, string SceneID, float NumArg, Form Sen
 		endwhile
 	endif
 	
-	; Route scene event directly to NPC, bypassing Narrator
+	; Always send scene data to Narrator for state tracking (updates current_scene_desc for all actors, no LLM call)
+	AIAgentFunctions.logMessage(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "info_sexscene")
+
+	; Also route scene event to NPC for dialogue response (only when mouth is free)
 	if (participantTalk)
 		AIAgentFunctions.requestMessageForActor(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "ext_nsfw_sexcene", participantTalk.GetDisplayName())
 	endif
 
-	if (participantTalk)
-		float daysPassed=Utility.GetCurrentGameTime();
-		float lastTalkedTime=StorageUtil.GetFloatValue(participantTalk, "chim_ostim_talk_cooldown", 0)
-		if ((daysPassed-lastTalkedTime)>0.00694)	;30 irl seconds in in-game days passed
-			float excitement=OActor.GetExcitement(participantTalk)
-			Debug.Trace("[CHIM NSFW] "+participantTalk.GetDisplayName()+" is unmuted, excitement:"+excitement)
-			if (excitement<=80)
-				AIAgentFunctions.requestMessageForActor("","chatnf_sl",participantTalk.GetDisplayName())
-				StorageUtil.SetFloatValue(participantTalk, "chim_ostim_talk_cooldown", daysPassed)
+	; Send chatnf_sl to ALL participants — each has their own 30s cooldown
+	; Removed mouth-lock restriction so NPCs comment during active sex positions
+	int k = 0
+	while (k < participants.Length)
+		Actor talkActor = participants[k]
+		if (talkActor != Game.GetPlayer())
+			float daysPassed = Utility.GetCurrentGameTime()
+			float lastTalkedTime = StorageUtil.GetFloatValue(talkActor, "chim_ostim_talk_cooldown", 0)
+			if ((daysPassed - lastTalkedTime) > 0.00694)	;30 irl seconds
+				float excitement = OActor.GetExcitement(talkActor)
+				Debug.Trace("[CHIM-NSFW] " + talkActor.GetDisplayName() + " auto-talk, excitement:" + excitement)
+				if (excitement <= 80)
+					AIAgentFunctions.requestMessageForActor("", "chatnf_sl", talkActor.GetDisplayName())
+					StorageUtil.SetFloatValue(talkActor, "chim_ostim_talk_cooldown", daysPassed)
+				else
+					AIAgentFunctions.requestMessageForActor("", "chatnf_sl_moan", talkActor.GetDisplayName())
+				endif
 			else
-				AIAgentFunctions.requestMessageForActor("","chatnf_sl_moan",participantTalk.GetDisplayName())
+				Debug.Trace("[CHIM-NSFW] Auto talk in cooldown for " + talkActor.GetDisplayName())
+				AIAgentFunctions.requestMessageForActor("", "chatnf_sl_moan", talkActor.GetDisplayName())
 			endif
-		else
-			Debug.Trace("[CHIM-NSFW] Auto Talk in cooldown for "+participantTalk.GetDisplayName())
-			AIAgentFunctions.requestMessageForActor("","chatnf_sl_moan",participantTalk.GetDisplayName())
 		endif
-	endIf
+		k += 1
+	endWhile
 	
 EndEvent
 

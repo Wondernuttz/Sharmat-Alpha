@@ -34,28 +34,7 @@ function _getNsfwPromptSetting($key, $default = '') {
         : $default;
 }
 
-// Load NSFW general settings (token limits, etc.) from database
-$_nsfwGeneralSettings = null;
-function _getNsfwSetting($key, $default = null) {
-    global $_nsfwGeneralSettings;
-
-    // Lazy load settings from database
-    if ($_nsfwGeneralSettings === null) {
-        $_nsfwGeneralSettings = [];
-        if (isset($GLOBALS["db"])) {
-            try {
-                $row = $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_settings'");
-                if ($row && !empty($row['value'])) {
-                    $_nsfwGeneralSettings = json_decode($row['value'], true) ?: [];
-                }
-            } catch (Exception $e) {
-                // Silently fail, use defaults
-            }
-        }
-    }
-
-    return isset($_nsfwGeneralSettings[$key]) ? $_nsfwGeneralSettings[$key] : $default;
-}
+// _getNsfwSetting() is now defined in common.php (always available without loading prompts.php)
 
 // Helper to parse multi-line cues (one per line) into array
 function _parseNsfwCues($setting, $defaults) {
@@ -99,7 +78,7 @@ $GLOBALS["PROMPTS"]["chatnf_sl"] = [
     "cue" => array_map(function($cue) {
         return _wrapNsfwXml('response_instruction', $cue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
     }, $_chatnfSlCues),
-    "player_request" => ["The Narrator: "],
+    "player_request" => [($GLOBALS["PLAYER_NAME"] ?? "The Narrator") . ": "],
     "extra" => ["force_tokens_max" => $_sexSceneTokenLimit]
 ];
 
@@ -222,8 +201,14 @@ $GLOBALS["PROMPTS"]["chatnf_npc_sl"] = [
 // ext_nsfw_sexcene - OStim scene events (legacy name with typo, kept for compatibility)
 // This is sent by AIAgentNSFW.psc when OStim scenes update
 // Scene description is injected by common.php into gameRequest[3]
+// During tier_prompt phase, use the relationship-based tier cue instead of explicit sex commentary
+if (!empty($GLOBALS["AIAGENTNSFW_TIER_CUE_OVERRIDE"])) {
+    $_sexsceneCue = $GLOBALS["AIAGENTNSFW_TIER_CUE_OVERRIDE"] . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
+} else {
+    $_sexsceneCue = _wrapNsfwXml('response_instruction', $_sceneCommentary) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
+}
 $GLOBALS["PROMPTS"]["ext_nsfw_sexcene"] = [
-    "cue" => [_wrapNsfwXml('response_instruction', $_sceneCommentary) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")],
+    "cue" => [$_sexsceneCue],
     "player_request" => [$GLOBALS["gameRequest"][3] ?? ""]
 ];
 
@@ -263,6 +248,13 @@ $GLOBALS["PROMPTS"]["ext_nsfw_orgasm"] = [
     "player_request" => [""],
     "extra" => ["force_tokens_max" => $_climaxTokenLimit]
 ];
+
+// Apply prerequest.php's computed cue (handles player vs NPC orgasm routing).
+// prerequest.php stores this global instead of directly setting $GLOBALS["PROMPTS"]
+// to avoid the require_once blocking re-load issue after prompts/prompts.php resets $PROMPTS.
+if (!empty($GLOBALS["AIAGENTNSFW_ORGASM_CUE_OVERRIDE"])) {
+    $GLOBALS["PROMPTS"]["ext_nsfw_orgasm"]["cue"] = [$GLOBALS["AIAGENTNSFW_ORGASM_CUE_OVERRIDE"] . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")];
+}
 
 // ext_nsfw_npc_scene - NPC-to-NPC scene update (no player)
 // Uses the npc_scene_active prompt from config

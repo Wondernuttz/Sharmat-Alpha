@@ -632,6 +632,8 @@ SQL;
                 'TRACK_FERTILITY_INFO' => false,
                 'ENABLE_SEX_DISPOSAL' => true,  // Arousal gating enabled by default
                 'ENABLE_AFFINITY_GATING' => true,  // Affinity gating enabled by default
+                'BLOCK_RECHAT_IN_SCENE' => true,  // Block rechat for scene participants
+                'BLOCK_RECHAT_TIMEOUT' => 300,  // Seconds after scene start before rechat resumes
                 // Token limits - control response length during scenes
                 'TOKEN_LIMIT_SEX_SCENE' => 100,  // Regular sex scene dialogue
                 'TOKEN_LIMIT_CLIMAX' => 50,  // Orgasm/climax responses (very short)
@@ -677,6 +679,8 @@ SQL;
                 'TRACK_FERTILITY_INFO' => isset($_POST['TRACK_FERTILITY_INFO']) ? filter_var($_POST['TRACK_FERTILITY_INFO'], FILTER_VALIDATE_BOOLEAN) : false,
                 'ENABLE_SEX_DISPOSAL' => isset($_POST['ENABLE_SEX_DISPOSAL']) ? filter_var($_POST['ENABLE_SEX_DISPOSAL'], FILTER_VALIDATE_BOOLEAN) : true,
                 'ENABLE_AFFINITY_GATING' => isset($_POST['ENABLE_AFFINITY_GATING']) ? filter_var($_POST['ENABLE_AFFINITY_GATING'], FILTER_VALIDATE_BOOLEAN) : true,
+                'BLOCK_RECHAT_IN_SCENE' => isset($_POST['BLOCK_RECHAT_IN_SCENE']) ? filter_var($_POST['BLOCK_RECHAT_IN_SCENE'], FILTER_VALIDATE_BOOLEAN) : true,
+                'BLOCK_RECHAT_TIMEOUT' => isset($_POST['BLOCK_RECHAT_TIMEOUT']) ? intval($_POST['BLOCK_RECHAT_TIMEOUT']) : 300,
                 // Token limits
                 'TOKEN_LIMIT_SEX_SCENE' => isset($_POST['TOKEN_LIMIT_SEX_SCENE']) ? intval($_POST['TOKEN_LIMIT_SEX_SCENE']) : 100,
                 'TOKEN_LIMIT_CLIMAX' => isset($_POST['TOKEN_LIMIT_CLIMAX']) ? intval($_POST['TOKEN_LIMIT_CLIMAX']) : 50,
@@ -5641,6 +5645,23 @@ PROMPT;
                 <p class="legend">When enabled, NSFW functions are locked behind relationship tier thresholds. AcceptSex requires Acquaintance (6+), InitiateSex requires Fond (56+), and prostitute functions have their own tier requirements. When disabled, all affinity-gated functions are available immediately.</p>
             </div>
 
+            <div class="settings-checkbox-group">
+                <label for="blockRechatInScene">
+                    <input type="checkbox" id="blockRechatInScene" name="BLOCK_RECHAT_IN_SCENE" checked>
+                    <span>Block Rechat During Scenes</span>
+                </label>
+                <p class="legend">When enabled, rechat and narration events are blocked for NPCs who are active participants in a scene. This prevents NPCs from randomly chatting about unrelated topics while they're in an intimate scene. Non-participant NPCs are unaffected and can still rechat normally.</p>
+            </div>
+
+            <div class="settings-slider-group">
+                <span class="slider-title">Rechat Block Timeout (after scene ends)</span>
+                <div class="slider-container">
+                    <input type="range" id="blockRechatTimeout" name="BLOCK_RECHAT_TIMEOUT" min="30" max="600" step="30" value="300">
+                    <span class="slider-value" id="blockRechatTimeoutValue">300 seconds</span>
+                </div>
+                <p class="legend">How long (in seconds) after a scene starts before rechat is allowed again for participants. Default 300s (5 minutes). Lower values let NPCs resume chatting sooner after a scene ends.</p>
+            </div>
+
             <!-- Token Limits Section -->
             <h3 style="margin: 20px 0 15px; color: #FDF5D0; font-size: 16px; animation: subPulse 3s ease-in-out infinite alternate;">Response Token Limits</h3>
             <p class="legend" style="margin-bottom: 15px;">Control how long the AI's responses can be during intimate scenes. Lower values = shorter, punchier dialogue. Higher values = more verbose responses. These limits prevent the AI from rambling during sex scenes.</p>
@@ -8435,6 +8456,13 @@ The effects will fade over time.</textarea>
                 });
             }
 
+            const blockRechatSlider = document.getElementById('blockRechatTimeout');
+            if (blockRechatSlider) {
+                blockRechatSlider.addEventListener('input', function() {
+                    document.getElementById('blockRechatTimeoutValue').textContent = this.value + ' seconds';
+                });
+            }
+
             const tokenClimaxSlider = document.getElementById('tokenLimitClimax');
             if (tokenClimaxSlider) {
                 tokenClimaxSlider.addEventListener('input', function() {
@@ -8506,6 +8534,10 @@ The effects will fade over time.</textarea>
                         document.getElementById('trackFertilityInfo').checked = data.data.TRACK_FERTILITY_INFO || false;
                         document.getElementById('enableSexDisposal').checked = data.data.ENABLE_SEX_DISPOSAL !== false;  // Default true
                         document.getElementById('enableAffinityGating').checked = data.data.ENABLE_AFFINITY_GATING !== false;  // Default true
+                        document.getElementById('blockRechatInScene').checked = data.data.BLOCK_RECHAT_IN_SCENE !== false;  // Default true
+                        const blockRechatTimeout = data.data.BLOCK_RECHAT_TIMEOUT !== undefined ? data.data.BLOCK_RECHAT_TIMEOUT : 300;
+                        document.getElementById('blockRechatTimeout').value = blockRechatTimeout;
+                        document.getElementById('blockRechatTimeoutValue').textContent = blockRechatTimeout + ' seconds';
                         // Token limits
                         const sexSceneTokens = data.data.TOKEN_LIMIT_SEX_SCENE !== undefined ? data.data.TOKEN_LIMIT_SEX_SCENE : 100;
                         document.getElementById('tokenLimitSexScene').value = sexSceneTokens;
@@ -8558,6 +8590,8 @@ The effects will fade over time.</textarea>
             formData.append('TRACK_FERTILITY_INFO', document.getElementById('trackFertilityInfo').checked);
             formData.append('ENABLE_SEX_DISPOSAL', document.getElementById('enableSexDisposal').checked);
             formData.append('ENABLE_AFFINITY_GATING', document.getElementById('enableAffinityGating').checked);
+            formData.append('BLOCK_RECHAT_IN_SCENE', document.getElementById('blockRechatInScene').checked);
+            formData.append('BLOCK_RECHAT_TIMEOUT', document.getElementById('blockRechatTimeout').value);
             // Token limits
             formData.append('TOKEN_LIMIT_SEX_SCENE', document.getElementById('tokenLimitSexScene').value);
             formData.append('TOKEN_LIMIT_CLIMAX', document.getElementById('tokenLimitClimax').value);

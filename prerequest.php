@@ -1,8 +1,6 @@
 <?php
 
 // This is called after NPC profile is loaded.
-error_log("[NSFW-PREREQUEST] =============== PREREQUEST STARTING FOR " . ($GLOBALS["HERIKA_NAME"] ?? "UNKNOWN") . " ===============");
-
 require_once(__DIR__."/common.php");
 
 
@@ -44,37 +42,97 @@ $currentEvent = $GLOBALS["gameRequest"][0] ?? '';
 $isOrgasmEvent = in_array($currentEvent, ['ext_nsfw_orgasm', 'chatnf_sl_climax', 'ext_nsfw_npc_orgasm']);
 
 if ($isOrgasmEvent) {
-    // Load prompts so ext_nsfw_orgasm is defined
-    require_once(__DIR__."/prompts.php");
+    // NOTE: Do NOT require_once prompts.php here — it would prevent prompts.php from
+    // re-running after prompts/prompts.php resets $PROMPTS at global scope.
+    // Instead, store the computed cue in $GLOBALS["AIAGENTNSFW_ORGASM_CUE_OVERRIDE"]
+    // and let prompts.php (loaded via requireFilesRecursively) pick it up.
 
-    // Get the NPC's speak style climax_prompt and set it as the cue
-    $actorName = $GLOBALS["HERIKA_NAME"] ?? '';
+    $actorName     = $GLOBALS["HERIKA_NAME"] ?? '';
     $extended_data = NsfwNpcData::get($actorName);
 
+    // PARSE ORGASM DATA FIRST — needed to correctly choose prompt type
+    // Strip CHIM context prefix "(Context location: X)PlayerName:" to get raw OStim data
+    $rawOrgasmData = $GLOBALS["gameRequest"][3] ?? '';
+    $orgasmPayload = $rawOrgasmData;
+    if (($cp = strpos($rawOrgasmData, ')')) !== false) {
+        $afterParen = substr($rawOrgasmData, $cp + 1);
+        if (($col = strpos($afterParen, ':')) !== false) {
+            $orgasmPayload = substr($afterParen, $col + 1);
+        }
+    }
+    $orgasmParts   = explode('/', $orgasmPayload);
+    $ostimOrgasmer = trim($orgasmParts[0] ?? '');
+    $ostimPartner  = trim($orgasmParts[3] ?? ''); // GetSexPartner() result from Papyrus
+
+    $playerName       = $GLOBALS["PLAYER_NAME"] ?? "Player";
+    $isPlayerOrgasm   = (strcasecmp($ostimOrgasmer, $playerName) === 0);
+    $thisNpcIsPartner = (!empty($ostimPartner) && strcasecmp($actorName, $ostimPartner) === 0);
+
+    // SELECT CORRECT SPEAK STYLE PROMPT based on who is orgasming
+    // isPlayerOrgasm=true  → player came inside this NPC → use partner_climax_prompt (NPC reacts to player)
+    // isPlayerOrgasm=false → this NPC is orgasming → use climax_prompt (NPC's own orgasm)
     if (!empty($extended_data["sex_speech_style"])) {
-        $speakStyleData = NsfwData::getSpeakStyle($extended_data["sex_speech_style"]);
-        $climaxPrompt = $speakStyleData['climax_prompt'] ?? '';
+        $speakStyleData      = NsfwData::getSpeakStyle($extended_data["sex_speech_style"]);
+        $climaxPrompt        = $speakStyleData['climax_prompt'] ?? '';
         $partnerClimaxPrompt = $speakStyleData['partner_climax_prompt'] ?? '';
 
-        // Determine if this is NPC orgasming or reacting to partner orgasm
-        $rawData = $GLOBALS["gameRequest"][3] ?? '';
-        $isPartnerOrgasm = (strpos($rawData, 'Player orgasm') !== false || strpos($rawData, 'partner') !== false);
-
-        if ($isPartnerOrgasm && !empty($partnerClimaxPrompt)) {
-            // Partner (player) is orgasming - NPC reacts
-            $partnerClimaxPrompt = str_replace('#PLAYER_NAME#', $GLOBALS["PLAYER_NAME"] ?? 'your partner', $partnerClimaxPrompt);
-            $partnerClimaxPrompt = str_replace('#PARTNER#', $GLOBALS["PLAYER_NAME"] ?? 'your partner', $partnerClimaxPrompt);
-            $GLOBALS["PROMPTS"]["ext_nsfw_orgasm"]["cue"] = ["<partner_climax_instruction>\n{$partnerClimaxPrompt}\n</partner_climax_instruction>"];
-            error_log("[AIAGENTNSFW] ORGASM: Using partner_climax_prompt for $actorName");
-        } else if (!empty($climaxPrompt)) {
-            // NPC is orgasming
-            $climaxPrompt = str_replace('#PARTNER#', $GLOBALS["PLAYER_NAME"] ?? 'your partner', $climaxPrompt);
-            $GLOBALS["PROMPTS"]["ext_nsfw_orgasm"]["cue"] = ["<climax_instruction>\n{$climaxPrompt}\n</climax_instruction>"];
-            error_log("[AIAGENTNSFW] ORGASM: Using climax_prompt for $actorName");
+        if ($isPlayerOrgasm && !empty($partnerClimaxPrompt)) {
+            // Player orgasmed — NPC reacts to partner coming inside them
+            $partnerClimaxPrompt = str_replace('#PLAYER_NAME#', $playerName, $partnerClimaxPrompt);
+            $partnerClimaxPrompt = str_replace('#PARTNER#',     $playerName, $partnerClimaxPrompt);
+            $GLOBALS["AIAGENTNSFW_ORGASM_CUE_OVERRIDE"] = "<partner_climax_instruction>\n{$partnerClimaxPrompt}\n</partner_climax_instruction>";
+            error_log("[AIAGENTNSFW] ORGASM: Using partner_climax_prompt for $actorName (player orgasmed)");
+        } elseif (!empty($climaxPrompt)) {
+            // NPC is orgasming themselves
+            $withWhomPrompt = !empty($ostimPartner) ? $ostimPartner : $playerName;
+            $climaxPrompt   = str_replace('#PARTNER#', $withWhomPrompt, $climaxPrompt);
+            $GLOBALS["AIAGENTNSFW_ORGASM_CUE_OVERRIDE"] = "<climax_instruction>\n{$climaxPrompt}\n</climax_instruction>";
+            error_log("[AIAGENTNSFW] ORGASM: Using climax_prompt for $actorName (NPC orgasmed with $withWhomPrompt)");
         }
     }
 
-    error_log("[AIAGENTNSFW] ORGASM EVENT - prompts loaded, skipping other injections");
+    // SCENE CONTEXT — inject who is orgasming with whom into personality
+    $orgIntimacy    = getIntimacyForActor($actorName);
+    $orgSceneDesc   = $orgIntimacy["current_scene_desc"] ?? null;
+    $orgSceneActors = $orgIntimacy["scene_actors"] ?? [];
+
+    if (!empty($orgSceneActors)) {
+        $orgPartnerNames = array_filter($orgSceneActors, function($a) use ($actorName) {
+            return strtolower($a) !== strtolower($actorName);
+        });
+
+        if ($isPlayerOrgasm) {
+            $withWhom = !empty($ostimPartner) ? $ostimPartner : (reset($orgPartnerNames) ?: $playerName);
+            if ($thisNpcIsPartner || empty($ostimPartner)) {
+                $orgSceneBlock = "<current_scene>\n{$playerName} is having an orgasm with you.";
+            } else {
+                $orgSceneBlock = "<current_scene>\n{$playerName} is having an orgasm with {$withWhom}. You are present in the scene.";
+            }
+        } else {
+            $withWhom      = !empty($ostimPartner) ? $ostimPartner : $playerName;
+            $orgSceneBlock = "<current_scene>\nYou are having an orgasm with {$withWhom}.";
+        }
+
+        if (!empty($orgSceneDesc)) {
+            $orgSceneBlock .= "\nCurrent position: $orgSceneDesc";
+        }
+        $orgSceneTags = $orgIntimacy["current_scene_tags"] ?? [];
+        if (!empty($orgSceneTags)) {
+            $orgSceneBlock .= "\nScene tags: " . implode(", ", $orgSceneTags);
+        }
+        $orgSceneBlock .= "\n</current_scene>";
+        $GLOBALS["HERIKA_PERSONALITY"] .= "\n" . $orgSceneBlock;
+
+        // Replace any remaining #PARTNER# in the orgasm cue override and chatnf_sl_climax
+        if (!empty($GLOBALS["AIAGENTNSFW_ORGASM_CUE_OVERRIDE"])) {
+            $GLOBALS["AIAGENTNSFW_ORGASM_CUE_OVERRIDE"] = str_replace('#PARTNER#', $withWhom, $GLOBALS["AIAGENTNSFW_ORGASM_CUE_OVERRIDE"]);
+        }
+        if (isset($GLOBALS["PROMPTS"]["chatnf_sl_climax"]["cue"][0])) {
+            $GLOBALS["PROMPTS"]["chatnf_sl_climax"]["cue"][0] = str_replace('#PARTNER#', $withWhom, $GLOBALS["PROMPTS"]["chatnf_sl_climax"]["cue"][0]);
+        }
+    }
+
+    error_log("[AIAGENTNSFW] ORGASM for $actorName — orgasmer: $ostimOrgasmer | partner: $ostimPartner | isPlayerOrgasm: " . ($isPlayerOrgasm ? 'yes' : 'no'));
     return;  // Exit - don't inject speech style or other stuff
 }
 
@@ -106,7 +164,7 @@ if (!empty($intimacyStatus["pillow_talk_pending"]) && !empty($intimacyStatus["pi
 
     // CRITICAL: Override ALL sex-related prompts to pillow talk
     // This handles late chatnf_sl events that Papyrus might send after scene_end
-    $pillowTalkCue = "<post_scene_instruction>\nThe intimate scene has ENDED. You are NOT having sex anymore. Have a brief, natural post-intimacy conversation. Do NOT moan, gasp, or use sexual expressions. Talk normally.\n{$pillowTalkPrompt}\n</post_scene_instruction> {$GLOBALS["TEMPLATE_DIALOG"]}";
+    $pillowTalkCue = "<post_scene_instruction>\nThe intimate scene has ENDED. You are NOT having sex anymore. Have a brief, natural post-intimacy conversation. Do NOT moan, gasp, or use sexual expressions. Talk normally.\n{$pillowTalkPrompt}\n</post_scene_instruction> " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
 
     // Override chatnf_sl (main sex scene prompt)
     $GLOBALS["PROMPTS"]["chatnf_sl"]["cue"] = [$pillowTalkCue];
@@ -129,9 +187,8 @@ if (!empty($intimacyStatus["pillow_talk_pending"]) && !empty($intimacyStatus["pi
     error_log("[AIAGENTNSFW] Pillow talk mode active - overrode ALL sex prompts for {$GLOBALS["HERIKA_NAME"]}");
 }
 
-if ($codeName=="the_narrator") {
-    //no further procsssing needed
-    return;
+if ($codeName == "the_narrator") {
+    return; // Narrator updates scene data only — no LLM call, no log entries
 }
 
 // ============================================
@@ -419,6 +476,7 @@ if ($isSlave) {
 
 // Get scene phase
 $scenePhase = $intimacyStatus["scene_phase"] ?? null;
+$GLOBALS["AIAGENTNSFW_SCENE_PHASE"] = $scenePhase;
 
 // SKIP ALL SCENE PHASE HANDLING if in pillow talk mode
 // Pillow talk means scene just ended - no more sex prompts!
@@ -441,10 +499,28 @@ if (!isSexDisposalEnabled() && !$isPillowTalkMode) {
         'ext_nsfw_npc_scene', 'ext_nsfw_npc_invite', 'ext_nsfw_npc_orgasm'
     ];
     if (in_array($gameRequest[0] ?? '', $sceneEventTypes)) {
-        // Force engaged state - bypass all the tier_prompt/accepted/level stuff
-        $intimacyStatus["scene_phase"] = "engaged";
-        $scenePhase = "engaged";
-        error_log("[AIAGENTNSFW] AROUSAL GATING OFF - forcing $actorName straight to engaged phase (no levels)");
+        // Tier prompt is the most important injection - it sets the emotional tone
+        // Allow it to fire ONCE, then progress through accepted (for sex prompt injection) to engaged
+        if ($scenePhase === "rejected") {
+            // NPC refused - preserve rejection/non-consent handling
+            error_log("[AIAGENTNSFW] AROUSAL GATING OFF - preserving rejected phase for $actorName");
+        } else if ($scenePhase === "tier_prompt" && !isset($intimacyStatus["tier_prompt_sent"])) {
+            // Let tier_prompt fire - don't skip to engaged yet
+            error_log("[AIAGENTNSFW] AROUSAL GATING OFF - allowing tier_prompt to fire for $actorName");
+        } else if ($scenePhase === "tier_prompt" && isset($intimacyStatus["tier_prompt_sent"])) {
+            // Tier prompt done - progress to accepted so sex prompts/speech styles inject
+            $intimacyStatus["scene_phase"] = "accepted";
+            $scenePhase = "accepted";
+            error_log("[AIAGENTNSFW] AROUSAL GATING OFF - tier prompt done, progressing through accepted for $actorName");
+        } else if ($scenePhase === "accepted") {
+            // Let accepted phase run - it injects sex prompts, then auto-transitions to engaged
+            error_log("[AIAGENTNSFW] AROUSAL GATING OFF - allowing accepted phase for $actorName");
+        } else {
+            // Past all phases - force engaged
+            $intimacyStatus["scene_phase"] = "engaged";
+            $scenePhase = "engaged";
+            error_log("[AIAGENTNSFW] AROUSAL GATING OFF - forcing $actorName to engaged phase");
+        }
     }
 }
 
@@ -511,6 +587,16 @@ if ($scenePhase === "rejected") {
             $GLOBALS["HERIKA_PERSONALITY"] .= "\n<refusal_context>\n{$refusalPrompt}\n</refusal_context>";
             error_log("[AIAGENTNSFW] Injected refusal confirmation prompt for $actorName (refused $partnerName)");
         }
+
+        // Reinforce the refusal - "you made the right decision"
+        $reinforcementPrompt = '';
+        try { $reinforcementPrompt = NsfwData::getPrompt('refusal_reinforcement'); } catch (Exception $e) {}
+        if (empty($reinforcementPrompt)) {
+            $reinforcementPrompt = "You made the right decision. Stay true to your feelings and boundaries. Do not waver.";
+        }
+        $reinforcementPrompt = str_replace('#PARTNER#', $partnerName, $reinforcementPrompt);
+        $GLOBALS["HERIKA_PERSONALITY"] .= "\n<refusal_reinforcement>\n{$reinforcementPrompt}\n</refusal_reinforcement>";
+        error_log("[AIAGENTNSFW] Injected refusal reinforcement for $actorName");
 
         // Mark that refusal was expressed - if scene continues, it's non-consent
         $intimacyStatus["refusal_expressed"] = true;
@@ -612,30 +698,19 @@ if ($scenePhase === "tier_prompt" && !isset($intimacyStatus["tier_prompt_sent"])
         // This ensures the model responds to the proposition based on UI config
         // ============================================
 
-        // Get the tier prompt that was just injected (it's already in sceneContext)
-        // Build it fresh to use as cue - this comes from the database via NsfwRelationship
+        // Store tier cue in global so prompts.php can use it as the CUE override.
+        // We can't override PROMPTS here because prompts.php loads AFTER prerequest
+        // and would overwrite our changes with the default explicit sex commentary.
         $allActors = $intimacyStatus["scene_actors"] ?? $GLOBALS["AIAGENTNSFW_SCENE_ACTORS"] ?? [$GLOBALS["PLAYER_NAME"]];
         $tierCueContext = NsfwRelationship::buildSceneContext($actorName, $allActors, $isProstitute);
 
-        // Extract just the tier prompt portion for the cue
-        $tierCue = $tierCueContext;  // Full context including tier prompt
-
-        // Override the prompt cue for this request (player scenes)
-        if (isset($GLOBALS["PROMPTS"]["ext_nsfw_sexcene"]) && !empty($tierCue)) {
-            $GLOBALS["PROMPTS"]["ext_nsfw_sexcene"]["cue"] = [
-                $tierCue . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")
-            ];
-            error_log("[AIAGENTNSFW] Using tier prompt from DB as cue for tier_prompt phase");
-        }
-
-        // Also override for NPC-to-NPC scenes
-        if (isset($GLOBALS["PROMPTS"]["ext_nsfw_npc_scene"]) && !empty($tierCue)) {
-            $GLOBALS["PROMPTS"]["ext_nsfw_npc_scene"]["cue"] = [
-                $tierCue . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")
-            ];
-            error_log("[AIAGENTNSFW] Using tier prompt from DB as cue for NPC tier_prompt phase");
+        if (!empty($tierCueContext)) {
+            $GLOBALS["AIAGENTNSFW_TIER_CUE_OVERRIDE"] = $tierCueContext;
+            error_log("[AIAGENTNSFW] Stored tier prompt CUE override for prompts.php to pick up");
         }
     }
+
+    $tierContextAlreadyInjected = true;  // Prevent re-injection in universal block
 
 } else if ($scenePhase === "accepted" || ($scenePhase === "tier_prompt" && isset($intimacyStatus["tier_prompt_sent"]))) {
     // ============================================
@@ -685,6 +760,7 @@ if ($scenePhase === "tier_prompt" && !isset($intimacyStatus["tier_prompt_sent"])
             $GLOBALS["HERIKA_PERSONALITY"] .= "\n" . NsfwRelationship::wrapXml('slave_personality', $slavePersonality);
             error_log("[AIAGENTNSFW] Injected SLAVE personality for $actorName (affinity: $slaveAffinity)");
         }
+        $slavePromptAlreadyInjected = true;  // Prevent duplicate injection in universal block
 
         // Slave speech style and scene cues only when sex ACTUALLY starts
         if ($sexStarted) {
@@ -878,7 +954,11 @@ if (isSexDisposalEnabled()) {
 // SKIP if in pillow talk mode (scene just ended)
 $isInActiveScene = isSexDisposalEnabled() ? ($intimacyStatus["level"] > 0) : $isSceneEvent;
 if ($isInActiveScene && !$isPillowTalkMode) {
-    $GLOBALS["FORCE_MOOD"] = "sexy";
+    // Don't force sexy mood during tier_prompt - scene just started, nothing sexual yet
+    $currentScenePhaseForMood = $intimacyStatus["scene_phase"] ?? null;
+    if ($currentScenePhaseForMood !== "tier_prompt") {
+        $GLOBALS["FORCE_MOOD"] = "sexy";
+    }
 
     // ============================================
     // UNIVERSAL PROMPT INJECTION - ANY LEVEL > 0
@@ -899,12 +979,16 @@ if ($isInActiveScene && !$isPillowTalkMode) {
     if (!empty($sceneActorsForContext)) {
         // Only inject FULL context (with tier prompt) during tier_prompt phase
         // For accepted/engaged phases, only inject participant info (no tier prompt)
-        if ($currentScenePhase === "tier_prompt") {
+        if ($currentScenePhase === "tier_prompt" && empty($tierContextAlreadyInjected)) {
+            // Only inject if tier_prompt handler didn't already do it above
             $sceneContext = NsfwRelationship::buildSceneContext($actorName, $sceneActorsForContext, $isProstitute);
             if (!empty($sceneContext)) {
                 $GLOBALS["HERIKA_PERSONALITY"] .= "\n" . $sceneContext;
-                error_log("[AIAGENTNSFW] Injected FULL <intimate_scene> context for $actorName (tier_prompt phase)");
+                error_log("[AIAGENTNSFW] Injected FULL <intimate_scene> context for $actorName (tier_prompt phase, universal block)");
             }
+        } else if ($currentScenePhase === "tier_prompt" && !empty($tierContextAlreadyInjected)) {
+            // Tier prompt handler already injected this - skip to avoid double injection
+            error_log("[AIAGENTNSFW] Skipping tier prompt re-injection for $actorName (already injected by tier_prompt handler)");
         } else {
             // Accepted/engaged: Only inject participant info, NO tier prompt
             // This prevents "REFUSE SEX" from being re-injected on scene changes
@@ -918,6 +1002,37 @@ if ($isInActiveScene && !$isPillowTalkMode) {
         }
     }
 
+    // Scene description injection moved OUTSIDE this block (see below)
+    // so it applies to ALL events including orgasms, regardless of level
+
+    // ============================================
+    // PERSISTENT NON-CONSENT CONTEXT
+    // ============================================
+    // When forced_scene is true, the NPC refused but the scene continued.
+    // Re-inject the non-consent/unwilling context on EVERY scene change
+    // so the NPC consistently expresses being unwilling throughout.
+    // ============================================
+    if (!empty($intimacyStatus["forced_scene"])) {
+        $partnerName = $GLOBALS["PLAYER_NAME"] ?? "them";
+        if (is_array($intimacyStatus["scene_actors"] ?? null)) {
+            foreach ($intimacyStatus["scene_actors"] as $actor) {
+                if (strtolower($actor) !== strtolower($actorName)) {
+                    $partnerName = $actor;
+                    break;
+                }
+            }
+        }
+
+        if (isNonConsentPromptEnabled()) {
+            $nonConsentPrompt = NsfwData::getPrompt('non_consent');
+            if (!empty($nonConsentPrompt)) {
+                $nonConsentPrompt = str_replace('#PARTNER#', $partnerName, $nonConsentPrompt);
+                $GLOBALS["HERIKA_PERSONALITY"] .= "\n<non_consent_context>\n{$nonConsentPrompt}\n</non_consent_context>";
+            }
+        }
+        error_log("[AIAGENTNSFW] Persistent non-consent context injected for $actorName (forced scene, every scene change)");
+    }
+
     // ============================================
     // NPC TYPE SPECIFIC PROMPTS - PERSONALITY ONLY
     // ============================================
@@ -926,8 +1041,9 @@ if ($isInActiveScene && !$isPillowTalkMode) {
     // DO NOT call them here - this block runs on EVERY event.
     // Only add slave-specific personality text here.
     // ============================================
-    if ($isSlave) {
-        // SLAVE: Add slave-specific personality (speech style already injected at scene start)
+    if ($isSlave && empty($slavePromptAlreadyInjected)) {
+        // SLAVE: Add slave-specific personality and speech style
+        // (skipped if already injected by accepted phase handler above)
         $slavePersonality = NsfwRelationship::getSlavePersonality($slaveAffinity, $slaveOwnerName);
         $slaveSpeech = NsfwRelationship::getSlaveSpeechStyle($slaveAffinity, $slaveOwnerName);
         if (!empty($slavePersonality)) {
@@ -976,7 +1092,7 @@ if ($shouldInjectEngagedContent) {
         $slaveSceneCues = NsfwRelationship::getSlaveSceneCues($slaveAffinity, $slaveOwnerName);
         if (!empty($slaveSceneCues)) {
             // Override chatnf_sl cues with slave-specific cues
-            $GLOBALS["PROMPTS"]["chatnf_sl"]["cue"] = ["<response_instruction>\n{$slaveSceneCues}\n</response_instruction> {$GLOBALS["TEMPLATE_DIALOG"]}"];
+            $GLOBALS["PROMPTS"]["chatnf_sl"]["cue"] = ["<response_instruction>\n{$slaveSceneCues}\n</response_instruction> " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")];
             error_log("[AIAGENTNSFW] Injected SLAVE scene cues for $actorName (affinity: $slaveAffinity)");
         }
     }
@@ -1044,7 +1160,7 @@ if ($shouldInjectEngagedContent) {
 
         if (!empty($styleContent)) {
             // Override the chatnf_sl cue with the NPC's speak style
-            $styledCue = "<response_instruction>\n{$styleContent}\n</response_instruction> {$GLOBALS["TEMPLATE_DIALOG"]}";
+            $styledCue = "<response_instruction>\n{$styleContent}\n</response_instruction> " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
             $GLOBALS["PROMPTS"]["chatnf_sl"]["cue"] = [$styledCue];
 
             // For chatnf_sl_climax (legacy climax event), use the specific climax_prompt if available
@@ -1054,7 +1170,7 @@ if ($shouldInjectEngagedContent) {
             $climaxPrompt = $speakStyleData['climax_prompt'] ?? '';
             if (!empty($climaxPrompt)) {
                 $climaxPrompt = str_replace('#NPC_NAME#', $GLOBALS["HERIKA_NAME"] ?? '', $climaxPrompt);
-                $climaxCue = "<response_instruction>\n{$climaxPrompt}\n</response_instruction> {$GLOBALS["TEMPLATE_DIALOG"]}";
+                $climaxCue = "<response_instruction>\n{$climaxPrompt}\n</response_instruction> " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
                 $GLOBALS["PROMPTS"]["chatnf_sl_climax"]["cue"] = [$climaxCue];
                 $GLOBALS["PROMPTS"]["ext_nsfw_npc_orgasm"]["cue"] = [$climaxCue];
                 error_log("[AIAGENTNSFW] Overriding chatnf_sl_climax with climax_prompt for {$GLOBALS["HERIKA_NAME"]}");
@@ -1090,6 +1206,34 @@ if ($shouldInjectEngagedContent) {
             error_log("[AIAGENTNSFW] Overriding RECHAT cues with chatnf_sl cues for engaged NPC: $actorName");
         }
     }
+}
+
+// ============================================
+// INJECT CURRENT SCENE DESCRIPTION — FOR ALL EVENTS
+// ============================================
+// Runs OUTSIDE the level-gated block so orgasms, climax events, and all
+// scene-related events get the scene context. Without this, the model
+// has no idea what position/animation is happening or who the partners are.
+// ============================================
+$storedSceneDesc = $intimacyStatus["current_scene_desc"] ?? null;
+$storedSceneTags = $intimacyStatus["current_scene_tags"] ?? [];
+$storedSceneActors = $intimacyStatus["scene_actors"] ?? [];
+$storedPrimaryPartner = $intimacyStatus["current_primary_partner"] ?? null;
+if (!empty($storedSceneDesc) && !empty($storedSceneActors) && !$isPillowTalkMode) {
+    $partnerNames = array_filter($storedSceneActors, function($a) { return strtolower($a) !== strtolower($GLOBALS["PLAYER_NAME"]); });
+    // Highlight primary partner from OStim's actor ordering
+    if ($storedPrimaryPartner && count($partnerNames) > 1) {
+        $otherPartners = array_filter($partnerNames, function($a) use ($storedPrimaryPartner) { return $a !== $storedPrimaryPartner; });
+        $partnerStr = "$storedPrimaryPartner (primary) and " . implode(", ", $otherPartners);
+    } else {
+        $partnerStr = $storedPrimaryPartner ?? (!empty($partnerNames) ? implode(" and ", $partnerNames) : "partner");
+    }
+    $sceneDescBlock = "<current_scene>\nINTIMATE SCENE with $partnerStr: $storedSceneDesc";
+    if (!empty($storedSceneTags)) {
+        $sceneDescBlock .= "\nScene tags: " . implode(", ", $storedSceneTags);
+    }
+    $sceneDescBlock .= "\n</current_scene>";
+    $GLOBALS["HERIKA_PERSONALITY"] .= "\n" . $sceneDescBlock;
 }
 
 if (isset($extended_data["fertility_recent_birth"])) {
@@ -1213,7 +1357,7 @@ if ($xttsInScene && $xttsLevel2Enabled) {
         }
 
         $speed = $GLOBALS["AIAGENTNSFW_XTTS_SPEED_LEVEL2"] ?? 0.7;
-        xtts_fastapi_settings(["temperature"=>1,"speed"=>$speed,"enable_text_splitting"=>false,"top_p"=> 1,"top_k"=>100],true);
+        apply_tts_settings(["temperature"=>1,"speed"=>$speed,"enable_text_splitting"=>false,"top_p"=> 1,"top_k"=>100],true);
         return $result;
 
     };
@@ -1230,7 +1374,7 @@ if ($xttsInForeplay && $xttsLevel1Enabled) {
         $speed = $GLOBALS["AIAGENTNSFW_XTTS_SPEED_LEVEL1"] ?? 0.8;
         Logger::info("Applying speed modifier for XTTS (speed: {$speed}) $text => $text ".__FILE__);
 
-        xtts_fastapi_settings(["temperature"=>1,"speed"=>$speed,"enable_text_splitting"=>false,"top_p"=> 1,"top_k"=>100],true);
+        apply_tts_settings(["temperature"=>1,"speed"=>$speed,"enable_text_splitting"=>false,"top_p"=> 1,"top_k"=>100],true);
         return $text;
 
     };
@@ -1250,8 +1394,8 @@ $xttsNotInScene = isSexDisposalEnabled() ? ($intimacyStatus["level"] == 0) : !$i
 if ($xttsNotInScene) {
     // Add a hook that resets speed to normal (1.0)
     $GLOBALS["HOOKS"]["XTTS_TEXTMODIFIER"][] = function($text) {
-        // Reset to normal XTTS settings
-        xtts_fastapi_settings(["temperature" => 0.75, "speed" => 1.0, "enable_text_splitting" => true, "top_p" => 0.85, "top_k" => 50], true);
+        // Reset to normal TTS settings
+        apply_tts_settings(["temperature" => 0.75, "speed" => 1.0, "enable_text_splitting" => true, "top_p" => 0.85, "top_k" => 50], true);
         return $text;
     };
 }
