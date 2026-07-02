@@ -10,7 +10,7 @@ Scriptname AIAgentVRItems extends Quest
 	NOT the NSFW extension. It provides general VR immersion that ALL
 	users would benefit from, not just NSFW users.
 
-	Currently housed in NSFW ext for development by borja (VR user).
+	Currently housed in the NSFW ext for VR development.
 	When ready for release, this should move to:
 	  - AIAgent.esp (main mod)
 	  - Or a dedicated AIAgentVR.esp for VR-specific features
@@ -33,7 +33,7 @@ Scriptname AIAgentVRItems extends Quest
 	XML TAG FORMAT:
 	  <VR_ITEM>Player picked up Wine Bottle with their right hand</VR_ITEM>
 
-	Author: CHIM Team (VR development by borja)
+	Author: CHIM Team
 	==========================================================================
 }
 import Utility

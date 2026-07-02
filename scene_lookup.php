@@ -88,6 +88,49 @@ $GLOBALS['OSTIM_ACTION_DESCRIPTIONS'] = [
     'default' => '{actor} and {target} are having sex'
 ];
 
+// Scene intensity tier: 1=innocent affection (hug/hold), 2=romantic (kiss/cuddle/foreplay), 3=sexual (default)
+// Covers BOTH OStim action tags and SexLab Animation.GetTags(); affection routes to non-explicit prompts.
+function nsfwSceneIntensityTier($tags = [], $sceneName = '', $sceneId = null) {
+    // Per-scene override wins (set via the scenes manager 'tier' field)
+    if ($sceneId !== null && class_exists('NsfwData')) {
+        $ovScene = NsfwData::getScene($sceneId);
+        if (is_array($ovScene) && isset($ovScene['tier']) && in_array((int)$ovScene['tier'], [1, 2, 3], true)) {
+            return (int)$ovScene['tier'];
+        }
+    }
+    $tagSet = array_map('strtolower', array_map('trim', (array)$tags));
+    $name = strtolower((string)$sceneName);
+    // Explicit ACT tags force tier 3 (exact match, OStim + SexLab vocab). Positions (standing/spooning/missionary/etc) are NOT here - ambiguous, handled below.
+    $explicitTags = [
+        'vaginalsex','analsex','doublepenetration','blowjob','deepthroat','facefuck','cunnilingus','analingus','sixtynine',
+        'handjob','fingering','vaginalfingering','analfingering','rubbingclitoris','masturbation','femalemasturbation','malemasturbation',
+        'boobjob','titfuck','footjob','thighjob','assjob','grinding','spanking','choking','hairpulling','faceslapping',
+        'breastsucking','breastgroping','assgroping','suckingnipples','lickingnipples','licking','foreplay',
+        'vaginal','anal','oral','sex','penetration','penetrating','intercourse','fuck','fucking','fisting','fellatio','rimming','pegging',
+        'creampie','cumshot','facial','bukkake','squirting','squirt','gangbang','dp','groping','masturbating','fingered','blowjobs'
+    ];
+    foreach ($explicitTags as $t) { if (in_array($t, $tagSet, true)) return 3; }
+    // Romantic (tier 2): STRICTLY chaste kiss/cuddle only. Any explicit/ambiguous tag already returned 3 above; mood words (loving/sensual/foreplay/spooning) are intentionally NOT here so anything sexual stays tier 3.
+    $romanticTags = ['kissing','kiss','frenchkissing','frenchkiss','neckkissing','neckkiss','makingout','makeout',
+        'cuddling','cuddle','snuggling','snuggle','caressing','caress','nuzzling','nuzzle'];
+    foreach ($romanticTags as $t) { if (in_array($t, $tagSet, true)) return 2; }
+    foreach (['kiss','cuddl','snuggle','makeout','caress','nuzzl'] as $kw) { if (strpos($name, $kw) !== false) return 2; }
+    // Innocent (tier 1): hug / hold hands / embrace / standing-holding. NON-explicit closeness beats.
+    // CRITICAL (user report 2026-06-29): names like "OStim2PStandingHoldingMF" / hold-hands carry NO act tag and the
+    // keyword was only 'holdhand' (not 'holding'), so they fell through to default-3 and the NPC talked explicitly
+    // ("oh right there, the way you fill me up...") during a hug/hold-hands/standing beat. "holding"/"embrace" =
+    // foreplay, not sex. Explicit act tags already returned 3 above, so a truly sexual holding pose is unaffected.
+    $innocentTags = ['hugging','hug','embrace','embracing','holdinghand','holdinghands','holdhands','handholding','holding'];
+    foreach ($innocentTags as $t) { if (in_array($t, $tagSet, true)) return 1; }
+    foreach (['hug','embrace','holdhand','handhold','holding hand','holdhands','holding','standinghold','standing hold'] as $kw) { if (strpos($name, $kw) !== false) return 1; }
+    // Idle / intro / transition / setup beats (standing apart, scene start, position changes) are NON-sexual
+    // NON-scenes -> tier 0: no scene cue, just normal conversation. Real act tags already returned 3 above.
+    // 'transition' (OStim move-between-positions beats) must NOT carry the explicit cue or sex talk leaks between beats.
+    foreach (['idle','intro','transition'] as $t) { if (in_array($t, $tagSet, true)) return 0; }
+    if (strpos($name, 'standingapart') !== false || strpos($name, 'standing apart') !== false) return 0;
+    return 3;
+}
+
 // ============================================
 // ORGASM CONTEXT DESCRIPTIONS
 // ============================================

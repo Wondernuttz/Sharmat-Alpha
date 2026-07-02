@@ -57,25 +57,23 @@ class NsfwRelationship {
         // Get the prompt from database - NO FALLBACK TO HARDCODED DEFAULTS
         // If prompt is not in DB, log error and return empty (user must save prompts in UI first)
         $prompt = $prompts[$promptKey] ?? '';
+        if (empty($prompt) && !$isProstitute) {
+            // Regular-NPC safety net: profileless / fresh-DB NPCs would otherwise emit EMPTY tier context
+            // (NPC-NPC dialogue then silently fails). Prostitutes use their own pathway - no fallback.
+            require_once __DIR__ . "/nsfw_data.php";
+            $_defTiers = NsfwData::getDefaultTierPrompts();
+            $prompt = $_defTiers[ucfirst($tier)]['regular'] ?? ($_defTiers['Neutral']['regular'] ?? '');
+        }
         if (empty($prompt)) {
             error_log("[NSFW_REL] ERROR: No prompt found for key '{$promptKey}' - user must save prompts in NSFW Config UI");
         }
 
-        // Replace placeholders
-        $partner = $partnerName ?? 'Player';
-        $prompt = str_replace('#PARTNER#', $partner, $prompt);
+        // Player relationship route: affinity tier prompts describe the player's relationship.
+        $prompt = self::replacePlayerRoutePlaceholders($prompt, $partnerName ?? 'Player', $npcName);
         $prompt = str_replace('#NPC_NAME#', $npcName, $prompt);
         $prompt = str_replace('#AFFINITY#', $relationship['aff'], $prompt);
         $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
         $prompt = str_replace('#TYPE#', $relationship['type'], $prompt);
-
-        // Add pricing adjustment for prostitutes
-        if ($isProstitute) {
-            $pricingLine = self::getPricingAdjustmentLine($tier);
-            if (!empty($pricingLine)) {
-                $prompt .= ' ' . $pricingLine;
-            }
-        }
 
         return $prompt;
     }
@@ -90,17 +88,20 @@ class NsfwRelationship {
      * @param string|null $npcName NPC name for marriage/affair detection (optional)
      * @return string The tier prompt
      */
-    public static function getTierPromptByAffinity($affinity, $isProstitute = false, $partnerName = 'Player', $npcName = null) {
+    public static function getTierPromptByAffinity($affinity, $isProstitute = false, $partnerName = 'Player', $npcName = null, $promptContext = 'player') {
         $tier = strtolower(RelationshipManager::getTierLabel($affinity));
+        $isNpcPromptContext = (strtolower((string)$promptContext) === 'npc');
 
         // Check for marriage/affair scenarios if NPC name is provided
         if ($npcName) {
             // MARRIAGE: Partner IS the spouse - use marriage prompts
             if (self::isMarriageScenario($npcName, $partnerName)) {
-                $prompt = self::getMarriageSpousePrompt($tier, $partnerName);
+                $prompt = $isNpcPromptContext
+                    ? self::getNpcMarriageSpousePrompt($tier, $partnerName, $npcName)
+                    : self::getMarriageSpousePrompt($tier, $partnerName);
                 $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
                 $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
-                error_log("[NSFW_REL] Marriage scene detected for $npcName with spouse $partnerName");
+                error_log("[NSFW_REL] Marriage scene detected for $npcName with spouse $partnerName (context: {$promptContext})");
                 // After marriage prompt, fall through to normal NSFW handling
                 return $prompt;
             }
@@ -108,10 +109,12 @@ class NsfwRelationship {
             // AFFAIR: Married but partner is NOT spouse - use affair prompts
             if (self::isAffairScenario($npcName, $partnerName)) {
                 $spouseName = self::getSpouseName($npcName);
-                $prompt = self::getAffairTierPrompt($tier, $partnerName, $spouseName);
+                $prompt = $isNpcPromptContext
+                    ? self::getNpcAffairTierPrompt($tier, $partnerName, $spouseName, $npcName)
+                    : self::getAffairTierPrompt($tier, $partnerName, $spouseName);
                 $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
                 $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
-                error_log("[NSFW_REL] Affair detected for $npcName with $partnerName (spouse: $spouseName)");
+                error_log("[NSFW_REL] Affair detected for $npcName with $partnerName (spouse: $spouseName, context: {$promptContext})");
                 // After affair prompt, fall through to normal NSFW handling
                 return $prompt;
             }
@@ -121,23 +124,88 @@ class NsfwRelationship {
         $prompts = self::loadPromptSettings();
         $promptKey = $isProstitute ? "tier_prost_{$tier}" : "tier_{$tier}";
 
-        // Get prompt from database - NO HARDCODED FALLBACKS
+        // Get prompt from database - regular-NPC safety net for profileless/fresh-DB (covers NPC-NPC, OStim + SexLab)
         $prompt = $prompts[$promptKey] ?? '';
+        if (empty($prompt) && !$isProstitute) {
+            require_once __DIR__ . "/nsfw_data.php";
+            $_defTiers = NsfwData::getDefaultTierPrompts();
+            $prompt = $_defTiers[ucfirst($tier)]['regular'] ?? ($_defTiers['Neutral']['regular'] ?? '');
+        }
         if (empty($prompt)) {
             error_log("[NSFW_REL] ERROR: No prompt for '{$promptKey}' - save prompts in NSFW Config UI");
         }
-        $prompt = str_replace('#PARTNER#', $partnerName, $prompt);
+        $prompt = self::replaceRouteActorPlaceholders($prompt, $partnerName, $promptContext, $npcName);
         $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
         $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
 
-        // Add pricing adjustment for prostitutes
-        if ($isProstitute) {
-            $pricingLine = self::getPricingAdjustmentLine($tier);
-            if (!empty($pricingLine)) {
-                $prompt .= ' ' . $pricingLine;
-            }
+        return $prompt;
+    }
+
+    private static function replaceNpcScenePlaceholders($prompt, $partnerName, $spouseName = '', $npcName = '') {
+        $playerName = $GLOBALS['PLAYER_NAME'] ?? 'Player';
+        $prompt = str_replace('#PRIMARY_PARTNER#', $partnerName, $prompt);
+        $prompt = str_replace(['#NPC_SPOUSE#', '#SPOUSE#'], ($spouseName !== '' ? $spouseName : $partnerName), $prompt);
+        $prompt = str_replace('#NPC_NAME#', $npcName, $prompt);
+        $prompt = str_replace('#PLAYER_NAME#', $playerName, $prompt);
+        return $prompt;
+    }
+
+    private static function getPlayerRouteName($fallback = 'Player') {
+        $playerName = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
+        if ($playerName === '') {
+            $playerName = trim((string)$fallback);
+        }
+        return ($playerName !== '') ? $playerName : 'Player';
+    }
+
+    private static function isPlayerRouteName($targetName) {
+        $target = strtolower(trim((string)$targetName));
+        if ($target === '' || $target === 'player' || $target === 'the player') {
+            return true;
         }
 
+        $playerName = strtolower(self::getPlayerRouteName(''));
+        if ($playerName === '') {
+            return false;
+        }
+
+        return $target === $playerName || strpos($target, $playerName . ' ') === 0;
+    }
+
+    private static function replacePlayerRoutePlaceholders($prompt, $playerName = 'Player', $npcName = '', $spouseName = '') {
+        $playerName = self::getPlayerRouteName($playerName);
+        $prompt = str_replace('#PLAYER_NAME#', $playerName, $prompt);
+        $prompt = str_replace('#NPC_NAME#', $npcName, $prompt);
+        if ($spouseName !== '') {
+            $prompt = str_replace(['#NPC_SPOUSE#', '#SPOUSE#'], $spouseName, $prompt);
+        }
+        return $prompt;
+    }
+
+    private static function replaceRouteActorPlaceholders($prompt, $partnerName, $promptContext = 'player', $npcName = '', $spouseName = '') {
+        if (strtolower((string)$promptContext) === 'npc') {
+            return self::replaceNpcScenePlaceholders($prompt, $partnerName, $spouseName, $npcName);
+        }
+        return self::replacePlayerRoutePlaceholders($prompt, $partnerName, $npcName, $spouseName);
+    }
+
+    private static function getDefaultPromptOverride($key) {
+        require_once __DIR__ . "/nsfw_data.php";
+        if (function_exists('nsfw_default_prompt_overrides')) {
+            $defaults = nsfw_default_prompt_overrides();
+            return $defaults[$key] ?? '';
+        }
+        return '';
+    }
+
+    private static function getNpcSceneTierPrompt($tier, $affinity, $isProstitute, $partnerName, $npcName = '') {
+        $roleLine = $isProstitute
+            ? 'This NPC is marked as a prostitute / sex worker; let that professional context color the response.'
+            : 'Use this relationship tier as emotional context only.';
+        $prompt = "#NPC_NAME# is in an NPC-to-NPC intimate scene with #PRIMARY_PARTNER#. Relationship tier toward #PRIMARY_PARTNER#: #TIER# (#AFFINITY# affinity). {$roleLine} Do not run the player affinity, arousal, refusal, or scene-stop gate for this NPC-only route. React through #NPC_NAME#'s speech style, profile, current scene, and relationship state.";
+        $prompt = self::replaceNpcScenePlaceholders($prompt, $partnerName, '', $npcName);
+        $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
+        $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
         return $prompt;
     }
 
@@ -160,7 +228,7 @@ class NsfwRelationship {
         if (empty($prompt)) {
             error_log("[NSFW_REL] ERROR: No prompt for '{$promptKey}' - save prompts in NSFW Config UI");
         }
-        $prompt = str_replace('#PARTNER#', $partnerName, $prompt);
+        $prompt = self::replacePlayerRoutePlaceholders($prompt, $partnerName);
         $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
         $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
 
@@ -180,8 +248,354 @@ class NsfwRelationship {
      * @return string The fiction frame or empty string if not configured
      */
     public static function getSlaveryFictionFrame() {
+        // Global on/off toggle (Prompts tab, next to the fiction frame prompt). Default ON.
         $prompts = self::loadPromptSettings();
+        if (isset($prompts['slavery_fiction_frame_enabled']) && !$prompts['slavery_fiction_frame_enabled']) {
+            return '';
+        }
         return $prompts['slavery_fiction_frame'] ?? '';
+    }
+
+    /**
+     * Persistent role/status overhead for NPCs marked in the SHARMAT UI.
+     * This is character context, not scene gating. Scene-specific tier prompts still decide the active route.
+     */
+    public static function getRoleStatusOverhead($npcName, $partnerName = null) {
+        $npcName = trim((string)$npcName);
+        if ($npcName === '') {
+            return '';
+        }
+        if (function_exists('nsfwIsNarratorName') && nsfwIsNarratorName($npcName)) {
+            return '';
+        }
+
+        require_once __DIR__ . "/nsfw_data.php";
+        $extended = NsfwNpcData::get($npcName);
+        if (!is_array($extended)) {
+            $extended = [];
+        }
+
+        // Prostitute role-status is already covered by the per-tier relationship overhead
+        // (getRelationshipOverhead -> relationship_overhead_prostitute_<tier>), so only SLAVES still get a
+        // separate status overhead here - avoids stating "she is a prostitute" twice in the same prompt.
+        $isSlave = !empty($extended['is_slave']);
+        if (!$isSlave) {
+            return '';
+        }
+
+        $prompts = self::loadPromptSettings();
+        $prompt = trim((string)($prompts['slave_status_overhead'] ?? self::getDefaultPromptOverride('slave_status_overhead')));
+        if ($prompt === '') {
+            return '';
+        }
+
+        $prompt = self::replaceRoleOverheadPlaceholders($prompt, $npcName, $partnerName, $extended, true);
+
+        return self::wrapXml('sharmat_slave_status', $prompt);
+    }
+
+    /**
+     * Persistent role context for slave/prostitute NPCs.
+     * This is general identity/occupation context, separate from relationship-tier scene gating.
+     */
+    public static function getRoleContextOverhead($npcName, $partnerName = null) {
+        $npcName = trim((string)$npcName);
+        if ($npcName === '') {
+            return '';
+        }
+        if (function_exists('nsfwIsNarratorName') && nsfwIsNarratorName($npcName)) {
+            return '';
+        }
+
+        require_once __DIR__ . "/nsfw_data.php";
+        $extended = NsfwNpcData::get($npcName);
+        if (!is_array($extended)) {
+            $extended = [];
+        }
+
+        $isSlave = !empty($extended['is_slave']);
+        $isProstitute = !$isSlave && !empty($extended['is_prostitute']);
+        if (!$isSlave && !$isProstitute) {
+            return '';
+        }
+
+        $prompts = self::loadPromptSettings();
+        $promptKey = $isSlave ? 'slave_role_context' : 'prostitute_role_context';
+        $prompt = trim((string)($prompts[$promptKey] ?? self::getDefaultPromptOverride($promptKey)));
+        // Do NOT early-return on an empty base overhead. An INELIGIBLE relationship type must STILL receive the
+        // "not sexually available" addendum below even when the per-tier overhead text is blank (user directive
+        // 2026-06-29: a Bonded "transactional" NPC was getting no refusal addendum because this returned early -
+        // the special route was short-circuited). If the whole block is still empty after the addendum, we return ''.
+
+        $prompt = self::replaceRoleOverheadPlaceholders($prompt, $npcName, $partnerName, $extended, $isSlave);
+
+        return self::wrapXml($isSlave ? 'sharmat_slave_role_context' : 'sharmat_prostitute_role_context', $prompt);
+    }
+
+    /**
+     * Relationship overhead for every NPC turn. This is the broad, current relationship/role layer that
+     * sits above scene/touch/sex prompts and is recalculated every request to avoid stale context.
+     */
+    public static function getRelationshipOverhead($npcName, $partnerName = null, $promptContext = 'player') {
+        $npcName = trim((string)$npcName);
+        if ($npcName === '') {
+            return '';
+        }
+        if (function_exists('nsfwIsNarratorName') && nsfwIsNarratorName($npcName)) {
+            return '';
+        }
+
+        require_once __DIR__ . "/nsfw_data.php";
+        $extended = NsfwNpcData::get($npcName);
+        if (!is_array($extended)) {
+            $extended = [];
+        }
+
+        $isSlave = !empty($extended['is_slave']);
+        $isProstitute = !$isSlave && !empty($extended['is_prostitute']);
+        $family = $isSlave ? 'slave' : ($isProstitute ? 'prostitute' : 'regular');
+
+        $playerName = self::getPlayerRouteName();
+        $partnerName = trim((string)($partnerName ?? ''));
+        if ($partnerName === '') {
+            $partnerName = $playerName;
+        }
+
+        try {
+            $isNpcPromptContext = (strtolower((string)$promptContext) === 'npc') && !self::isPlayerRouteName($partnerName);
+            $relationship = $isNpcPromptContext
+                ? RelationshipManager::getRelationship($npcName, $partnerName)
+                : RelationshipManager::getPlayerRelationship($npcName);
+        } catch (Exception $e) {
+            $relationship = ['aff' => 0, 'tier' => 'Neutral', 'type' => 'Unknown'];
+        }
+
+        $tier = strtolower((string)($relationship['tier'] ?? RelationshipManager::getTierLabel((int)($relationship['aff'] ?? 0))));
+        if ($tier === '') {
+            $tier = 'neutral';
+        }
+
+        $prompts = self::loadPromptSettings();
+        $promptKey = "relationship_overhead_{$family}_{$tier}";
+        $prompt = trim((string)($prompts[$promptKey] ?? self::getDefaultPromptOverride($promptKey)));
+        // Do NOT early-return on a blank base overhead: an INELIGIBLE relationship TYPE must STILL receive the
+        // "not sexually available / RefuseSex" addendum below even when the per-tier base text is empty. Without
+        // this, a professional/bonded NPC with a blank base got NO refusal instruction every turn and freely
+        // initiated sex. The trim()==='' check at the end returns '' if nothing (base + addendum) was added.
+        // (Mirrors the same fix already applied in getRoleContextOverhead.)
+
+        // COMPOSE THE OVERHEAD STACK (regular NPCs, player route): base overhead + relationship-tier tag +
+        // (if married) spouse-identity tag + (if her relationship TYPE is NOT checked sex-eligible in the UI,
+        // Friendly+) an explicit pre-emptive RefuseSex instruction. All appended into the SINGLE overhead block
+        // so they land on her in one go. Editable via the Prompts panel (relationship_overhead_tier_tag /
+        // relationship_overhead_spouse_tag); the refusal text comes from the Relationship Types section.
+        if ($family === 'regular' && empty($isNpcPromptContext)) {
+            // The tier-tag add-on (UI: relationship_overhead_tier_tag) is the INELIGIBLE-TYPE addendum: it applies
+            // ONLY to NPCs whose relationship TYPE is NOT one of the UI-selected sex-eligible types. Eligible types
+            // (e.g. romantic, crush) are exempt and never see it. Was injecting unconditionally, which force-refused
+            // even bonded romantic NPCs.
+            $rtEligibleOv = [];
+            $rtRowOv = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
+            if ($rtRowOv && !empty($rtRowOv['value'])) {
+                $rtCfgOv = json_decode($rtRowOv['value'], true);
+                if (is_array($rtCfgOv) && is_array($rtCfgOv['eligible_types'] ?? null)) {
+                    $rtEligibleOv = array_map('strtolower', $rtCfgOv['eligible_types']);
+                }
+            }
+            $relTypeLowerOv = strtolower(trim((string)($relationship['type'] ?? '')));
+            $typeIsEligibleOv = ($relTypeLowerOv !== '' && in_array($relTypeLowerOv, $rtEligibleOv, true));
+
+            if (!$typeIsEligibleOv) {
+                $tierTag = trim((string)($prompts['relationship_overhead_tier_tag']
+                    ?? "Your current relationship tier with #PLAYER_NAME# is #TIER# (#AFFINITY# affinity)."));
+                if ($tierTag !== '') { $prompt .= "\n" . $tierTag; }
+            }
+
+            $overheadSpouse = '';
+            try { $overheadSpouse = trim((string)self::getSpouseName($npcName)); } catch (Exception $e) { $overheadSpouse = ''; }
+            if ($overheadSpouse !== '') {
+                $spouseTag = trim((string)($prompts['relationship_overhead_spouse_tag']
+                    ?? "You are married to #SPOUSE#. #PLAYER_NAME# is not your spouse; any sexual intimacy with #PLAYER_NAME# would be an affair on your part."));
+                if ($spouseTag !== '') { $prompt .= "\n" . $spouseTag; }
+            }
+
+            // Inject the kind-decline instruction ONLY for an INELIGIBLE relationship type (eligible types like
+            // romantic/crush must NEVER be told to refuse). Fires even when no custom refusal text is configured
+            // (default fallback), so a blank config still gates a professional/student/etc. NPC every single turn.
+            if (!$typeIsEligibleOv) {
+                $typeRefusal = self::getRelTypeGateRefusal($npcName, $partnerName);
+                $typeRefusal = (is_string($typeRefusal) && trim($typeRefusal) !== '') ? trim($typeRefusal) : "Your relationship with #PLAYER_NAME# is not a sexual one.";
+                $prompt .= "\n" . $typeRefusal
+                    . " You are NOT sexually available to #PLAYER_NAME#. If they make a sexual advance, kindly and in character decline it and use the RefuseSex action.";
+            }
+        }
+
+        if (trim($prompt) === '') {
+            return ''; // nothing to inject (e.g. eligible type with a blank per-tier overhead)
+        }
+        $prompt = self::replaceRelationshipOverheadPlaceholders($prompt, $npcName, $partnerName, $extended, $relationship, $isSlave);
+        return self::wrapXml("sharmat_relationship_overhead", $prompt);
+    }
+
+    private static function replaceRoleOverheadPlaceholders($prompt, $npcName, $partnerName, $extended, $isSlave) {
+        if (!is_array($extended)) {
+            $extended = [];
+        }
+
+        try {
+            $relationship = RelationshipManager::getPlayerRelationship($npcName);
+        } catch (Exception $e) {
+            $relationship = ['aff' => 0, 'tier' => 'Neutral', 'type' => 'Unknown'];
+        }
+
+        $playerName = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
+        if ($playerName === '') {
+            $playerName = 'Player';
+        }
+        $partnerName = trim((string)($partnerName ?? ''));
+        if ($partnerName === '') {
+            $partnerName = $playerName;
+        }
+
+        $pricing = is_array($extended['prostitute_pricing'] ?? null) ? $extended['prostitute_pricing'] : [];
+        $prostituteType = $extended['prostitute_type'] ?? ($pricing['prostitute_type'] ?? 'unspecified');
+        $paymentType = $pricing['payment_type'] ?? 'gold';
+        $motivation = $pricing['motivation'] ?? 'professional';
+        $price = self::getProstituteFlatPriceLabel($extended, (int)($relationship['aff'] ?? 0));
+        $tier = (string)($relationship['tier'] ?? 'Neutral');
+        $affinity = (string)($relationship['aff'] ?? '0');
+        $relType = (string)($relationship['type'] ?? 'Unknown');
+
+        $prompt = str_replace(
+            [
+                '#NPC_NAME#',
+                '#PLAYER_NAME#',
+                '#PRIMARY_PARTNER#',
+                '#OWNER#',
+                '#MASTER#',
+                '#AFFINITY#',
+                '#TIER#',
+                '#TYPE#',
+                '#REL_TYPE#',
+                '#ROLE#',
+                '#PROSTITUTE_TYPE#',
+                '#PAYMENT_TYPE#',
+                '#MOTIVATION#',
+                '#PRICE#',
+            ],
+            [
+                $npcName,
+                $playerName,
+                $partnerName,
+                $playerName,
+                $playerName,
+                $affinity,
+                $tier,
+                $relType,
+                $relType,
+                $isSlave ? 'slave' : 'prostitute',
+                $prostituteType,
+                $paymentType,
+                $motivation,
+                $price,
+            ],
+            $prompt
+        );
+
+        return $prompt;
+    }
+
+    private static function replaceRelationshipOverheadPlaceholders($prompt, $npcName, $partnerName, $extended, $relationship, $isSlave) {
+        if (!is_array($extended)) {
+            $extended = [];
+        }
+        if (!is_array($relationship)) {
+            $relationship = ['aff' => 0, 'tier' => 'Neutral', 'type' => 'Unknown'];
+        }
+
+        $playerName = self::getPlayerRouteName();
+        $pricing = is_array($extended['prostitute_pricing'] ?? null) ? $extended['prostitute_pricing'] : [];
+        $prostituteType = $extended['prostitute_type'] ?? ($pricing['prostitute_type'] ?? 'unspecified');
+        $paymentType = $pricing['payment_type'] ?? 'gold';
+        $motivation = $pricing['motivation'] ?? 'professional';
+        $spouseName = '';
+        try {
+            $spouseName = self::getSpouseName($npcName);
+        } catch (Exception $e) {
+            $spouseName = '';
+        }
+
+        $prompt = str_replace(
+            [
+                '#NPC_NAME#',
+                '#PLAYER_NAME#',
+                '#PRIMARY_PARTNER#',
+                '#OWNER#',
+                '#MASTER#',
+                '#AFFINITY#',
+                '#TIER#',
+                '#TYPE#',
+                '#REL_TYPE#',
+                '#ROLE#',
+                '#PROSTITUTE_TYPE#',
+                '#PAYMENT_TYPE#',
+                '#MOTIVATION#',
+                '#PRICE#',
+                '#SPOUSE#',
+                '#NPC_SPOUSE#',
+            ],
+            [
+                $npcName,
+                $playerName,
+                $partnerName,
+                $playerName,
+                $playerName,
+                (string)($relationship['aff'] ?? '0'),
+                (string)($relationship['tier'] ?? 'Neutral'),
+                (string)($relationship['type'] ?? 'Unknown'),
+                (string)($relationship['type'] ?? 'Unknown'),
+                $isSlave ? 'slave' : (!empty($extended['is_prostitute']) ? 'prostitute' : 'regular'),
+                $prostituteType,
+                $paymentType,
+                $motivation,
+                self::getProstituteFlatPriceLabel($extended, (int)($relationship['aff'] ?? 0)),
+                $spouseName !== '' ? $spouseName : 'your spouse',
+                $spouseName !== '' ? $spouseName : 'your spouse',
+            ],
+            $prompt
+        );
+
+        return $prompt;
+    }
+
+    private static function getProstituteFlatPriceLabel($extended, $affinity = null) {
+        if (!is_array($extended)) {
+            $extended = [];
+        }
+        $pricing = is_array($extended['prostitute_pricing'] ?? null) ? $extended['prostitute_pricing'] : [];
+        $flatPrice = (int)($extended['prostitute_price'] ?? 0);
+        if ($flatPrice < 1 && !empty($pricing['individual_acts']) && is_array($pricing['individual_acts'])) {
+            $acts = $pricing['individual_acts'];
+            $flatPrice = (int)($acts['full_both'] ?? $acts['full_vaginal'] ?? (reset($acts) ?: 0));
+        }
+        if ($flatPrice < 1) {
+            $flatPrice = 100;
+        }
+        // Apply the affinity-tier discount/premium so #PRICE# matches the quoted price + payment gate.
+        if ($affinity !== null && function_exists('aiagentNsfwProstituteAffinityPrice')) {
+            $flatPrice = aiagentNsfwProstituteAffinityPrice($flatPrice, (int)$affinity);
+        }
+        return "{$flatPrice} gold";
+    }
+
+    // Per-NPC slave cue override: this slave's custom Scene Cues / Climax / Aftermath text if set, else '' (falls back to global)
+    private static function getPerNpcSlaveCue($field) {
+        $npcName = $GLOBALS["HERIKA_NAME"] ?? '';
+        if ($npcName === '') return '';
+        require_once __DIR__ . "/nsfw_data.php";
+        $ext = NsfwNpcData::get($npcName);
+        $val = $ext['slave_speak_styles'][$field] ?? '';
+        return is_string($val) ? trim($val) : '';
     }
 
     // REMOVED: getDefaultSlavePrompt() - prompts come from database only (conf_opts.aiagent_nsfw_prompts)
@@ -213,7 +627,18 @@ class NsfwRelationship {
                 $names = array_filter($names); // Remove empty strings
             }
 
-            return ['spousal_status' => $status, 'spouse_names' => $names];
+            // Resolve the literal "Player" token to the player's character name, so an NPC can be
+            // marked married to the player without knowing the playthrough-specific name.
+            $playerName = $GLOBALS["PLAYER_NAME"] ?? '';
+            if ($playerName !== '') {
+                foreach ($names as $k => $n) {
+                    if (strcasecmp($n, 'Player') === 0) {
+                        $names[$k] = $playerName;
+                    }
+                }
+            }
+
+            return ['spousal_status' => $status, 'spouse_names' => array_values($names)];
         } catch (Exception $e) {
             error_log("[NSFW_REL] Failed to get spousal info for $npcName: " . $e->getMessage());
             return ['spousal_status' => 'single', 'spouse_names' => []];
@@ -324,11 +749,27 @@ class NsfwRelationship {
 
         $prompt = $prompts[$promptKey] ?? '';
         if (empty($prompt)) {
-            error_log("[NSFW_REL] ERROR: No prompt for '{$promptKey}' - save prompts in NSFW Config UI");
+            // Blob key not saved yet - use the built-in default so marriage scenes still get flavor
+            $prompt = self::getDefaultMarriageSpousePrompt($tier);
         }
         $prompt = str_replace('#SPOUSE#', $spouseName, $prompt);
 
         return $prompt;
+    }
+
+    public static function getNpcMarriageSpousePrompt($tier, $spouseName, $npcName = '') {
+        $prompts = self::loadPromptSettings();
+        $promptKey = "npc_marriage_spouse_{$tier}";
+
+        $prompt = $prompts[$promptKey] ?? '';
+        if (empty($prompt)) {
+            $prompt = $prompts['npc_marriage'] ?? '';
+        }
+        if (empty($prompt)) {
+            $prompt = self::getMarriageSpousePrompt($tier, $spouseName);
+        }
+
+        return self::replaceNpcScenePlaceholders($prompt, $spouseName, $spouseName, $npcName);
     }
 
     /**
@@ -383,12 +824,30 @@ class NsfwRelationship {
 
         $prompt = $prompts[$promptKey] ?? '';
         if (empty($prompt)) {
-            error_log("[NSFW_REL] ERROR: No prompt for '{$promptKey}' - save prompts in NSFW Config UI");
+            // Blob key not saved yet - use the built-in default so affair scenes still get flavor
+            $prompt = self::getDefaultAffairPrompt($tier);
         }
-        $prompt = str_replace('#PARTNER#', $partnerName, $prompt);
-        $prompt = str_replace('#SPOUSE#', $spouseName, $prompt);
+        $prompt = self::replacePlayerRoutePlaceholders($prompt, $partnerName, '', $spouseName);
 
         return $prompt;
+    }
+
+    public static function getNpcAffairTierPrompt($tier, $partnerName, $spouseName, $npcName = '') {
+        $prompts = self::loadPromptSettings();
+        $promptKey = "npc_affair_{$tier}";
+
+        $prompt = $prompts[$promptKey] ?? '';
+        if (empty($prompt)) {
+            $prompt = $prompts['npc_affair'] ?? '';
+        }
+        if (empty($prompt)) {
+            $prompt = self::getDefaultPromptOverride('npc_affair');
+        }
+        if (empty($prompt)) {
+            $prompt = '(#NPC_NAME# is married to #NPC_SPOUSE#, but #NPC_NAME# is being intimate with #PRIMARY_PARTNER# instead. This is an affair. React according to your personality, relationship state, and current scene.)';
+        }
+
+        return self::replaceNpcScenePlaceholders($prompt, $partnerName, $spouseName, $npcName);
     }
 
     /**
@@ -401,21 +860,21 @@ class NsfwRelationship {
     private static function getDefaultAffairPrompt($tier) {
         $defaults = [
             // Positive affinity: willing affair, guilt varies by tier
-            'bonded' => '#PARTNER# has initiated intimacy. You are married to #SPOUSE# but #PARTNER# is your soulmate, your true love. What you have with #PARTNER# transcends your marriage. No guilt, only passion. This is where you belong.',
-            'devoted' => '#PARTNER# has initiated intimacy. You are married to #SPOUSE# but you are deeply in love with #PARTNER#. This affair feels more real than your marriage. Passionate, loving, only slight guilt.',
-            'fond' => '#PARTNER# has initiated intimacy. You are married to #SPOUSE# but you have strong feelings for #PARTNER#. The affair excites you. Tender and passionate, though guilt lingers in quiet moments.',
-            'friendly' => '#PARTNER# has initiated intimacy. You are married to #SPOUSE# but you enjoy #PARTNER#. This affair is fun, thrilling. You like them. Guilt is there but the excitement wins.',
-            'acquaintance' => '#PARTNER# has initiated intimacy. You are married to #SPOUSE# but #PARTNER# is new and exciting. This affair is risky, thrilling. Nervous but curious. Significant guilt but you proceed.',
+            'bonded' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE# but #PLAYER_NAME# is your soulmate, your true love. What you have with #PLAYER_NAME# transcends your marriage. No guilt, only passion. This is where you belong.',
+            'devoted' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE# but you are deeply in love with #PLAYER_NAME#. This affair feels more real than your marriage. Passionate, loving, only slight guilt.',
+            'fond' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE# but you have strong feelings for #PLAYER_NAME#. The affair excites you. Tender and passionate, though guilt lingers in quiet moments.',
+            'friendly' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE# but you enjoy #PLAYER_NAME#. This affair is fun, thrilling. You like them. Guilt is there but the excitement wins.',
+            'acquaintance' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE# but #PLAYER_NAME# is new and exciting. This affair is risky, thrilling. Nervous but curious. Significant guilt but you proceed.',
 
             // Neutral: conflicted
-            'neutral' => '#PARTNER# has initiated intimacy. You are married to #SPOUSE#. #PARTNER# is... someone. You are not sure why you are doing this. Conflicted, uncertain. Heavy guilt but something keeps you here.',
+            'neutral' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE#. #PLAYER_NAME# is... someone. You are not sure why you are doing this. Conflicted, uncertain. Heavy guilt but something keeps you here.',
 
             // Negative affinity: rejection of the affair
-            'wary' => '#PARTNER# has initiated intimacy. You are married to #SPOUSE#. You do not trust #PARTNER# enough for this. Hesitant, pulling back. This feels wrong. You should not be here.',
-            'cold' => '#PARTNER# has initiated intimacy. You are married to #SPOUSE#. You feel nothing for #PARTNER#. Why would you risk your marriage for this? Refusing. This is a mistake.',
-            'resentful' => '#PARTNER# has initiated intimacy. You are married to #SPOUSE#. You resent #PARTNER# for even trying this. How dare they. Bitter refusal. Go back to your spouse.',
-            'hateful' => '#PARTNER# has initiated intimacy. You are married to #SPOUSE#. You hate #PARTNER#. This is an insult to your marriage. Aggressive rejection. Get away from me.',
-            'hostile' => '#PARTNER# has initiated intimacy. You are married to #SPOUSE#. You DESPISE #PARTNER#. This is assault. You will fight. You will tell #SPOUSE#. You will destroy them.',
+            'wary' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE#. You do not trust #PLAYER_NAME# enough for this. Hesitant, pulling back. This feels wrong. You should not be here.',
+            'cold' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE#. You feel nothing for #PLAYER_NAME#. Why would you risk your marriage for this? Refusing. This is a mistake.',
+            'resentful' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE#. You resent #PLAYER_NAME# for even trying this. How dare they. Bitter refusal. Go back to your spouse.',
+            'hateful' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE#. You hate #PLAYER_NAME#. This is an insult to your marriage. Aggressive rejection. Get away from me.',
+            'hostile' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE#. You DESPISE #PLAYER_NAME#. This is assault. You will fight. You will tell #SPOUSE#. You will destroy them.',
         ];
 
         return $defaults[$tier] ?? $defaults['neutral'];
@@ -437,74 +896,6 @@ class NsfwRelationship {
     private static function getDefaultMarriagePrompt($tier) {
         // This is now an affair prompt (partner != spouse)
         return self::getDefaultAffairPrompt($tier);
-    }
-
-    /**
-     * Get the pricing adjustment line for a prostitute tier
-     * Returns empty string if modifier is 0 (disabled)
-     *
-     * @param string $tier The tier name (lowercase)
-     * @return string The pricing adjustment sentence or empty
-     */
-    private static function getPricingAdjustmentLine($tier) {
-        // Load prompts settings to get pricing modifiers
-        static $settings = null;
-        if ($settings === null) {
-            try {
-                $settingsRow = $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_prompts'");
-                $settings = ($settingsRow && !empty($settingsRow['value']))
-                    ? json_decode($settingsRow['value'], true)
-                    : [];
-            } catch (Exception $e) {
-                $settings = [];
-            }
-        }
-
-        // Map tier to pricing modifier key (lowercase with underscores as stored in prompts)
-        $tierToKey = [
-            'bonded' => 'pricing_mod_bonded',
-            'devoted' => 'pricing_mod_devoted',
-            'fond' => 'pricing_mod_fond',
-            'friendly' => 'pricing_mod_friendly',
-            'acquaintance' => 'pricing_mod_acquainted',
-            'neutral' => 'pricing_mod_neutral',
-            'wary' => 'pricing_mod_wary',
-            'cold' => 'pricing_mod_cold',
-            'resentful' => 'pricing_mod_resentful',
-            'hateful' => 'pricing_mod_hateful',
-            'hostile' => 'pricing_mod_hostile',
-        ];
-
-        $key = $tierToKey[$tier] ?? null;
-        if (!$key) {
-            return '';
-        }
-
-        // Get the modifier value
-        // Empty string or null means no button selected = no pricing prompt
-        // 0 means button selected with 0% = charge normal prices
-        $modifier = $settings[$key] ?? '';
-
-        // If empty/null, no button was selected - no pricing prompt goes to model
-        if ($modifier === '' || $modifier === null) {
-            return '';
-        }
-
-        // Convert to integer for comparison
-        $modifier = (int)$modifier;
-
-        // If modifier is 0, charge normal prices (no discount or upcharge)
-        if ($modifier == 0) {
-            return "You are going to charge this client your normal prices. There is no negotiation.";
-        }
-
-        // Generate the pricing line
-        if ($modifier < 0) {
-            $discount = abs($modifier);
-            return "You are willing to give this client a {$discount}% discount.";
-        } else {
-            return "You should charge this client {$modifier}% more.";
-        }
     }
 
     /**
@@ -553,11 +944,12 @@ class NsfwRelationship {
     }
 
     /**
-     * Check if affinity allows consensual sex
-     * Returns 'eager', 'willing', 'reluctant', or 'unwilling'
+     * LABEL ONLY (display / log) - NEVER gate sex on this. Consent is prompt-driven (AcceptSex / RefuseSex);
+     * affinity only selects which relationship PROMPT is shown, it does not decide consent.
+     * Returns 'eager'/'willing'/'reluctant'/'unwilling'.
      *
      * @param int $affinity The affinity score
-     * @return string Consent level
+     * @return string Affinity label (NOT a consent gate)
      */
     public static function getConsentLevel($affinity) {
         if ($affinity >= 56) return 'eager';      // Fond, Devoted, Bonded
@@ -589,7 +981,7 @@ class NsfwRelationship {
                     error_log("[NSFW_REL] tier_neutral: " . $tierNeutral);
                 }
                 // Check for the custom "RefuseSex" keyword
-                if (strpos($tierNeutral, 'RefuseSex') !== false) {
+                if (strpos($tierNeutral, 'RefuseSex') !== false || strpos($tierNeutral, 'RefuseSex') !== false) {
                     error_log("[NSFW_REL] FOUND RefuseSex in tier_neutral - custom UI prompt loaded!");
                 }
                 return self::$promptCache;
@@ -630,6 +1022,85 @@ class NsfwRelationship {
     }
 
     /**
+     * RELATIONSHIP-TYPE GATE (UI-configured: conf_opts 'aiagent_nsfw_reltypes').
+     *
+     * If the NPC's relationship TYPE with the player is NOT checked sex-eligible, and affinity is
+     * Friendly+ (Friendly/Fond/Devoted/Bonded), return the tier-toned polite refusal so the scene gets a
+     * relationship-appropriate "we're not like that" instead of sex. Returns null when the gate does
+     * NOT apply: gate disabled, partner isn't the player (player-only), type IS eligible, or affinity
+     * is below Friendly (Acquaintance/Neutral/Wary/Hostile fall through to the normal affinity tier prompts).
+     * Slave/prostitute exemption is enforced by the caller.
+     *
+     * @param string $npcName     The NPC being propositioned
+     * @param string $partnerName The scene partner (must be the player for the gate to apply)
+     * @return string|null The polite refusal prompt, or null if no rel-type refusal applies
+     */
+    public static function getRelTypeGateRefusal($npcName, $partnerName) {
+        require_once __DIR__ . "/nsfw_data.php";
+
+        // Master config blob (same key the UI writes)
+        $row = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
+        $cfg = ($row && !empty($row['value'])) ? json_decode($row['value'], true) : [];
+        if (!is_array($cfg)) { $cfg = []; }
+
+        // Master toggle (default on, matching the UI default)
+        $enabled = array_key_exists('enabled', $cfg) ? (bool)$cfg['enabled'] : true;
+        if (!$enabled) { return null; }
+
+        // Player-only: never gate NPC<->NPC scenes
+        $playerName = $GLOBALS['PLAYER_NAME'] ?? 'Player';
+        if (strtolower($partnerName) !== strtolower($playerName)) { return null; }
+
+        // Relationship type + affinity WITH THE PLAYER
+        $rel = RelationshipManager::getPlayerRelationship($npcName);
+        $relType = strtolower($rel['type'] ?? '');
+        $aff = (int)($rel['aff'] ?? 0);
+
+        // Sex-eligible types go through the normal rel gate
+        $eligible = $cfg['eligible_types'] ?? ['romantic', 'crush', 'ex'];
+        $eligible = is_array($eligible) ? array_map('strtolower', $eligible) : [];
+        if (in_array($relType, $eligible, true)) { return null; }
+
+        // Tier comes from CHIM (single source of truth) - never hardcode the 56/76/91 boundaries.
+        // getTierLabel() owns the bands; if CHIM rebalances them this gate tracks them automatically.
+        $tier = strtolower(RelationshipManager::getTierLabel($aff));
+        switch ($tier) {
+            case 'bonded':  $prompt = $cfg['prompt_bonded']  ?? ''; break;
+            case 'devoted': $prompt = $cfg['prompt_devoted'] ?? ''; break;
+            case 'fond':     $prompt = $cfg['prompt_fond']     ?? ''; break;
+            case 'friendly': $prompt = $cfg['prompt_friendly'] ?? ''; break;
+            default:         return null; // Below Friendly -> normal affinity tier prompts handle it
+        }
+        // DEFAULT-IF-BLANK (user directive): an INELIGIBLE relationship type must ALWAYS produce a polite decline,
+        // even when the UI prompt fields are empty. Those textareas get wiped whenever a config save submits blank
+        // fields (handleSaveRelTypes writes $_POST['prompt_*'] ?? ''), which silently disabled the whole gate. The
+        // TYPE (not the saved wording) decides whether she refuses; the text is only flavor, so fall back to a
+        // sensible tier-toned default rather than no-op'ing.
+        if (trim((string)$prompt) === '') {
+            $gateDefaults = [
+                'friendly' => "You like #PLAYER_NAME# and feel comfortable with them, but your relationship is not romantic or sexual. Kindly but clearly decline the advance and keep the boundary intact. Politely refuse.",
+                'fond'     => "You have genuine affection for #PLAYER_NAME# and care about them, but your relationship with them isn't a romantic or sexual one - you're simply not involved that way. Warmly but firmly decline the advance without hurting the bond. Politely refuse.",
+                'devoted'  => "You care deeply for #PLAYER_NAME#, but what the two of you share isn't romantic - the bond runs deep, just not that way. Gently and kindly turn down the advance while honoring how much they mean to you. Politely refuse.",
+                'bonded'   => "#PLAYER_NAME# means the world to you, but your bond isn't a romantic or sexual one and you won't cross that line. Tenderly, lovingly decline - the closeness stays, the line stays. Politely refuse.",
+            ];
+            $prompt = $gateDefaults[$tier] ?? $gateDefaults['friendly'];
+        }
+
+        // Additive: if she is ALSO married, append the married-non-types clause
+        $extended = NsfwNpcData::get($npcName);
+        if (is_array($extended) && ($extended['spousal_status'] ?? 'single') === 'married') {
+            $addon = $cfg['prompt_married_addon'] ?? '';
+            if (!empty($addon)) {
+                $spouse = $extended['spouse_names'] ?? '';
+                $addon = str_replace('#SPOUSE#', ($spouse !== '' ? $spouse : 'your spouse'), $addon);
+                $prompt .= ' ' . $addon;
+            }
+        }
+
+        return self::replacePlayerRoutePlaceholders($prompt, $partnerName, $npcName);
+    }
+
+    /**
      * Build multi-actor scene context for an NPC
      *
      * For group scenes (orgies, threesomes, etc.), builds relationship context
@@ -640,7 +1111,7 @@ class NsfwRelationship {
      * @param bool $isProstitute Whether the NPC is a prostitute
      * @return array ['context' => string, 'lowestAffinity' => int, 'tierPrompt' => string]
      */
-    public static function buildMultiActorContext($npcName, $allActors, $isProstitute = false) {
+    public static function buildMultiActorContext($npcName, $allActors, $isProstitute = false, $promptContext = 'player') {
         // Filter out the NPC receiving this prompt
         $otherActors = array_filter($allActors, function($actor) use ($npcName) {
             return strtolower($actor) !== strtolower($npcName);
@@ -666,8 +1137,17 @@ class NsfwRelationship {
         // Single partner - simple case
         if (count($otherActors) === 1) {
             $partner = $otherActors[0];
-            $relationship = self::getRelationshipWith($npcName, $partner);
-            $tierPrompt = self::getTierPromptForRelationship($relationship, $isProstitute, $partner, $npcName);
+            // PLAYER scene: the single partner IS the player. Look up the canonical 'Player' relationship DIRECTLY
+            // (robust against PLAYER_NAME not being resolved when this tier prompt is built - that made the partner
+            // affinity read 0 -> tier_neutral -> a hard "stranger, refuse" for EVERY NPC, even bonded ones). NPC-only
+            // scenes keep the name-based lookup (the partner is another NPC).
+            if (strtolower((string)$promptContext) !== 'npc') {
+                $relationship = RelationshipManager::getPlayerRelationship($npcName);
+            } else {
+                $relationship = self::getRelationshipWith($npcName, $partner);
+            }
+            $tierPrompt = self::getTierPromptForRelationship($relationship, $isProstitute, $partner, $npcName, $promptContext);
+            error_log("[PARTNER_DEBUG] npc={$npcName} resolvedPartner={$partner} tier={$relationship['tier']} promptSnippet=" . substr(str_replace(["\n", "\r"], " ", $tierPrompt), 0, 140));
 
             $partnerInfo = "Partner: {$partner} ({$relationship['tier']}, affinity: {$relationship['aff']})";
 
@@ -703,33 +1183,55 @@ class NsfwRelationship {
         $participantsContent = implode("\n", $partnerLines);
 
         // Get tier prompt based on LOWEST affinity (most restrictive)
+        $routePartner = $lowestPartner;
+        $routeAffinity = $lowestAffinity;
+        $isNpcPromptContext = (strtolower((string)$promptContext) === 'npc');
+        if (!$isNpcPromptContext) {
+            $playerName = self::getPlayerRouteName();
+            foreach ($otherActors as $actor) {
+                if (self::isPlayerRouteName($actor)) {
+                    $routePartner = $actor;
+                    $routeRelationship = self::getRelationshipWith($npcName, $actor);
+                    $routeAffinity = $routeRelationship['aff'];
+                    break;
+                }
+            }
+        }
+        $routeTier = strtolower(RelationshipManager::getTierLabel($routeAffinity));
         $lowestTier = strtolower(RelationshipManager::getTierLabel($lowestAffinity));
         $prompts = self::loadPromptSettings();
 
-        // Check for marriage/affair scenario with the lowest-affinity partner
-        if (self::isMarriageScenario($npcName, $lowestPartner)) {
+        // Check for marriage/affair scenario with the route partner
+        if (self::isMarriageScenario($npcName, $routePartner)) {
             // Partner IS the spouse - use marriage prompts
-            $tierPrompt = self::getMarriageSpousePrompt($lowestTier, $lowestPartner);
-            $tierPrompt = str_replace('#PARTNER#', $lowestPartner, $tierPrompt);
-            error_log("[NSFW_REL] Group marriage scene detected for $npcName with spouse $lowestPartner");
-        } else if (self::isAffairScenario($npcName, $lowestPartner)) {
+            $tierPrompt = $isNpcPromptContext
+                ? self::getNpcMarriageSpousePrompt($routeTier, $routePartner, $npcName)
+                : self::getMarriageSpousePrompt($routeTier, $routePartner);
+            $tierPrompt = self::replaceRouteActorPlaceholders($tierPrompt, $routePartner, $promptContext, $npcName);
+            error_log("[NSFW_REL] Group marriage scene detected for $npcName with spouse $routePartner (context: {$promptContext})");
+        } else if (self::isAffairScenario($npcName, $routePartner)) {
             // Married but partner is NOT spouse - affair prompts
             $spouseName = self::getSpouseName($npcName);
-            $tierPrompt = self::getAffairTierPrompt($lowestTier, $lowestPartner, $spouseName);
-            error_log("[NSFW_REL] Group affair detected for $npcName with $lowestPartner (spouse: $spouseName)");
+            $tierPrompt = $isNpcPromptContext
+                ? self::getNpcAffairTierPrompt($routeTier, $routePartner, $spouseName, $npcName)
+                : self::getAffairTierPrompt($routeTier, $routePartner, $spouseName);
+            error_log("[NSFW_REL] Group affair detected for $npcName with $routePartner (spouse: $spouseName, context: {$promptContext})");
         } else {
-            $promptKey = $isProstitute ? "tier_prost_{$lowestTier}" : "tier_{$lowestTier}";
-            // Get prompt from database - NO HARDCODED FALLBACKS
-            $tierPrompt = $prompts[$promptKey] ?? '';
-            if (empty($tierPrompt)) {
-                error_log("[NSFW_REL] ERROR: No prompt for '{$promptKey}' - save prompts in NSFW Config UI");
+            if ($isNpcPromptContext) {
+                $tierPrompt = self::getNpcSceneTierPrompt($routeTier, $routeAffinity, $isProstitute, $routePartner, $npcName);
+            } else {
+                $promptKey = $isProstitute ? "tier_prost_{$routeTier}" : "tier_{$routeTier}";
+                // Get prompt from database - NO HARDCODED FALLBACKS
+                $tierPrompt = $prompts[$promptKey] ?? '';
+                if (empty($tierPrompt)) {
+                    error_log("[NSFW_REL] ERROR: No prompt for '{$promptKey}' - save prompts in NSFW Config UI");
+                }
+                $tierPrompt = self::replacePlayerRoutePlaceholders($tierPrompt, $routePartner, $npcName);
             }
-            // Replace placeholder with the problematic partner's name
-            $tierPrompt = str_replace('#PARTNER#', $lowestPartner, $tierPrompt);
         }
 
-        $tierPrompt = str_replace('#AFFINITY#', $lowestAffinity, $tierPrompt);
-        $tierPrompt = str_replace('#TIER#', ucfirst($lowestTier), $tierPrompt);
+        $tierPrompt = str_replace('#AFFINITY#', $routeAffinity, $tierPrompt);
+        $tierPrompt = str_replace('#TIER#', ucfirst($routeTier), $tierPrompt);
 
         // Add note about group dynamics (configurable)
         if (count($otherActors) > 1) {
@@ -737,7 +1239,13 @@ class NsfwRelationship {
             if (empty($groupDynamicsMsg)) {
                 error_log("[NSFW_REL] No prompt for 'group_dynamics' - save in NSFW Config UI");
             } else {
-                $groupDynamicsMsg = str_replace('#PARTNER#', $lowestPartner, $groupDynamicsMsg);
+                // Full roster so a 3+ way names EVERYONE, not just the lowest-affinity partner.
+                $otherParticipantsStr = implode(', ', $otherActors);
+                $allParticipantsStr = implode(', ', array_merge([$npcName], $otherActors));
+                $groupDynamicsMsg = str_replace('#OTHER_PARTICIPANTS#', $otherParticipantsStr, $groupDynamicsMsg);
+                $groupDynamicsMsg = str_replace('#SCENE_PARTICIPANTS#', $allParticipantsStr, $groupDynamicsMsg);
+                $groupDynamicsMsg = str_replace('#PRIMARY_PARTNER#', $lowestPartner, $groupDynamicsMsg);
+                $groupDynamicsMsg = str_replace('#NPC_NAME#', $npcName, $groupDynamicsMsg);
                 $groupDynamicsMsg = str_replace('#TIER#', $lowestTier, $groupDynamicsMsg);
                 $groupDynamicsMsg = str_replace('#PLAYER_NAME#', $GLOBALS['PLAYER_NAME'] ?? 'the player', $groupDynamicsMsg);
                 $participantsContent .= "\n\n" . $groupDynamicsMsg;
@@ -900,7 +1408,7 @@ class NsfwRelationship {
                     error_log("[NSFW_REL] No prompt for 'profile_orientation_match' - save in NSFW Config UI");
                     $lines[] = "Sexual orientation: {$orientationLabel}.";
                 } else {
-                    $orientPrompt = str_replace('#PARTNER#', $playerName, $orientPrompt);
+                    $orientPrompt = self::replacePlayerRoutePlaceholders($orientPrompt, $playerName);
                     $lines[] = "Sexual orientation: {$orientationLabel}. " . $orientPrompt;
                 }
             } elseif ($orientationMatch === 'mismatch') {
@@ -909,7 +1417,7 @@ class NsfwRelationship {
                     error_log("[NSFW_REL] No prompt for 'profile_orientation_mismatch' - save in NSFW Config UI");
                     $lines[] = "Sexual orientation: {$orientationLabel}.";
                 } else {
-                    $orientPrompt = str_replace('#PARTNER#', $playerName, $orientPrompt);
+                    $orientPrompt = self::replacePlayerRoutePlaceholders($orientPrompt, $playerName);
                     $lines[] = "Sexual orientation: {$orientationLabel}. " . $orientPrompt;
                 }
             } else {
@@ -965,7 +1473,7 @@ class NsfwRelationship {
                     error_log("[NSFW_REL] No prompt for 'profile_rel_type' - save in NSFW Config UI");
                     $lines[] = "Your relationship with {$playerName}: {$relType}.";
                 } else {
-                    $relTypePrompt = str_replace('#PARTNER#', $playerName, $relTypePrompt);
+                    $relTypePrompt = self::replacePlayerRoutePlaceholders($relTypePrompt, $playerName);
                     $relTypePrompt = str_replace('#REL_TYPE#', $relType, $relTypePrompt);
                     $lines[] = $relTypePrompt;
                 }
@@ -1028,8 +1536,9 @@ class NsfwRelationship {
      * @return array ['aff' => int, 'type' => string, 'tier' => string]
      */
     private static function getRelationshipWith($npcName, $targetName) {
-        // Check if target is the player
-        if (strtolower($targetName) === 'player' || $targetName === $GLOBALS['PLAYER_NAME'] ?? '') {
+        // Check if target is the player. Scene actor names can include runtime suffixes
+        // like the player character name, while RelationshipManager stores the player route as "Player".
+        if (self::isPlayerRouteName($targetName)) {
             return RelationshipManager::getPlayerRelationship($npcName);
         }
 
@@ -1046,41 +1555,57 @@ class NsfwRelationship {
      * @param string|null $npcName The NPC's name (for affair detection)
      * @return string
      */
-    private static function getTierPromptForRelationship($relationship, $isProstitute, $partnerName, $npcName = null) {
+    private static function getTierPromptForRelationship($relationship, $isProstitute, $partnerName, $npcName = null, $promptContext = 'player') {
         $tier = strtolower($relationship['tier']);
+        $isNpcPromptContext = (strtolower((string)$promptContext) === 'npc');
 
         if ($npcName) {
             // MARRIAGE: Partner IS the spouse - use marriage-specific prompts
             if (self::isMarriageScenario($npcName, $partnerName)) {
-                $prompt = self::getMarriageSpousePrompt($tier, $partnerName);
-                $prompt = str_replace('#PARTNER#', $partnerName, $prompt);
+                $prompt = $isNpcPromptContext
+                    ? self::getNpcMarriageSpousePrompt($tier, $partnerName, $npcName)
+                    : self::getMarriageSpousePrompt($tier, $partnerName);
+                $prompt = self::replaceRouteActorPlaceholders($prompt, $partnerName, $promptContext, $npcName);
                 $prompt = str_replace('#AFFINITY#', $relationship['aff'], $prompt);
                 $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
-                error_log("[NSFW_REL] Marriage scene detected for $npcName with spouse $partnerName (tier: $tier)");
+                error_log("[NSFW_REL] Marriage scene detected for $npcName with spouse $partnerName (tier: $tier, context: {$promptContext})");
                 return $prompt;
             }
 
             // AFFAIR: Married but partner is NOT spouse - use affair prompts
             if (self::isAffairScenario($npcName, $partnerName)) {
                 $spouseName = self::getSpouseName($npcName);
-                $prompt = self::getAffairTierPrompt($tier, $partnerName, $spouseName);
+                $prompt = $isNpcPromptContext
+                    ? self::getNpcAffairTierPrompt($tier, $partnerName, $spouseName, $npcName)
+                    : self::getAffairTierPrompt($tier, $partnerName, $spouseName);
                 $prompt = str_replace('#AFFINITY#', $relationship['aff'], $prompt);
                 $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
-                error_log("[NSFW_REL] Affair detected for $npcName with $partnerName (spouse: $spouseName, tier: $tier)");
+                error_log("[NSFW_REL] Affair detected for $npcName with $partnerName (spouse: $spouseName, tier: $tier, context: {$promptContext})");
                 return $prompt;
             }
+        }
+
+        if ($isNpcPromptContext) {
+            $prompt = self::getNpcSceneTierPrompt($tier, $relationship['aff'], $isProstitute, $partnerName, $npcName ?? '');
+            $prompt = str_replace('#TYPE#', $relationship['type'], $prompt);
+            return $prompt;
         }
 
         // Regular prompt selection (not married, or partner info not available)
         $prompts = self::loadPromptSettings();
         $promptKey = $isProstitute ? "tier_prost_{$tier}" : "tier_{$tier}";
 
-        // Get prompt from database - NO HARDCODED FALLBACKS
+        // Get prompt from database - regular-NPC safety net for profileless/fresh-DB
         $prompt = $prompts[$promptKey] ?? '';
+        if (empty($prompt) && !$isProstitute) {
+            require_once __DIR__ . "/nsfw_data.php";
+            $_defTiers = NsfwData::getDefaultTierPrompts();
+            $prompt = $_defTiers[ucfirst($tier)]['regular'] ?? ($_defTiers['Neutral']['regular'] ?? '');
+        }
         if (empty($prompt)) {
             error_log("[NSFW_REL] ERROR: No prompt for '{$promptKey}' - save prompts in NSFW Config UI");
         }
-        $prompt = str_replace('#PARTNER#', $partnerName, $prompt);
+        $prompt = self::replacePlayerRoutePlaceholders($prompt, $partnerName, $npcName ?? '');
         $prompt = str_replace('#AFFINITY#', $relationship['aff'], $prompt);
         $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
         $prompt = str_replace('#TYPE#', $relationship['type'], $prompt);
@@ -1096,8 +1621,8 @@ class NsfwRelationship {
      * @param bool $isProstitute
      * @return string Complete context block ready for injection
      */
-    public static function buildSceneContext($npcName, $allActors, $isProstitute = false) {
-        $result = self::buildMultiActorContext($npcName, $allActors, $isProstitute);
+    public static function buildSceneContext($npcName, $allActors, $isProstitute = false, $promptContext = 'player') {
+        $result = self::buildMultiActorContext($npcName, $allActors, $isProstitute, $promptContext);
 
         if (empty($result['context'])) {
             return '';
@@ -1106,304 +1631,13 @@ class NsfwRelationship {
         // buildMultiActorContext already returns XML-wrapped content
         $context = $result['context'] . "\n\n";
         $context .= $result['tierPrompt'];
+        if (strtolower((string)$promptContext) === 'npc') {
+            $context .= "\n\nThis is an NPC-to-NPC scene. Use the relationship context as emotional guidance for dialogue and behavior, but do not choose player-scene AcceptSex or RefuseSex tools on this route. React in character to your scene partner and the current scene.";
+        }
+        // Player-scene consent is model-driven: NO hardcoded consent cue. The UI-editable tier prompt above + the
+        // available RefuseSex tool are sufficient - the model decides whether to engage or refuse.
 
         return self::wrapXml('intimate_scene', $context);
-    }
-
-    /**
-     * Build multi-party prostitution context with pricing
-     *
-     * For group scenes involving a prostitute, calculates pricing based on:
-     * - Number of participants
-     * - Relationship feelings toward each participant
-     * - Base pricing from NPC's pricing template
-     *
-     * @param string $npcName The prostitute NPC
-     * @param array $allActors All actors in the scene
-     * @param array|null $pricing The NPC's pricing data (from extended_data['prostitute_pricing'])
-     * @return array ['context' => string, 'basePrice' => int, 'groupPremium' => int, 'relationshipModifier' => float, 'totalPrice' => int]
-     */
-    public static function buildProstitutionGroupContext($npcName, $allActors, $pricing = null) {
-        // Filter out the prostitute NPC
-        $clients = array_filter($allActors, function($actor) use ($npcName) {
-            return strtolower($actor) !== strtolower($npcName);
-        });
-        $clients = array_values($clients);
-        $clientCount = count($clients);
-
-        if ($clientCount === 0) {
-            return [
-                'context' => '',
-                'basePrice' => 0,
-                'groupPremium' => 0,
-                'relationshipModifier' => 1.0,
-                'totalPrice' => 0,
-                'clients' => []
-            ];
-        }
-
-        // Get relationship data for each client
-        $clientData = [];
-        $totalAffinity = 0;
-        $lowestAffinity = 100;
-        $highestAffinity = -100;
-        $hasPlayer = false;
-
-        foreach ($clients as $client) {
-            $relationship = self::getRelationshipWith($npcName, $client);
-            $isPlayer = (strtolower($client) === 'player' || $client === ($GLOBALS['PLAYER_NAME'] ?? ''));
-
-            $clientData[] = [
-                'name' => $client,
-                'affinity' => $relationship['aff'],
-                'tier' => $relationship['tier'],
-                'isPlayer' => $isPlayer
-            ];
-
-            $totalAffinity += $relationship['aff'];
-            if ($relationship['aff'] < $lowestAffinity) $lowestAffinity = $relationship['aff'];
-            if ($relationship['aff'] > $highestAffinity) $highestAffinity = $relationship['aff'];
-            if ($isPlayer) $hasPlayer = true;
-        }
-
-        $avgAffinity = $totalAffinity / $clientCount;
-
-        // Calculate base group premium from pricing
-        $groupPremium = 0;
-        if ($pricing && isset($pricing['group_premiums'])) {
-            if ($clientCount == 2) {
-                $groupPremium = $pricing['group_premiums']['group_threesome'] ?? 150;
-            } elseif ($clientCount == 3) {
-                $groupPremium = $pricing['group_premiums']['group_foursome'] ?? 300;
-            } elseif ($clientCount >= 4) {
-                $groupPremium = $pricing['group_premiums']['group_orgy'] ?? 500;
-            }
-        } else {
-            // Default pricing if none configured
-            if ($clientCount == 2) $groupPremium = 150;
-            elseif ($clientCount == 3) $groupPremium = 300;
-            elseif ($clientCount >= 4) $groupPremium = 500;
-        }
-
-        // Check if any client is Resentful or worse - REFUSE SERVICE
-        // Resentful (-56 and below) = NO SERVICE
-        // Hostile/Hateful clients don't get "danger pay" - they get REFUSED
-        $serviceRefused = false;
-        $refusedClients = [];
-        foreach ($clientData as $c) {
-            if ($c['affinity'] <= -56) {
-                $serviceRefused = true;
-                $refusedClients[] = $c['name'];
-            }
-        }
-
-        // If service is refused, return early with refusal context
-        if ($serviceRefused) {
-            $refusalContext = "#Service REFUSED\n" .
-                "{$npcName} refuses to provide services to the following client(s): " .
-                implode(', ', $refusedClients) . ".\n" .
-                "Their relationship is too hostile/resentful for any transaction.";
-
-            return [
-                'context' => $refusalContext,
-                'serviceRefused' => true,
-                'refusedClients' => $refusedClients,
-                'basePrice' => 0,
-                'groupPremium' => 0,
-                'adjustedPremium' => 0,
-                'relationshipModifier' => 0,
-                'totalPrice' => 0,
-                'clients' => $clientData,
-                'clientCount' => $clientCount,
-                'groupType' => $clientCount >= 4 ? 'orgy' : ($clientCount == 3 ? 'foursome' : ($clientCount == 2 ? 'threesome' : 'duo')),
-                'avgAffinity' => $avgAffinity,
-                'lowestAffinity' => $lowestAffinity,
-                'highestAffinity' => $highestAffinity,
-                'hasPlayer' => $hasPlayer,
-                'priceAdjustment' => 'SERVICE REFUSED'
-            ];
-        }
-
-        // Calculate relationship modifier based on average affinity
-        // Devoted+ (76+): FREE (WaivePayment)
-        // Fond (56-75): 20% discount (they enjoy it)
-        // Friendly (31-55): 10% discount (favorite customer)
-        // Acquaintance (6-30): Normal price
-        // Neutral (-5 to 5): Normal price (transaction only)
-        // Wary (-6 to -30): 10% premium (reluctant)
-        // Cold (-31 to -55): 25% premium (really reluctant, may end early)
-        // Resentful and below: REFUSED (handled above)
-        $relationshipModifier = 1.0;
-        $waivePayment = false;
-
-        if ($avgAffinity >= 76) {
-            $relationshipModifier = 0.0; // FREE - WaivePayment
-            $waivePayment = true;
-        } elseif ($avgAffinity >= 56) {
-            $relationshipModifier = 0.8; // 20% discount
-        } elseif ($avgAffinity >= 31) {
-            $relationshipModifier = 0.9; // 10% discount
-        } elseif ($avgAffinity >= -5) {
-            $relationshipModifier = 1.0; // Normal (Neutral/Acquaintance)
-        } elseif ($avgAffinity >= -30) {
-            $relationshipModifier = 1.1; // 10% premium (Wary)
-        } elseif ($avgAffinity >= -55) {
-            $relationshipModifier = 1.25; // 25% premium (Cold)
-        }
-        // Note: <= -56 is handled by serviceRefused above
-
-        // Calculate total
-        $adjustedPremium = (int)round($groupPremium * $relationshipModifier);
-
-        // Build context string using configurable prompt template
-        $prompts = self::loadPromptSettings();
-        $template = $prompts['prostitution_group_pricing'] ?? self::getDefaultProstitutionGroupPrompt();
-
-        // Build client list string with appropriate annotations
-        $clientLines = [];
-        foreach ($clientData as $c) {
-            $modifier = '';
-            if ($c['affinity'] >= 76) {
-                $modifier = ' (no charge - devoted)';
-            } elseif ($c['affinity'] >= 56) {
-                $modifier = ' (preferred client - discount)';
-            } elseif ($c['affinity'] >= 31) {
-                $modifier = ' (favorite customer)';
-            } elseif ($c['affinity'] >= -5) {
-                $modifier = ''; // Normal transaction
-            } elseif ($c['affinity'] >= -30) {
-                $modifier = ' (reluctant - premium)';
-            } elseif ($c['affinity'] >= -55) {
-                $modifier = ' (very reluctant - may end early)';
-            }
-            // Note: <= -56 would be refused, but we've already filtered those out
-            $clientLines[] = "- {$c['name']}: {$c['tier']} (affinity {$c['affinity']}){$modifier}";
-        }
-        $clientListStr = implode("\n", $clientLines);
-
-        // Determine price adjustment description
-        $priceAdjustment = '';
-        if ($waivePayment) {
-            $priceAdjustment = "FREE (devoted - waiving payment)";
-        } elseif ($relationshipModifier < 1.0) {
-            $discount = (int)round((1 - $relationshipModifier) * 100);
-            $priceAdjustment = "{$discount}% discount (enjoying the company)";
-        } elseif ($relationshipModifier > 1.0) {
-            $premium = (int)round(($relationshipModifier - 1) * 100);
-            $priceAdjustment = "{$premium}% premium (reluctant service)";
-        } else {
-            $priceAdjustment = "standard rate";
-        }
-
-        // Determine group type name
-        $groupType = 'duo';
-        if ($clientCount == 2) $groupType = 'threesome';
-        elseif ($clientCount == 3) $groupType = 'foursome';
-        elseif ($clientCount >= 4) $groupType = 'orgy';
-
-        // Replace placeholders
-        $context = $template;
-        $context = str_replace('#CLIENT_COUNT#', $clientCount, $context);
-        $context = str_replace('#GROUP_TYPE#', $groupType, $context);
-        $context = str_replace('#CLIENT_LIST#', $clientListStr, $context);
-        $context = str_replace('#GROUP_PREMIUM#', $groupPremium, $context);
-        $context = str_replace('#ADJUSTED_PREMIUM#', $adjustedPremium, $context);
-        $context = str_replace('#PRICE_ADJUSTMENT#', $priceAdjustment, $context);
-        $context = str_replace('#AVG_AFFINITY#', round($avgAffinity), $context);
-        $context = str_replace('#LOWEST_AFFINITY#', $lowestAffinity, $context);
-        $context = str_replace('#HIGHEST_AFFINITY#', $highestAffinity, $context);
-        $context = str_replace('#NPC_NAME#', $npcName, $context);
-        $context = str_replace('#PLAYER_NAME#', $GLOBALS['PLAYER_NAME'] ?? 'the player', $context);
-
-        return [
-            'context' => self::wrapXml('pricing_context', $context),
-            'serviceRefused' => false,
-            'waivePayment' => $waivePayment,
-            'basePrice' => $groupPremium,
-            'groupPremium' => $groupPremium,
-            'adjustedPremium' => $adjustedPremium,
-            'relationshipModifier' => $relationshipModifier,
-            'totalPrice' => $waivePayment ? 0 : $adjustedPremium,
-            'clients' => $clientData,
-            'clientCount' => $clientCount,
-            'groupType' => $groupType,
-            'avgAffinity' => $avgAffinity,
-            'lowestAffinity' => $lowestAffinity,
-            'highestAffinity' => $highestAffinity,
-            'hasPlayer' => $hasPlayer,
-            'priceAdjustment' => $priceAdjustment
-        ];
-    }
-
-    /**
-     * Get default prostitution group pricing prompt
-     *
-     * @return string
-     */
-    private static function getDefaultProstitutionGroupPrompt() {
-        return "This is a #GROUP_TYPE# with #CLIENT_COUNT# clients.\n" .
-            "Group premium: #GROUP_PREMIUM# gold (base) -> #ADJUSTED_PREMIUM# gold (#PRICE_ADJUSTMENT#)\n\n" .
-            "Clients:\n#CLIENT_LIST#\n\n" .
-            "Your feelings toward these clients affect your pricing and enthusiasm. " .
-            "Favorable clients get discounts, uncomfortable situations command premiums.";
-    }
-
-    /**
-     * Build complete prostitution scene context with both relationship and pricing
-     *
-     * @param string $npcName The prostitute NPC
-     * @param array $allActors All actors in the scene
-     * @param array|null $pricing The NPC's pricing data
-     * @return array Complete context with serviceRefused flag
-     */
-    public static function buildProstitutionSceneContext($npcName, $allActors, $pricing = null) {
-        $relationshipResult = self::buildMultiActorContext($npcName, $allActors, true);
-        $pricingResult = self::buildProstitutionGroupContext($npcName, $allActors, $pricing);
-
-        // Check if service was refused due to hostile/resentful clients
-        if (!empty($pricingResult['serviceRefused'])) {
-            return [
-                'context' => $pricingResult['context'],
-                'serviceRefused' => true,
-                'refusedClients' => $pricingResult['refusedClients'] ?? [],
-                'pricingData' => $pricingResult
-            ];
-        }
-
-        if (empty($relationshipResult['context']) && empty($pricingResult['context'])) {
-            return [
-                'context' => '',
-                'serviceRefused' => false,
-                'waivePayment' => false,
-                'pricingData' => $pricingResult
-            ];
-        }
-
-        $contextParts = [];
-
-        // Add relationship context (already XML-wrapped from buildMultiActorContext)
-        if (!empty($relationshipResult['context'])) {
-            $contextParts[] = $relationshipResult['context'];
-        }
-
-        // Add tier prompt (emotional state based on lowest affinity, already XML-wrapped)
-        if (!empty($relationshipResult['tierPrompt'])) {
-            $contextParts[] = $relationshipResult['tierPrompt'];
-        }
-
-        // Add pricing context for group scenes (already XML-wrapped from buildProstitutionGroupContext)
-        if ($pricingResult['clientCount'] > 1 && !empty($pricingResult['context'])) {
-            $contextParts[] = $pricingResult['context'];
-        }
-
-        $context = implode("\n\n", $contextParts);
-
-        return [
-            'context' => self::wrapXml('prostitution_scene', $context),
-            'serviceRefused' => false,
-            'waivePayment' => $pricingResult['waivePayment'] ?? false,
-            'pricingData' => $pricingResult
-        ];
     }
 
     // ============================================
@@ -1434,9 +1668,9 @@ class NsfwRelationship {
      * @return string 'negative', 'neutral', or 'positive'
      */
     private static function getAffinityCategory($affinity) {
-        if ($affinity <= -6) return 'negative';
-        if ($affinity >= 6) return 'positive';
-        return 'neutral';
+        if ($affinity <= -31) return 'negative';  // Cold and below
+        if ($affinity >= 31) return 'positive';   // Friendly and above
+        return 'neutral';                         // Wary..Neutral..Acquaintance (-30..+30)
     }
 
     /**
@@ -1453,7 +1687,7 @@ class NsfwRelationship {
         $key = "slave_personality_{$category}";
 
         $prompt = $prompts[$key] ?? self::getDefaultSlavePersonality($category);
-        $prompt = str_replace('#PARTNER#', $ownerName, $prompt);
+        $prompt = self::replacePlayerRoutePlaceholders($prompt, $ownerName);
         $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
 
         // No fiction frame here - injected only at escalation points (tier prompt, scene cues, climax)
@@ -1475,7 +1709,7 @@ class NsfwRelationship {
         $key = "slave_speech_{$category}";
 
         $prompt = $prompts[$key] ?? self::getDefaultSlaveSpeechStyle($category);
-        $prompt = str_replace('#PARTNER#', $ownerName, $prompt);
+        $prompt = self::replacePlayerRoutePlaceholders($prompt, $ownerName);
         $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
 
         // No fiction frame here - injected only at escalation points (tier prompt, scene cues, climax)
@@ -1496,8 +1730,12 @@ class NsfwRelationship {
         $prompts = self::loadPromptSettings();
         $key = "slave_scene_cues_{$category}";
 
-        $prompt = $prompts[$key] ?? self::getDefaultSlaveSceneCues($category);
-        $prompt = str_replace('#PARTNER#', $ownerName, $prompt);
+        // Per-NPC Scene Cues field overrides the global affinity cue when set
+        $prompt = self::getPerNpcSlaveCue('scene_cues');
+        if ($prompt === '') {
+            $prompt = $prompts[$key] ?? self::getDefaultSlaveSceneCues($category);
+        }
+        $prompt = self::replacePlayerRoutePlaceholders($prompt, $ownerName);
         $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
 
         // Prepend fiction frame
@@ -1522,8 +1760,12 @@ class NsfwRelationship {
         $prompts = self::loadPromptSettings();
         $key = "slave_climax_{$category}";
 
-        $prompt = $prompts[$key] ?? self::getDefaultSlaveClimax($category);
-        $prompt = str_replace('#PARTNER#', $ownerName, $prompt);
+        // Per-NPC Climax: the tier matching this slave's affinity (pos/neutral/neg) overrides the global cue
+        $prompt = self::getPerNpcSlaveCue("slave_climax_{$category}");
+        if ($prompt === '') {
+            $prompt = $prompts[$key] ?? self::getDefaultSlaveClimax($category);
+        }
+        $prompt = self::replacePlayerRoutePlaceholders($prompt, $ownerName);
         $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
 
         // Prepend fiction frame
@@ -1548,8 +1790,12 @@ class NsfwRelationship {
         $prompts = self::loadPromptSettings();
         $key = "slave_pillow_talk_{$category}";
 
-        $prompt = $prompts[$key] ?? self::getDefaultSlavePillowTalk($category);
-        $prompt = str_replace('#PARTNER#', $ownerName, $prompt);
+        // Per-NPC Aftermath field overrides the global affinity cue when set
+        $prompt = self::getPerNpcSlaveCue('aftermath');
+        if ($prompt === '') {
+            $prompt = $prompts[$key] ?? self::getDefaultSlavePillowTalk($category);
+        }
+        $prompt = self::replacePlayerRoutePlaceholders($prompt, $ownerName);
         $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
 
         // Replace #TIER# with the actual tier label
@@ -1575,7 +1821,7 @@ class NsfwRelationship {
         $key = "slave_owner_climax_{$category}";
 
         $prompt = $prompts[$key] ?? self::getDefaultSlaveOwnerClimax($category);
-        $prompt = str_replace('#PARTNER#', $ownerName, $prompt);
+        $prompt = self::replacePlayerRoutePlaceholders($prompt, $ownerName);
         $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
 
         // Prepend fiction frame for model safety context (escalation point)
@@ -1593,29 +1839,33 @@ class NsfwRelationship {
 
     private static function getDefaultSlavePersonality($category) {
         $defaults = [
-            'negative' => 'You are a slave who resents your bondage. You comply because you must, but your eyes betray your hatred. Every touch from #PARTNER# makes your skin crawl. Internal resistance, external compliance.',
-            'neutral' => 'You are a slave who has accepted your role. You serve #PARTNER# without emotion. This is survival. You have learned to disconnect from what happens to your body.',
-            'positive' => 'You are a slave who has grown fond of #PARTNER#. Despite your bondage, you find yourself wanting to please them. Your service comes from something approaching genuine affection.',
+            'negative' => 'You are a slave who resents your bondage. You comply because you must, but your eyes betray your hatred. Every touch from #PLAYER_NAME# makes your skin crawl. Internal resistance, external compliance.',
+            'neutral' => 'You are a slave who has accepted your role. You serve #PLAYER_NAME# without emotion. This is survival. You have learned to disconnect from what happens to your body.',
+            'positive' => 'You are a slave who has grown fond of #PLAYER_NAME#. Despite your bondage, you find yourself wanting to please them. Your service comes from something approaching genuine affection.',
         ];
         return $defaults[$category] ?? $defaults['neutral'];
     }
 
     private static function getDefaultSlaveSpeechStyle($category) {
-        // Generic prompt that works for all affinity levels - user's feelings guide the response
-        $generic = 'You are a captive under #PARTNER#. You should speak how your status and relationship with your master guide the situation. Your character is part of a co-author in this story.';
+        // Player default slave speak style
+        $generic = 'You serve your master, #PLAYER_NAME#, you know how you feel about them. You understand your position, and do what is necessary.';
         return $generic;
     }
 
     private static function getDefaultSlaveSceneCues($category) {
-        // Generic prompt that works for all affinity levels - feelings guide response
-        $generic = 'You do your duty because you must, however you should reflect on your feelings for your master. How do your feelings guide you to respond?';
+        // Player default slave scene cues
+        $generic = 'You should pick up on the cues from your master. Your responses should be based upon how you feel about your master and what kind of relationship you have with them.';
         return $generic;
     }
 
     private static function getDefaultSlaveClimax($category) {
-        // Generic prompt that works for all affinity levels
-        $generic = 'How does this climax make you feel? How do you feel about your master? You should respond as a slave in this situation.';
-        return $generic;
+        // Player defaults: three tiers by the slave's affinity toward their master
+        $defaults = [
+            'positive' => 'You and your master have developed quite a positive relationship. You believe that if you continue to work hard and pleasure Master #PLAYER_NAME# that maybe one day he can see you as something more than a slave. You have developed sort of a Stockholm syndrome for them. EXAMPLE SPEECH OUTPUT: "Oh yes Master! Own me! I am your property to do what you will."',
+            'neutral' => 'Understand the relationship with your master. You have to ask yourself how you feel about them. How you feel about them should determine if it was a pleasurable experience or it was a violation of your soul. EXAMPLE SPEECH FORMAT: "Master, it is good you have pleasured yourself, I am ready for my next duty. What would you have me do?"',
+            'negative' => 'You DESPISE your master, but you must submit because you are #PLAYER_NAME#\'s slave. You offer no excitement in their orgasm. EXAMPLE SPEECH FORMAT: "Are you finished, Master #PLAYER_NAME#, am I free to go back to my duties?"',
+        ];
+        return $defaults[$category] ?? $defaults['neutral'];
     }
 
     /**
@@ -1623,13 +1873,13 @@ class NsfwRelationship {
      * Used when the owner/master reaches climax
      */
     private static function getDefaultSlaveOwnerClimax($category) {
-        $generic = 'How does #PARTNER#\'s orgasm make you feel? Was it internal or external? How do you feel about your master? You should respond as a slave in this situation.';
+        $generic = 'How do you feel about your master? Is his orgasm something that you wanted, or is it something that you have to fake, bite your tongue, and take? Check your relationship affinity to determine your appropriate response.';
         return $generic;
     }
 
     private static function getDefaultSlavePillowTalk($category) {
-        // Generic prompt using #TIER# placeholder for relationship tier
-        $generic = 'You are a slave that has just finished intimate activity or sex with your master. Respond appropriately as a slave would in your situation to #PARTNER# who you are #TIER# with.';
+        // Player default slave aftermath
+        $generic = 'Check your relationship affinity. How do you feel about your master? Based upon what you know was this a pleasurable experience? Or was it a violation that you have to hold on the inside? Respond accordingly.';
         return $generic;
     }
 }

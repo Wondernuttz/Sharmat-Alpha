@@ -1,36 +1,56 @@
+#!/usr/bin/php
 <?php
-/**
- * NSFW Profile Background Worker
- * ===============================
- * Standalone process that generates NSFW profiles without interfering with gameplay.
- *
- * RUN: php background_profile_worker.php
- *
- * This runs completely independently of the game. It:
- * 1. Checks the queue for NPCs needing profiles
- * 2. Calls Grok API directly (not through game's LLM pipeline)
- * 3. Saves results to database
- * 4. Pauses if an OStim scene is active
- * 5. Sleeps between requests to avoid rate limiting
- */
+// NSFW Profile Background Worker - generates queued NSFW profiles in the background.
+// RUN: php background_profile_worker.php (foreground) | --daemon (detached, auto-started by context.php).
+// Daemon mode forks+setsid to survive the Apache request, writes a PID file, idle-exits after WORKER_MAX_IDLE_SECONDS.
+
+$daemon = in_array('--daemon', $argv);
 
 // Bootstrap
 $path = dirname(__FILE__) . DIRECTORY_SEPARATOR . ".." . DIRECTORY_SEPARATOR . ".." . DIRECTORY_SEPARATOR;
+$enginePath = realpath($path) . '/';
+$pidFile = $enginePath . 'log/nsfw_profile_worker.pid';
+$logFile = $enginePath . 'log/nsfw_profile_worker.log';
+
+// Daemonize: fork + setsid so we detach from the Apache request that spawned us
+if ($daemon && function_exists('pcntl_fork')) {
+    $pid = pcntl_fork();
+    if ($pid < 0) { exit(1); }
+    if ($pid > 0) { file_put_contents($pidFile, $pid); exit(0); }
+    posix_setsid();
+    fclose(STDIN); fclose(STDOUT); fclose(STDERR);
+    $STDIN = fopen('/dev/null', 'r');
+    $STDOUT = fopen($logFile, 'a'); if ($STDOUT === false) { $STDOUT = fopen('/dev/null', 'a'); }
+    $STDERR = fopen($logFile, 'a'); if ($STDERR === false) { $STDERR = fopen('/dev/null', 'a'); }
+}
+
+// Clean up PID file on exit
+register_shutdown_function(function() use ($pidFile, $daemon) { if ($daemon) { @unlink($pidFile); } });
+
 require_once($path . "conf" . DIRECTORY_SEPARATOR . "conf.php");
 require_once($path . "lib" . DIRECTORY_SEPARATOR . "postgresql.class.php");
-require_once($path . "lib" . DIRECTORY_SEPARATOR . "npc_master.class.php");
+require_once($path . "lib" . DIRECTORY_SEPARATOR . "core" . DIRECTORY_SEPARATOR . "npc_master.class.php");
 require_once(dirname(__FILE__) . DIRECTORY_SEPARATOR . "nsfw_data.php");
 
 // Config
 define('WORKER_SLEEP_BETWEEN_PROFILES', 3); // Seconds between API calls
 define('WORKER_SLEEP_WHEN_IDLE', 10); // Seconds when queue is empty
 define('WORKER_SLEEP_DURING_SCENE', 30); // Seconds to wait during OStim scene
+define('WORKER_SCENE_ACTIVE_TIMEOUT', 300); // Stale /tmp player-scene markers stop blocking after this
 define('WORKER_MAX_RETRIES', 3);
+define('WORKER_MAX_IDLE_SECONDS', 30); // Build the queued profiles, then leave; respawns when the next NPC is added
 
 $GLOBALS['db'] = new sql();
 
+// generateProfileForNpc() require's config_manager.php from FUNCTION scope, so conf.sample.php's global $DBDRIVER
+// default ("postgresql") lands as a local and never reaches $GLOBALS - config_manager.php:12 then require's
+// lib/.class.php and fatals, crashing the worker on the FIRST NPC (queue never drains). Set it at global scope here.
+if (empty($GLOBALS['DBDRIVER'])) { $GLOBALS['DBDRIVER'] = 'postgresql'; }
+
 echo "[NSFW Worker] Starting background profile generator...\n";
 echo "[NSFW Worker] Press Ctrl+C to stop\n\n";
+
+$idleSince = time();
 
 // Main loop
 while (true) {
@@ -46,11 +66,16 @@ while (true) {
         $nextNpc = getNextFromQueue();
 
         if (!$nextNpc) {
-            // Queue empty - sleep longer
+            // Queue empty - daemon idle-exits after a while so it dies with the server (respawns on next NPC met)
+            if ($daemon && (time() - $idleSince) >= WORKER_MAX_IDLE_SECONDS) {
+                @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " [NSFW Worker] idle-exit after " . WORKER_MAX_IDLE_SECONDS . "s\n", FILE_APPEND);
+                exit(0);
+            }
             sleep(WORKER_SLEEP_WHEN_IDLE);
             continue;
         }
 
+        $idleSince = time(); // reset idle timer on real work
         echo "[NSFW Worker] Processing: {$nextNpc['npc_name']}\n";
 
         // Generate profile
@@ -77,17 +102,29 @@ while (true) {
  * Check if an OStim scene is currently active
  */
 function isOstimSceneActive() {
-    try {
-        // Check for any NPC with intimacy level 2 in nsfw_npc_data table
-        // Uses JSONB operator to check aiagent_nsfw_intimacy_data->level
-        $result = $GLOBALS['db']->fetchOne("
-            SELECT COUNT(*) as cnt FROM nsfw_npc_data
-            WHERE (extended_data->'aiagent_nsfw_intimacy_data'->>'level')::int = 2
-        ");
-        return ($result['cnt'] ?? 0) > 0;
-    } catch (Exception $e) {
+    $sceneActivePath = sys_get_temp_dir() . "/nsfw_player_scene_active.txt";
+    $sceneEndedPath = sys_get_temp_dir() . "/nsfw_scene_ended.txt";
+
+    $sceneActiveTime = is_file($sceneActivePath) ? (int)(@file_get_contents($sceneActivePath) ?: 0) : 0;
+    if ($sceneActiveTime <= 0) {
         return false;
     }
+
+    $sceneEndedTime = is_file($sceneEndedPath) ? (int)(@file_get_contents($sceneEndedPath) ?: 0) : 0;
+    if ($sceneEndedTime > 0 && $sceneEndedTime >= $sceneActiveTime) {
+        return false;
+    }
+
+    $sceneActiveAge = time() - $sceneActiveTime;
+    if ($sceneActiveAge < 0) {
+        return true;
+    }
+
+    if ($sceneActiveAge >= WORKER_SCENE_ACTIVE_TIMEOUT) {
+        return false;
+    }
+
+    return true;
 }
 
 /**
@@ -191,6 +228,7 @@ function generateProfileForNpc($npcName, $queueDataJson) {
     // Load speak styles
     $styleRow = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_speak_styles'");
     $speakStylesWithDesc = "";
+    $allStyles = [];
     if ($styleRow && !empty($styleRow['value'])) {
         $allStyles = json_decode($styleRow['value'], true) ?: [];
         foreach ($allStyles as $name => $styleData) {
@@ -218,17 +256,11 @@ function generateProfileForNpc($npcName, $queueDataJson) {
         return ['success' => false, 'error' => 'No Grok connector found'];
     }
 
-    // Call Grok API
-    require_once $GLOBALS['ENGINE_PATH'] . "lib/core/llm_connector.class.php";
-    $connector = new LLMConnector();
-    $connector->Load($connectorName);
-
-    $response = $connector->sendMessages([
-        ['role' => 'user', 'content' => $prompt]
-    ]);
-
+    // Call LLM via shared completion (proven curl path; config_manager.php already required above)
+    $llmErr = null;
+    $response = nsfwLlmComplete($prompt, $connectorName, $llmErr);
     if (empty($response)) {
-        return ['success' => false, 'error' => 'Empty response from Grok'];
+        return ['success' => false, 'error' => $llmErr ?: 'Empty response from LLM'];
     }
 
     // Parse JSON
@@ -241,6 +273,11 @@ function generateProfileForNpc($npcName, $queueDataJson) {
         return ['success' => false, 'error' => 'Invalid JSON from Grok'];
     }
 
+    $parsed['speak_style'] = nsfwNormalizeGeneratedSpeakStyle($parsed['speak_style'] ?? 'auto', $allStyles, 'auto');
+    if (!empty($parsed['is_slave'])) {
+        $parsed['slave_speak_style'] = nsfwNormalizeGeneratedSpeakStyle($parsed['slave_speak_style'] ?? $parsed['speak_style'], $allStyles, $parsed['speak_style']);
+    }
+
     // Save to nsfw_npc_data table (NOT core_npc_master.extended_data)
     // This prevents conflicts if player is editing the same NPC in the UI
     // Uses advisory lock pattern for consistency
@@ -251,7 +288,11 @@ function generateProfileForNpc($npcName, $queueDataJson) {
 
     // Try to acquire lock - non-blocking so we don't stall if UI has it
     $lockResult = $GLOBALS['db']->fetchOne("SELECT pg_try_advisory_lock($lockId) as locked");
-    if (!$lockResult || $lockResult['locked'] !== true) {
+    // Postgres returns booleans as the string 't'/'f' through this DB layer, so a strict === true NEVER matched and
+    // EVERY NPC looked "locked by UI" - the queue could never drain even once the worker ran. Accept both forms.
+    $lockedVal = is_array($lockResult) ? ($lockResult['locked'] ?? null) : null;
+    $gotLock = ($lockedVal === true || $lockedVal === 't' || $lockedVal === 'true' || $lockedVal === '1' || $lockedVal === 1);
+    if (!$gotLock) {
         return ['success' => false, 'error' => 'NPC locked by UI - will retry'];
     }
 
@@ -263,23 +304,30 @@ function generateProfileForNpc($npcName, $queueDataJson) {
         $extData['sex_prompt'] = $parsed['sex_prompt'];
         $extData['sex_speech_style'] = $parsed['speak_style'] ?? 'passionate';
         $extData['nsfw_profanity_level'] = $parsed['profanity_level'] ?? 3;
-        $extData['kinks'] = $parsed['kinks'] ?? [];
-        $extData['secret_kinks'] = $parsed['secret_kinks'] ?? [];
+        $extData['nsfw_kinks'] = $parsed['kinks'] ?? [];
+        $extData['nsfw_secret_kinks'] = $parsed['secret_kinks'] ?? [];
 
         // Slave fields
         $extData['is_slave'] = $parsed['is_slave'] ?? false;
         if (!empty($parsed['is_slave'])) {
-            $extData['slave_speak_style'] = $parsed['slave_speak_style'] ?? 'submissive';
-            $extData['slave_obedience'] = $parsed['slave_obedience'] ?? 5;
-            $extData['slave_resentment'] = $parsed['slave_resentment'] ?? 5;
+            // Nested key is what the UI + scene injection read (merge, preserve other cues)
+            $extData['slave_speak_styles'] = is_array($extData['slave_speak_styles'] ?? null) ? $extData['slave_speak_styles'] : [];
+            $extData['slave_speak_styles']['speak_style'] = $parsed['slave_speak_style'] ?? 'submissive';
+            if (!empty($parsed['slave_scene_cues']))   { $extData['slave_speak_styles']['scene_cues']   = $parsed['slave_scene_cues']; }
+            if (!empty($parsed['slave_climax_positive']))     { $extData['slave_speak_styles']['slave_climax_positive']     = $parsed['slave_climax_positive']; }
+            if (!empty($parsed['slave_climax_neutral'])) { $extData['slave_speak_styles']['slave_climax_neutral'] = $parsed['slave_climax_neutral']; }
+            if (!empty($parsed['slave_climax_negative']))     { $extData['slave_speak_styles']['slave_climax_negative']     = $parsed['slave_climax_negative']; }
+            if (!empty($parsed['slave_owner_climax'])) { $extData['slave_speak_styles']['owner_climax']  = $parsed['slave_owner_climax']; }
+            if (!empty($parsed['slave_aftermath']))    { $extData['slave_speak_styles']['aftermath']     = $parsed['slave_aftermath']; }
         }
 
         // Prostitute fields
         $extData['is_prostitute'] = $parsed['is_prostitute'] ?? false;
         if (!empty($parsed['is_prostitute'])) {
             $extData['prostitute_type'] = $parsed['prostitute_type'] ?? 'streetwalker';
-            $extData['prostitute_price_modifier'] = $parsed['prostitute_price_modifier'] ?? 1.0;
-            $extData['prostitute_services'] = $parsed['prostitute_services'] ?? ['standard'];
+            // Nested copy is what the UI Type dropdown reads
+            $extData['prostitute_pricing'] = is_array($extData['prostitute_pricing'] ?? null) ? $extData['prostitute_pricing'] : [];
+            $extData['prostitute_pricing']['prostitute_type'] = $extData['prostitute_type'];
         }
 
         $extData['spousal_status'] = $parsed['spousal_status'] ?? 'single';
@@ -314,6 +362,9 @@ function getGrokConnector() {
         $settings = json_decode($settingsRow['value'], true);
         if (!empty($settings['sex_prompt_connector'])) {
             return $settings['sex_prompt_connector'];
+        }
+        if (!empty($settings['AUTO_GENERATE_CONNECTOR'])) {
+            return $settings['AUTO_GENERATE_CONNECTOR'];
         }
     }
 

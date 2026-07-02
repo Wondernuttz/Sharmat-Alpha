@@ -4,8 +4,8 @@
  * NSFW Physics Handler - VR Touch/Grope Detection
  * ============================================================================
  *
- * MIGRATION STATUS: ❌ NSFW ONLY - DO NOT MOVE TO CORE
- * NSFW CONTENT: ✅ YES - Body part groping, sexual touch, penetration
+ * MIGRATION STATUS: NSFW ONLY - DO NOT MOVE TO CORE
+ * NSFW CONTENT: YES - Body part groping, sexual touch, penetration
  *
  * This file handles sexually explicit VR touch detection and should remain
  * in the NSFW extension only.
@@ -23,7 +23,7 @@
  * - Detects VR controller touches on NPC body parts (CBPC mod)
  * - Detects intentional grabs (HIGGS mod grip button)
  * - Distinguishes accidental touch vs intentional grope
- * - Injects tier-based relationship prompts for sensitive grabs
+ * - Injects tier-based relationship prompts for sexual-area contact
  * - Handles penetration detection for sex acts
  *
  * MESSAGE DISTINCTION:
@@ -44,16 +44,337 @@
 
 // Include Logger for CHIM log output
 require_once(__DIR__ . '/../../lib/logger.php');
+require_once(__DIR__ . '/contact_state.php');
 
 class NsfwPhysics {
 
-    // Sexually sensitive body parts - used for message formatting
-    private static $sensitiveParts = ['Breasts', 'Butt', 'Pussy', 'Anal', 'Penis'];
+    // Sexual body areas used for message formatting. Keep isSensitive as the legacy event flag.
+    private static $sensitiveParts = ['Breasts', 'Chest', 'Butt', 'Pussy', 'Anal', 'Penis'];
+    private const LAST_CONTACT_TTL_SECONDS = 90;
+    private const LAST_CONTACT_FILE_PREFIX = 'nsfw_last_physics_contact_';
+    private const SUSTAINED_TOUCH_FILE_PREFIX = 'nsfw_sustained_touch_';
+    private const VR_PHYSICS_LOG = 'sharmat_vr_physics.log';
+
+    public static function getLastContactContext($actorName = null) {
+        $actorName = trim((string)($actorName ?? ($GLOBALS["HERIKA_NAME"] ?? "")));
+        if ($actorName === '') {
+            return '';
+        }
+
+        if (function_exists('aiagentNsfwContactBuildContext')) {
+            return aiagentNsfwContactBuildContext($actorName);
+        }
+
+        $path = self::lastContactPath($actorName);
+        $raw = is_file($path) ? file_get_contents($path) : false;
+        if ($raw === false || trim($raw) === '') {
+            return '';
+        }
+
+        $data = json_decode($raw, true);
+        if (!is_array($data)) {
+            return '';
+        }
+
+        $timestamp = intval($data['timestamp'] ?? 0);
+        $age = time() - $timestamp;
+        if ($timestamp <= 0 || $age > self::LAST_CONTACT_TTL_SECONDS) {
+            return '';
+        }
+
+        $message = trim((string)($data['plain_message'] ?? ''));
+        if ($message === '') {
+            $message = self::stripPhysicsTags((string)($data['message'] ?? ''));
+        }
+        if ($message === '') {
+            return '';
+        }
+
+        $action = trim((string)($data['action'] ?? 'contact'));
+        $bodyPart = trim((string)($data['bodyPart'] ?? 'Body'));
+
+        $context = "<physical_contact_state>\n";
+        $context .= "# AUTHORITATIVE LIVE VR PHYSICAL CONTACT\n";
+        $context .= "## This is the most recent HIGGS/CBPC physical contact state for {$actorName}. Use it over memory, guesses, relationship assumptions, scene narration, or visual assumptions when asked where the player touched/grabbed/released this NPC.\n";
+        $context .= "## This is informational context only; do not treat it as a new action unless the current request is itself a physical-contact event.\n";
+        $context .= "## {$message}\n";
+        $context .= "## Last contact action: {$action}; body part: {$bodyPart}; age: {$age} seconds.\n";
+        $context .= "</physical_contact_state>";
+
+        return $context;
+    }
+
+    private static function saveLastContact($result) {
+        if (!is_array($result) || empty($result['actorName']) || empty($result['message'])) {
+            return;
+        }
+
+        $actorName = trim((string)$result['actorName']);
+        if ($actorName === '') {
+            return;
+        }
+
+        $payload = [
+            'timestamp' => time(),
+            'actorName' => $actorName,
+            'action' => $result['action'] ?? 'contact',
+            'bodyPart' => $result['bodyPart'] ?? 'Body',
+            'isSensitive' => $result['isSensitive'] ?? false,
+            'isBlocked' => $result['isBlocked'] ?? false,
+            'duration' => $result['duration'] ?? null,
+            'heldItem' => $result['heldItem'] ?? null,
+            'handSide' => $result['handSide'] ?? null,
+            'sustainedTouch' => !empty($result['sustainedTouch']),
+            'sustainedSeconds' => $result['sustainedSeconds'] ?? null,
+            'sustainedCount' => $result['sustainedCount'] ?? null,
+            'sustainedPromptAllowed' => !empty($result['sustainedPromptAllowed']),
+            'suppressModelRoute' => !empty($result['suppressModelRoute']),
+            'message' => $result['message'],
+            'plain_message' => self::stripPhysicsTags((string)$result['message'])
+        ];
+
+        @file_put_contents(self::lastContactPath($actorName), json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    }
+
+    private static function stripPhysicsTags($message) {
+        return trim(preg_replace('/\s+/', ' ', strip_tags((string)$message)));
+    }
+
+    private static function normalizeHandSide($handSide) {
+        $hand = strtolower(trim((string)$handSide));
+        if ($hand === '') {
+            return '';
+        }
+        if (strpos($hand, 'left') !== false) {
+            return 'left';
+        }
+        if (strpos($hand, 'right') !== false) {
+            return 'right';
+        }
+        return $hand;
+    }
+
+    private static function handSideFromRawParts($action, $parts) {
+        $action = strtolower(trim((string)$action));
+        if ($action === 'grab' || $action === 'spank') {
+            return self::normalizeHandSide($parts[5] ?? '');
+        }
+        if ($action === 'release') {
+            return self::normalizeHandSide($parts[4] ?? '');
+        }
+        return '';
+    }
+
+    public static function logRawPhysicsEvent($rawData, $status = 'blocked', $reason = '') {
+        $parts = explode('^', (string)$rawData);
+        if (count($parts) < 3) {
+            self::writePhysicsLog([
+                'status' => $status,
+                'reason' => $reason,
+                'action' => 'invalid',
+                'raw' => (string)$rawData,
+            ]);
+            return;
+        }
+
+        $actorName = trim((string)($parts[0] ?? ''));
+        $rawBodyPart = self::normalizeBodyPart($parts[1] ?? 'Body');
+        $bodyPart = self::displayBodyPartForActor($rawBodyPart, $actorName);
+        $action = strtolower(trim((string)($parts[2] ?? '')));
+        $isBlocked = filter_var($parts[3] ?? 'false', FILTER_VALIDATE_BOOLEAN);
+        $handSide = self::handSideFromRawParts($action, $parts);
+
+        self::writePhysicsLog([
+            'status' => $status,
+            'reason' => $reason,
+            'actor' => $actorName,
+            'action' => $action !== '' ? $action : 'unknown',
+            'bodyPart' => $bodyPart,
+            'rawBodyPart' => $rawBodyPart,
+            'sexualArea' => self::isSensitiveBodyPart($rawBodyPart),
+            'blocked' => $isBlocked,
+            'blockedBy' => $parts[4] ?? '',
+            'handSide' => $handSide !== '' ? $handSide : null,
+            'speed' => isset($parts[7]) ? floatval($parts[7]) : null,
+            'raw' => (string)$rawData,
+        ]);
+    }
+
+    private static function logPhysicsResult($result, $rawData, $status = 'routed', $reason = '') {
+        if (!is_array($result)) {
+            self::logRawPhysicsEvent($rawData, $status, $reason);
+            return;
+        }
+
+        self::writePhysicsLog([
+            'status' => $status,
+            'reason' => $reason,
+            'actor' => $result['actorName'] ?? '',
+            'action' => $result['action'] ?? 'unknown',
+            'bodyPart' => $result['bodyPart'] ?? 'Body',
+            'rawBodyPart' => $result['rawBodyPart'] ?? ($result['bodyPart'] ?? 'Body'),
+            'sexualArea' => !empty($result['isSensitive']),
+            'blocked' => !empty($result['isBlocked']),
+            'penetration' => !empty($result['isPenetration']),
+            'rawPenetration' => !empty($result['rawPenetration']),
+            'penetrationRejected' => !empty($result['penetrationRejected']),
+            'duration' => $result['duration'] ?? null,
+            'heldItem' => $result['heldItem'] ?? null,
+            'handSide' => $result['handSide'] ?? null,
+            'sustainedTouch' => !empty($result['sustainedTouch']),
+            'sustainedSeconds' => $result['sustainedSeconds'] ?? null,
+            'sustainedCount' => $result['sustainedCount'] ?? null,
+            'sustainedPromptAllowed' => !empty($result['sustainedPromptAllowed']),
+            'touchSequenceAccumulating' => !empty($result['touchSequenceAccumulating']),
+            'suppressModelRoute' => !empty($result['suppressModelRoute']),
+            'speed' => $result['speed'] ?? null,
+            'message' => self::stripPhysicsTags((string)($result['message'] ?? '')),
+            'raw' => (string)$rawData,
+        ]);
+    }
+
+    private static function writePhysicsLog($payload) {
+        try {
+            $payload['ts'] = date('Y-m-d H:i:s');
+            $payload['localts'] = time();
+            @file_put_contents(
+                self::physicsLogPath(),
+                json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n",
+                FILE_APPEND | LOCK_EX
+            );
+        } catch (Exception $e) {
+            error_log("[NSFW Physics] Could not write SHARMAT VR physics log: " . $e->getMessage());
+        }
+    }
+
+    private static function physicsLogPath() {
+        return __DIR__ . "/../../log/" . self::VR_PHYSICS_LOG;
+    }
+
+    private static function lastContactPath($actorName) {
+        $key = strtolower(trim((string)$actorName));
+        return sys_get_temp_dir() . "/" . self::LAST_CONTACT_FILE_PREFIX . md5($key) . ".json";
+    }
+
+    private static function sustainedTouchPath($actorName, $bodyPart) {
+        $key = strtolower(trim((string)$actorName)) . '|' . strtolower(trim((string)$bodyPart));
+        return sys_get_temp_dir() . "/" . self::SUSTAINED_TOUCH_FILE_PREFIX . md5($key) . ".json";
+    }
+
+    private static function normalizeBodyPart($bodyPart) {
+        $raw = trim((string)$bodyPart);
+        if ($raw === '') {
+            return 'Body';
+        }
+
+        $key = strtolower($raw);
+        switch ($key) {
+            case 'breast':
+            case 'breasts':
+            case 'boob':
+            case 'boobs':
+                return 'Breasts';
+            case 'chest':
+            case 'pec':
+            case 'pecs':
+                return 'Chest';
+            case 'butt':
+            case 'ass':
+            case 'rear':
+            case 'bottom':
+                return 'Butt';
+            case 'pussy':
+            case 'vagina':
+            case 'vaginal':
+            case 'pelvis':
+                return 'Pussy';
+            case 'anal':
+            case 'anus':
+                return 'Anal';
+            case 'penis':
+            case 'cock':
+            case 'genitals':
+            case 'crotch':
+                return 'Penis';
+            case 'head':
+                return 'Head';
+            case 'hair':
+            case 'scalp':
+                return 'Head';
+            case 'face':
+            case 'cheek':
+            case 'cheeks':
+            case 'jaw':
+            case 'chin':
+            case 'nose':
+            case 'mouth':
+            case 'lips':
+            case 'forehead':
+                return 'Face';
+            case 'neck':
+            case 'throat':
+                return 'Neck';
+            case 'body':
+            case 'other':
+                return 'Body';
+            default:
+                return ucfirst($key);
+        }
+    }
+
+    private static function displayBodyPartForActor($bodyPart, $actorName) {
+        $normalized = self::normalizeBodyPart($bodyPart);
+        $gender = self::actorGender($actorName);
+        if ($normalized === 'Breasts' && $gender === 'male') {
+            return 'Chest';
+        }
+        if ($normalized === 'Chest' && $gender === 'female') {
+            return 'Breasts';
+        }
+        if ($normalized === 'Pussy' && $gender === 'male') {
+            return 'Penis';
+        }
+        if ($normalized === 'Penis' && $gender === 'female') {
+            return 'Pussy';
+        }
+        return $normalized;
+    }
+
+    private static function actorGender($actorName) {
+        try {
+            if (!class_exists('NpcMaster')) {
+                return '';
+            }
+            $npcManager = new NpcMaster();
+            $npcData = $npcManager->getByName($actorName);
+            $gender = strtolower(trim((string)($npcData['gender'] ?? '')));
+            if (in_array($gender, ['m', 'man'], true) || strpos($gender, 'male') === 0) {
+                return 'male';
+            }
+            if (in_array($gender, ['f', 'woman'], true) || strpos($gender, 'female') === 0) {
+                return 'female';
+            }
+        } catch (Exception $e) {
+            error_log("[NSFW Physics] Could not resolve actor gender for {$actorName}: " . $e->getMessage());
+        }
+        return '';
+    }
+
+    private static function actorLooksMale($actorName) {
+        return self::actorGender($actorName) === 'male';
+    }
+
+    private static function touchBodyPartCanBePenetration($bodyPart, $playerSex) {
+        $normalized = self::normalizeBodyPart($bodyPart);
+        if ((int)$playerSex === 0) {
+            return in_array($normalized, ['Pussy', 'Anal'], true);
+        }
+        return $normalized === 'Penis';
+    }
 
     /**
      * Main entry point - Process VR physics events (HIGGS grab, CBPC touch)
-     * SENSITIVE GRAB = triggers tier prompt immediately (same as scene start)
-     * Pattern: Slave → Prostitute → Affair → Regular
+     * Sexual-area contact can inject REL prompt context when allowed by the prompt gate.
      *
      * This is the orchestration method called from common.php wrapper.
      * Handles gameRequest rewriting and tier prompt injection.
@@ -78,157 +399,301 @@ class NsfwPhysics {
             }
 
             $result = self::processPhysicsEvent($rawData);
-            if (!$result) {
+            if (!$result || !empty($result['suppressModelRoute'])) {
                 return;
+            }
+
+            $cleanMessage = function_exists('aiagentNsfwContactStripTags')
+                ? aiagentNsfwContactStripTags($result['message'])
+                : $result['message'];
+            $eventLogMessage = $cleanMessage;
+            if (function_exists('aiagentNsfwContactTag') && !empty($result['contactKey'])) {
+                $eventLogMessage = aiagentNsfwContactTag($cleanMessage, $result['contactKey']);
             }
 
             // Rewrite the game request
             $gameRequest[0] = "ext_nsfw_physics";
-            $gameRequest[3] = $result['message'];
+            $gameRequest[3] = $eventLogMessage;
 
             // Update PROMPTS array if it exists
             if (isset($GLOBALS["PROMPTS"]["ext_nsfw_physics"])) {
-                $GLOBALS["PROMPTS"]["ext_nsfw_physics"]["player_request"] = [$result['message']];
+                $GLOBALS["PROMPTS"]["ext_nsfw_physics"]["player_request"] = [$cleanMessage];
             }
 
             // LOG TO CHIM
             $action = $result['action'];
             $actorName = $result['actorName'];
             $bodyPart = $result['bodyPart'] ?? 'Body';
-            $verb = ($action === 'grab') ? 'grabbed' : 'touched';
+            $verb = ($action === 'grab') ? 'grabbed' : (($action === 'spank') ? 'smacked' : 'touched');
             Logger::info("[VR] Player {$verb} {$actorName}'s {$bodyPart}");
 
-            // Inject tier prompt for sensitive grabs
-            $isSensitive = $result['isSensitive'] ?? false;
-            $isBlocked = $result['isBlocked'] ?? false;
-            if ($action === 'grab' && $isSensitive && !$isBlocked) {
-                self::injectTierPromptForGrab($result);
+            // Inject VR Physics REL prompt for sexual area contact.
+            if (self::shouldInjectVrPhysicsPrompt($result)) {
+                self::injectVrPhysicsPrompt($result);
             }
         }
         // For already-processed events: just update the prompt (preprocessing already did the rewrite)
         else if ($isProcessedEvent) {
             // The message is already in gameRequest[3], just ensure PROMPTS is updated
+            $cleanMessage = function_exists('aiagentNsfwContactStripTags')
+                ? aiagentNsfwContactStripTags($gameRequest[3] ?? '')
+                : ($gameRequest[3] ?? '');
             if (isset($GLOBALS["PROMPTS"]["ext_nsfw_physics"])) {
-                $GLOBALS["PROMPTS"]["ext_nsfw_physics"]["player_request"] = [$gameRequest[3]];
+                $GLOBALS["PROMPTS"]["ext_nsfw_physics"]["player_request"] = [$cleanMessage];
             }
 
-            // For tier prompt injection on processed events, we need to re-parse the message
-            // to determine if it was a sensitive grab. Check for grab verbs in the message.
-            $message = $gameRequest[3] ?? '';
-            $isSensitiveGrab = (
+            // For prompt injection on processed events, re-parse the message enough to recover
+            // sexual-area grab/spank events. Raw events keep better body-part data.
+            $message = $cleanMessage;
+            $isSpank = (
+                strpos($message, 'slaps') !== false ||
+                strpos($message, 'smacked') !== false
+            );
+            $isSexualGrab = (
                 strpos($message, 'groped') !== false ||
                 strpos($message, 'grabbed between the legs') !== false ||
                 strpos($message, 'grabbed the ass') !== false ||
                 strpos($message, 'grabbed the crotch') !== false
             );
 
-            if ($isSensitiveGrab) {
-                // Extract actor name from message format "Player groped ActorName's BodyPart"
-                if (preg_match("/Player (?:groped|grabbed[^']+) ([^']+)'s/", $message, $matches)) {
+            if ($isSpank || $isSexualGrab) {
+                // Extract actor name from processed messages.
+                $actorPattern = $isSpank
+                    ? "/Player (?:slaps|smacked) (.+?) on their ass/"
+                    : "/Player (?:groped|grabbed[^']+) ([^']+)'s/";
+                if (preg_match($actorPattern, $message, $matches)) {
                     $actorName = trim($matches[1]);
                     // Create minimal result for tier prompt injection
                     $result = [
                         'actorName' => $actorName,
-                        'action' => 'grab',
+                        'action' => $isSpank ? 'spank' : 'grab',
+                        'bodyPart' => $isSpank ? 'Butt' : 'Body',
                         'isSensitive' => true,
                         'isBlocked' => false
                     ];
-                    self::injectTierPromptForGrab($result);
+                    self::injectVrPhysicsPrompt($result);
                 }
             }
         }
     }
 
     /**
-     * Inject tier prompt for sensitive grab events
-     * Separated for clarity and testability
+     * Backward-compatible wrapper for older callers.
      */
-    private static function injectTierPromptForGrab($result) {
-        error_log("[AIAGENTNSFW] Sensitive grab detected on {$result['bodyPart']} - triggering tier prompt");
+    public static function injectTierPromptForGrab($result) {
+        self::injectVrPhysicsPrompt($result);
+    }
+    public static function shouldInjectVrPhysicsPrompt($result) {
+        if (!is_array($result)) {
+            return false;
+        }
+        if (!empty($result['suppressModelRoute'])) {
+            return false;
+        }
+        $action = $result['action'] ?? '';
+        if (!in_array($action, ['touch', 'grab', 'spank'], true)) {
+            return false;
+        }
+        if (!empty($result['isBlocked'])) {
+            return false;
+        }
+        return !empty($result['isSensitive']);
+    }
 
-        $actor = $GLOBALS["HERIKA_NAME"];
+    /**
+     * Inject the UI-configured VR Physics prompt selected by REL tier.
+     * This is context only. It must not set sex-scene state or fake OStim/SexLab acceptance.
+     */
+    public static function injectVrPhysicsPrompt($result) {
+        if (!self::shouldInjectVrPhysicsPrompt($result)) {
+            return;
+        }
+
+        $actor = trim((string)($result['actorName'] ?? ($GLOBALS["HERIKA_NAME"] ?? '')));
+        if ($actor === '') {
+            return;
+        }
+
         $playerName = $GLOBALS["PLAYER_NAME"] ?? "Player";
+        $action = $result['action'] ?? 'touch';
+        $bodyPart = self::displayBodyPartForActor($result['bodyPart'] ?? 'Body', $actor);
+        $actionLabel = (!empty($result['sustainedTouch']) && $action === 'touch')
+            ? self::sustainedTouchActionLabel($bodyPart)
+            : self::physicsActionLabel($action);
+        $affinity = function_exists('getNpcAffinity') ? getNpcAffinity($actor) : 0;
+        $tierLabel = class_exists('RelationshipManager') ? RelationshipManager::getTierLabel($affinity) : 'Neutral';
+        $tierKey = strtolower($tierLabel);
+        $promptKey = "vr_{$action}_{$tierKey}";
 
-        // Load NPC data for type detection
-        $npcManager = new NpcMaster();
-        $npcData = $npcManager->getByName($actor);
-        // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
-        require_once __DIR__ . "/nsfw_data.php";
-        $extended_data = NsfwNpcData::get($actor);
-        $metadata = $npcManager->getMetadata($npcData);
+        $prompts = self::loadPromptSettings();
+        $prompt = trim((string)($prompts[$promptKey] ?? ''));
+        if ($prompt === '') {
+            error_log("[AIAGENTNSFW] VR Physics prompt missing for {$promptKey}; no REL context injected");
+            return;
+        }
 
-        // Detect NPC type (same logic as processInfoSexScene)
-        $isSlave = isNpcSlave($actor);
+        $prompt = strtr($prompt, [
+            '#PLAYER_NAME#' => $playerName,
+            '#NPC_NAME#' => $actor,
+            '#BODY_PART#' => $bodyPart,
+            '#ACTION#' => $actionLabel,
+            '#TIER#' => $tierLabel,
+            '#AFFINITY#' => (string)$affinity,
+        ]);
 
-        $isCourtesan = false;
-        $modsToCheck = ["The Naked DragonSSE.esp", "prostitutes.esp"];
-        if (is_array($metadata["mods"])) {
-            foreach ($modsToCheck as $mod) {
-                $isCourtesan = $isCourtesan || in_array($mod, $metadata["mods"]);
+        $GLOBALS["HERIKA_PERSONALITY"] = ($GLOBALS["HERIKA_PERSONALITY"] ?? '') .
+            "\n<vr_physics_relationship_prompt>\n" . $prompt . "\n</vr_physics_relationship_prompt>";
+        $GLOBALS["AIAGENTNSFW_LAST_VR_PHYSICS_PROMPT"] = [
+            'actor' => $actor,
+            'action' => $action,
+            'bodyPart' => $bodyPart,
+            'tier' => $tierLabel,
+            'affinity' => $affinity,
+            'key' => $promptKey,
+        ];
+        error_log("[AIAGENTNSFW] Injected VR Physics prompt {$promptKey} for {$actor} {$action} {$bodyPart}");
+    }
+
+    private static function loadPromptSettings() {
+        static $promptCache = null;
+        if ($promptCache !== null) {
+            return $promptCache;
+        }
+
+        $defaults = function_exists('nsfw_default_vr_physics_prompt_overrides') ? nsfw_default_vr_physics_prompt_overrides() : [];
+        $settings = [];
+        try {
+            $row = $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_prompts'");
+            if ($row && !empty($row['value'])) {
+                $decoded = json_decode($row['value'], true);
+                if (is_array($decoded)) {
+                    $settings = $decoded;
+                }
+            }
+        } catch (Exception $e) {
+            error_log("[NSFW Physics] ERROR loading prompt settings: " . $e->getMessage());
+        }
+
+        $promptCache = array_replace($defaults, $settings);
+        return $promptCache;
+    }
+
+    private static function physicsActionLabel($action) {
+        switch ($action) {
+            case 'grab':
+                return 'sexual area grab';
+            case 'spank':
+                return 'ass spanking';
+            case 'touch':
+            default:
+                return 'sexual area touch';
+        }
+    }
+
+    private static function sustainedTouchActionLabel($bodyPart) {
+        switch (self::normalizeBodyPart($bodyPart)) {
+            case 'Breasts':
+                return 'playing with titties';
+            case 'Butt':
+                return 'touching and playing with ass';
+            default:
+                return 'sustained sexual area touch';
+        }
+    }
+
+    private static function sustainedBreastTouchThresholdSeconds() {
+        $threshold = function_exists('_getNsfwSetting') ? (int)_getNsfwSetting('PHYSICS_SUSTAINED_BREAST_TOUCH_SECONDS', 5) : 5;
+        return max(1, min(60, $threshold));
+    }
+
+    private static function updateSustainedTouchState($actorName, $bodyPart, $isBlocked, $isPenetration, $routeCandidate = true, $consumeSuppressedSustained = false) {
+        $normalized = self::normalizeBodyPart($bodyPart);
+        if (!in_array($normalized, ['Breasts', 'Butt'], true) || $isBlocked || $isPenetration) {
+            return [
+                'sustained' => false,
+                'seconds' => 0,
+                'count' => 0,
+                'firstTouch' => false,
+                'accumulating' => false,
+                'sustainedPromptAllowed' => false,
+                'suppressModelRoute' => false
+            ];
+        }
+
+        $now = time();
+        $threshold = self::sustainedBreastTouchThresholdSeconds();
+        $touchCooldown = function_exists('_getNsfwSetting') ? max(1, (int)_getNsfwSetting('PHYSICS_TOUCH_COOLDOWN', 2)) : 2;
+        $continuityWindow = max($threshold, $touchCooldown + 1);
+        $path = self::sustainedTouchPath($actorName, $normalized);
+
+        $state = [];
+        $raw = is_file($path) ? @file_get_contents($path) : false;
+        if ($raw !== false && trim($raw) !== '') {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                $state = $decoded;
             }
         }
-        $isProstitute = !empty($extended_data['is_prostitute']) ||
-                        !empty($extended_data['profession_prostitute']) ||
-                        $isCourtesan;
 
-        // Get affinity for tier selection
-        $affinity = getNpcAffinity($actor);
+        $startedAt = intval($state['startedAt'] ?? 0);
+        $lastAt = intval($state['lastAt'] ?? 0);
+        $count = intval($state['count'] ?? 0);
+        $sustainedPrompted = !empty($state['sustainedPrompted']);
+        $sustainedPromptedAt = intval($state['sustainedPromptedAt'] ?? 0);
 
-        // ============================================
-        // TIER PROMPT SELECTION - Priority Order:
-        // 1. Slave → Slave tier prompts (comply, emotions vary)
-        // 2. Prostitute → Prostitute tier prompts
-        // 3. Affair (married + non-spouse) → Marriage tier prompts
-        // 4. Regular → Regular tier prompts
-        // ============================================
-        $tierPrompt = null;
+        if ($startedAt <= 0 || $lastAt <= 0 || ($now - $lastAt) > $continuityWindow) {
+            $startedAt = $now;
+            $count = 0;
+            $sustainedPrompted = false;
+            $sustainedPromptedAt = 0;
+        }
 
-        if ($isSlave) {
-            $tierPrompt = NsfwRelationship::getSlaveTierPrompt($affinity, $playerName);
-            error_log("[AIAGENTNSFW] Slave grab - using slave tier prompt");
-        } elseif ($isProstitute) {
-            $tierPrompt = NsfwRelationship::getTierPromptByAffinity($affinity, true, $playerName, $actor);
-            error_log("[AIAGENTNSFW] Prostitute grab - using prostitute tier prompt");
-        } else {
-            // Regular path - getTierPromptByAffinity handles affair detection internally
-            $tierPrompt = NsfwRelationship::getTierPromptByAffinity($affinity, false, $playerName, $actor);
+        $count++;
+        $seconds = max(0, $now - $startedAt);
+        $sustained = ($seconds >= $threshold && $count >= 2);
+        $firstTouch = ($count === 1);
+        $accumulating = (!$sustained && !$firstTouch);
+        $sustainedPromptAllowed = false;
 
-            // Log whether it's an affair or regular
-            if (NsfwRelationship::isAffairScenario($actor, $playerName)) {
-                error_log("[AIAGENTNSFW] Affair grab - using marriage tier prompt");
-            } else {
-                error_log("[AIAGENTNSFW] Regular grab - using regular tier prompt");
+        if ($sustained && !$sustainedPrompted && ($routeCandidate || $consumeSuppressedSustained)) {
+            if ($routeCandidate) {
+                $sustainedPromptAllowed = true;
             }
+            $sustainedPrompted = true;
+            $sustainedPromptedAt = $now;
         }
 
-        // Inject tier prompt immediately
-        if (!empty($tierPrompt)) {
-            $GLOBALS["HERIKA_PERSONALITY"] .= "\n" . $tierPrompt;
-            error_log("[AIAGENTNSFW] IMMEDIATE tier prompt injection for $actor on sensitive grab");
+        $suppressModelRoute = false;
+        if ($routeCandidate) {
+            $suppressModelRoute = $accumulating || ($sustained && !$sustainedPromptAllowed);
         }
 
-        // Set up intimacy state for scene flow
-        $intimacyStatus = getIntimacyForActor($actor);
-        $intimacyStatus["level"] = 0;
-        $intimacyStatus["scene_phase"] = "tier_prompt";
-        $intimacyStatus["scene_start_time"] = time();
+        @file_put_contents($path, json_encode([
+            'startedAt' => $startedAt,
+            'lastAt' => $now,
+            'count' => $count,
+            'threshold' => $threshold,
+            'continuityWindow' => $continuityWindow,
+            'sustainedPrompted' => $sustainedPrompted,
+            'sustainedPromptedAt' => $sustainedPromptedAt,
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
-        // For slaves and prostitutes, auto-accept
-        if ($isSlave || $isProstitute) {
-            $intimacyStatus["scene_phase"] = "accepted";
-            error_log("[AIAGENTNSFW] Auto-accepting for $actor (slave/prostitute) on grab");
-        } else {
-            $intimacyStatus["tier_prompt_sent"] = true;
-        }
-
-        updateIntimacyForActor($actor, $intimacyStatus);
+        return [
+            'sustained' => $sustained,
+            'seconds' => $seconds,
+            'count' => $count,
+            'firstTouch' => $firstTouch,
+            'accumulating' => $accumulating,
+            'sustainedPromptAllowed' => $sustainedPromptAllowed,
+            'suppressModelRoute' => $suppressModelRoute
+        ];
     }
 
     /**
      * Process raw physics event from PSC
      * Returns metadata for processInfoPhysics() to handle tier prompts
      */
-    public static function processPhysicsEvent($rawData) {
+    public static function processPhysicsEvent($rawData, $logStatus = 'routed', $logReason = '') {
         // Use ^ delimiter to avoid conflict with CHIM's pipe-delimited message format
         $parts = explode('^', $rawData);
 
@@ -239,18 +704,57 @@ class NsfwPhysics {
 
         $action = $parts[2]; // touch, grab, release
 
+        $result = null;
+
         // Route to appropriate handler
         switch ($action) {
             case 'touch':
-                return self::handleTouch($parts);
+                $result = self::handleTouch($parts, $logStatus === 'routed', $logStatus === 'scene_cooldown');
+                break;
             case 'grab':
-                return self::handleGrab($parts);
+                $result = self::handleGrab($parts);
+                break;
+            case 'spank':
+                $result = self::handleSpank($parts);
+                break;
             case 'release':
-                return self::handleRelease($parts);
+                $result = self::handleRelease($parts);
+                break;
             default:
                 error_log("[NSFW Physics] Unknown action: " . $action);
                 return null;
         }
+
+        if ($result && $action === 'release') {
+            if (function_exists('aiagentNsfwContactRelease')) {
+                $cleared = aiagentNsfwContactRelease($result);
+                if ($cleared > 0) {
+                    error_log("[NSFW Physics] Cleared {$cleared} active contact state row(s) for release on {$result['actorName']}");
+                }
+            }
+            self::saveLastContact($result);
+            self::logPhysicsResult($result, $rawData, 'release_context', $logReason !== '' ? $logReason : 'release updates VR contact state only');
+            return null;
+        }
+
+        if ($result) {
+            if (function_exists('aiagentNsfwContactUpsert')) {
+                $contactKey = aiagentNsfwContactUpsert($result);
+                if ($contactKey !== '') {
+                    $result['contactKey'] = $contactKey;
+                }
+            }
+            if ($logStatus === 'routed' && !empty($result['suppressModelRoute'])) {
+                $logStatus = !empty($result['touchSequenceAccumulating']) ? 'touch_sequence_accumulating' : 'touch_sequence_suppressed';
+                $logReason = $result['suppressReason'] ?? 'touch sequence already handled';
+            }
+            self::saveLastContact($result);
+            self::logPhysicsResult($result, $rawData, $logStatus, $logReason);
+        } else {
+            self::logRawPhysicsEvent($rawData, $logStatus === 'routed' ? 'ignored' : $logStatus, $logReason);
+        }
+
+        return $result;
     }
 
     /**
@@ -260,25 +764,42 @@ class NsfwPhysics {
      *
      * Returns metadata - tier prompts handled by processInfoPhysics()
      */
-    private static function handleTouch($parts) {
+    private static function handleTouch($parts, $routeCandidate = true, $consumeSuppressedSustained = false) {
         $actorName = $parts[0];
-        $bodyPart = $parts[1];
+        $rawBodyPart = self::normalizeBodyPart($parts[1] ?? 'Body');
+        $bodyPart = self::displayBodyPartForActor($rawBodyPart, $actorName);
         $isBlocked = filter_var($parts[3] ?? 'false', FILTER_VALIDATE_BOOLEAN);
         $blockedBy = $parts[4] ?? '';
-        $isPenetration = filter_var($parts[5] ?? 'false', FILTER_VALIDATE_BOOLEAN);
+        $rawPenetration = filter_var($parts[5] ?? 'false', FILTER_VALIDATE_BOOLEAN);
         $playerSex = intval($parts[6] ?? 0);
+        $isPenetration = $rawPenetration && self::touchBodyPartCanBePenetration($bodyPart, $playerSex);
+        $penetrationRejected = $rawPenetration && !$isPenetration;
+        if ($penetrationRejected) {
+            error_log("[NSFW Physics] Ignored invalid penetration flag for {$actorName} {$bodyPart}; raw body part was {$rawBodyPart}");
+        }
 
         $playerName = $GLOBALS["PLAYER_NAME"] ?? "Player";
-        $isSensitive = self::isSensitiveBodyPart($bodyPart);
+        $isSensitive = self::isSensitiveBodyPart($rawBodyPart);
+        $sustained = self::updateSustainedTouchState($actorName, $bodyPart, $isBlocked, $isPenetration, $routeCandidate, $consumeSuppressedSustained);
+        $isSustainedTouch = !empty($sustained['sustained']);
 
         // Build message with appropriate language
-        $message = self::buildTouchMessage($playerName, $actorName, $bodyPart, $isBlocked, $blockedBy, $isPenetration, $playerSex);
+        $message = self::buildTouchMessage($playerName, $actorName, $bodyPart, $isBlocked, $blockedBy, $isPenetration, $playerSex, $isSustainedTouch);
 
         // Wrap in appropriate XML tag
         if ($isPenetration && !$isBlocked) {
             $formattedMessage = "<SEXUAL_ACT>\n" . $message . "\n</SEXUAL_ACT>";
+        } elseif ($isSustainedTouch && !$isBlocked) {
+            $formattedMessage = "<SEXUAL_GROPE>\n" . $message . "\n</SEXUAL_GROPE>";
         } else {
             $formattedMessage = "<PHYSICS_INFO>\n" . $message . "\n</PHYSICS_INFO>";
+        }
+
+        $suppressReason = '';
+        if (!empty($sustained['accumulating'])) {
+            $suppressReason = strtolower($bodyPart) . ' touch sequence is accumulating before sustained threshold';
+        } elseif ($isSustainedTouch && empty($sustained['sustainedPromptAllowed'])) {
+            $suppressReason = 'sustained ' . strtolower($bodyPart) . ' touch was already announced for this contact sequence';
         }
 
         // Return metadata - processInfoPhysics() handles tier prompts
@@ -286,10 +807,21 @@ class NsfwPhysics {
             'message' => $formattedMessage,
             'actorName' => $actorName,
             'bodyPart' => $bodyPart,
+            'rawBodyPart' => $rawBodyPart,
             'action' => 'touch',
             'isSensitive' => $isSensitive,
             'isPenetration' => $isPenetration,
-            'isBlocked' => $isBlocked
+            'rawPenetration' => $rawPenetration,
+            'penetrationRejected' => $penetrationRejected,
+            'isBlocked' => $isBlocked,
+            'sustainedTouch' => $isSustainedTouch,
+            'sustainedPromptAllowed' => !empty($sustained['sustainedPromptAllowed']),
+            'sustainedSeconds' => $sustained['seconds'] ?? 0,
+            'sustainedCount' => $sustained['count'] ?? 0,
+            'touchSequenceFirst' => !empty($sustained['firstTouch']),
+            'touchSequenceAccumulating' => !empty($sustained['accumulating']),
+            'suppressModelRoute' => !empty($sustained['suppressModelRoute']),
+            'suppressReason' => $suppressReason
         ];
     }
 
@@ -302,14 +834,26 @@ class NsfwPhysics {
      */
     private static function handleGrab($parts) {
         $actorName = $parts[0];
-        $bodyPart = $parts[1];
+        $rawBodyPart = self::normalizeBodyPart($parts[1] ?? 'Body');
+        $bodyPart = self::displayBodyPartForActor($rawBodyPart, $actorName);
         $isBlocked = filter_var($parts[3] ?? 'false', FILTER_VALIDATE_BOOLEAN);
         $blockedBy = $parts[4] ?? '';
-        $handSide = $parts[5] ?? 'right';
+        $handSide = self::normalizeHandSide($parts[5] ?? 'right');
         $heldItem = $parts[6] ?? '';  // What's in the OTHER hand
 
         $playerName = $GLOBALS["PLAYER_NAME"] ?? "Player";
-        $isSensitive = self::isSensitiveBodyPart($bodyPart);
+        $isSensitive = self::isSensitiveBodyPart($rawBodyPart);
+
+        // ASSAULT-WITNESS (user directive 2026-07-01): a deliberate breast grab of a Friendly-and-below NPC escalates
+        // to a SILENT witness bulletin, sent only to surrounding NPCs who can actually perceive it (spatial-gated).
+        // 2 grabs within 10s -> "grabbing breast"; 3rd+ -> "playing with titties". Non-blocked, breasts only.
+        if (!$isBlocked && $isSensitive && $bodyPart === 'Breasts' // display-mapped: male chest is 'Chest' (fix 2026-07-01)
+            && function_exists('aiagentNsfwRecordBreastGrab') && function_exists('getNpcAffinity')
+            && (int)getNpcAffinity($actorName) <= 55) {
+            $grabCount = aiagentNsfwRecordBreastGrab($playerName, $actorName);
+            if ($grabCount === 2)    { aiagentNsfwEmitWitnessLine('breast_grab', $actorName, $playerName); }
+            elseif ($grabCount >= 3) { aiagentNsfwEmitWitnessLine('breast_play', $actorName, $playerName); }
+        }
 
         // Check if we're in an active scene (for context-aware messages)
         $sceneActiveFile = sys_get_temp_dir() . "/nsfw_scene_active.txt";
@@ -320,21 +864,24 @@ class NsfwPhysics {
         if ($isBlocked) {
             $message = "{$playerName} tried to grab {$actorName}'s {$bodyPart} but was prevented by the {$blockedBy}";
         } else {
-            // Intentional grab - use stronger language for sensitive areas
+            // Intentional grab - use stronger language for sexual areas
             if ($isSensitive) {
                 $grabVerb = self::getSensitiveGrabVerb($bodyPart);
                 $message = "{$playerName} {$grabVerb} {$actorName}'s {$bodyPart}";
             } elseif ($bodyPart === 'Head' && $inScene) {
                 // During scene: head grab = pulling hair
-                $message = "{$playerName} grabbed {$actorName}'s hair and pulled";
+                $message = "{$playerName} grabbed near {$actorName}'s head/face area and pulled";
             } else {
-                $message = "{$playerName} grabbed {$actorName}'s {$bodyPart}";
+                $message = "{$playerName} grabbed near {$actorName}'s " . self::approximateBodyAreaLabel($bodyPart) . " (VR contact zone is approximate)";
             }
         }
 
         // Add held item context if player is holding something in other hand
         if (!empty($heldItem) && !$isBlocked) {
             $message .= " (while holding {$heldItem} in other hand)";
+        }
+        if ($handSide !== '' && !$isBlocked) {
+            $message .= " with the {$handSide} hand";
         }
 
         // Wrap in appropriate XML tag
@@ -349,21 +896,76 @@ class NsfwPhysics {
             'message' => $formattedMessage,
             'actorName' => $actorName,
             'bodyPart' => $bodyPart,
+            'rawBodyPart' => $rawBodyPart,
             'action' => 'grab',
             'isSensitive' => $isSensitive,
             'isBlocked' => $isBlocked,
+            'handSide' => $handSide,
             'heldItem' => $heldItem
         ];
     }
 
     /**
-     * Get appropriate verb for sensitive body part grabs
+     * Handle a spank - an INTENTIONAL swat, velocity-thresholded by the bridge/DLL
+     * (above a touch, below a combat hit). Fires in or out of a scene.
+     * Format: actor^bodypart^spank^blocked^blockedby^hand^helditem^speed
+     */
+    private static function handleSpank($parts) {
+        $actorName = $parts[0];
+        $rawBodyPart = self::normalizeBodyPart($parts[1] ?? 'Butt');
+        $bodyPart = self::displayBodyPartForActor($rawBodyPart, $actorName);
+        $isBlocked = filter_var($parts[3] ?? 'false', FILTER_VALIDATE_BOOLEAN);
+        $blockedBy = $parts[4] ?? '';
+        $handSide = self::normalizeHandSide($parts[5] ?? '');
+        $handSpeed = isset($parts[7]) ? floatval($parts[7]) : 0.0;
+
+        $spankEnabled = function_exists('_getNsfwSetting') ? (bool)_getNsfwSetting('PHYSICS_SPANK_ENABLED', true) : true;
+        if (!$spankEnabled) {
+            error_log("[NSFW Physics] Spank ignored: PHYSICS_SPANK_ENABLED is off");
+            return null;
+        }
+
+        $minSpeed = function_exists('_getNsfwSetting') ? max(10, min(380, (int)_getNsfwSetting('PHYSICS_SPANK_MIN_SPEED', 30))) : 30;
+        if ($handSpeed > 0 && $handSpeed < $minSpeed) {
+            error_log("[NSFW Physics] Spank ignored: speed {$handSpeed} below threshold {$minSpeed}");
+            return null;
+        }
+
+        $playerName = $GLOBALS["PLAYER_NAME"] ?? "Player";
+        $isSensitive = self::isSensitiveBodyPart($bodyPart);
+
+        if ($isBlocked) {
+            $message = "{$playerName} tried to slap {$actorName} on their ass but was prevented by the {$blockedBy}";
+        } else {
+            $handText = $handSide !== '' ? " with the {$handSide} hand" : "";
+            $message = "{$playerName} slaps {$actorName} on their ass{$handText}!";
+        }
+
+        $formattedMessage = "<PHYSICS_INFO>\n" . $message . "\n</PHYSICS_INFO>";
+
+        return [
+            'message' => $formattedMessage,
+            'actorName' => $actorName,
+            'bodyPart' => $bodyPart,
+            'rawBodyPart' => $rawBodyPart,
+            'action' => 'spank',
+            'isSensitive' => $isSensitive,
+            'isBlocked' => $isBlocked,
+            'handSide' => $handSide,
+            'speed' => $handSpeed
+        ];
+    }
+
+    /**
+     * Get appropriate verb for sexual-area grabs
      * Makes the action description more explicit/sexual
      */
     private static function getSensitiveGrabVerb($bodyPart) {
         switch ($bodyPart) {
             case 'Breasts':
                 return 'groped';
+            case 'Chest':
+                return 'grabbed';
             case 'Butt':
                 return 'grabbed';
             case 'Pussy':
@@ -384,9 +986,10 @@ class NsfwPhysics {
      */
     private static function handleRelease($parts) {
         $actorName = $parts[0];
-        $bodyPart = $parts[1];
+        $rawBodyPart = self::normalizeBodyPart($parts[1] ?? 'Body');
+        $bodyPart = self::displayBodyPartForActor($rawBodyPart, $actorName);
         $duration = floatval($parts[3] ?? 0);
-        $handSide = $parts[4] ?? 'right';
+        $handSide = self::normalizeHandSide($parts[4] ?? 'right');
 
         $playerName = $GLOBALS["PLAYER_NAME"] ?? "Player";
 
@@ -405,16 +1008,19 @@ class NsfwPhysics {
             'message' => $formattedMessage,
             'actorName' => $actorName,
             'bodyPart' => $bodyPart,
+            'rawBodyPart' => $rawBodyPart,
             'action' => 'release',
+            'isSensitive' => self::isSensitiveBodyPart($rawBodyPart),
+            'handSide' => $handSide,
             'duration' => $duration
         ];
     }
 
     /**
-     * Check if body part is sexually sensitive
+     * Check if body part routes through the sexual-area prompt path
      */
     private static function isSensitiveBodyPart($bodyPart) {
-        return in_array($bodyPart, self::$sensitiveParts);
+        return in_array(self::normalizeBodyPart($bodyPart), self::$sensitiveParts, true);
     }
 
     /**
@@ -422,7 +1028,11 @@ class NsfwPhysics {
      * TOUCH = could be accidental (brush, bump, incidental contact)
      * PENETRATION = sexual insertion
      */
-    private static function buildTouchMessage($playerName, $actorName, $bodyPart, $isBlocked, $blockedBy, $isPenetration, $playerSex) {
+    private static function buildTouchMessage($playerName, $actorName, $bodyPart, $isBlocked, $blockedBy, $isPenetration, $playerSex, $isSustainedTouch = false) {
+        if ($isPenetration && !self::touchBodyPartCanBePenetration($bodyPart, $playerSex)) {
+            $isPenetration = false;
+        }
+
         // PENETRATION - this is a sexual act, use explicit language
         if ($isPenetration) {
             if ($isBlocked) {
@@ -436,15 +1046,11 @@ class NsfwPhysics {
                     return "{$playerName} inserted his cock into {$actorName}'s pussy";
                 } elseif ($bodyPart == 'Anal') {
                     return "{$playerName} inserted his cock into {$actorName}'s ass";
-                } else {
-                    return "{$playerName} penetrated {$actorName}'s {$bodyPart}";
                 }
             } else {
                 // Female player being penetrated
                 if ($bodyPart == 'Penis') {
                     return "{$actorName} inserted their cock into {$playerName}";
-                } else {
-                    return "{$actorName}'s {$bodyPart} penetrated {$playerName}";
                 }
             }
         }
@@ -454,18 +1060,60 @@ class NsfwPhysics {
             return "{$playerName} tried to touch {$actorName}'s {$bodyPart} but was prevented by the {$blockedBy}";
         }
 
+        if ($isSustainedTouch && self::normalizeBodyPart($bodyPart) === 'Breasts') {
+            return "{$playerName} is playing with {$actorName}'s titties";
+        }
+        if ($isSustainedTouch && self::normalizeBodyPart($bodyPart) === 'Butt') {
+            return "{$playerName} is playing with {$actorName}'s ass";
+        }
+
         // REGULAR TOUCH - could be accidental
         // Use softer language that implies it might not be intentional
         $isSensitive = self::isSensitiveBodyPart($bodyPart);
 
         if ($isSensitive) {
-            // Sensitive area touch - phrase as potentially accidental
+            if (self::normalizeBodyPart($bodyPart) === 'Butt') {
+                return "{$playerName} accidentally touched {$actorName}'s ass";
+            }
+            // Sexual-area touch - phrase as potentially accidental
             // This is different from GRAB which is intentional
             $touchVerb = self::getAccidentalTouchVerb($bodyPart);
             return "{$playerName} {$touchVerb} {$actorName}'s {$bodyPart}";
         } else {
-            // Non-sensitive area - just a regular touch
-            return "{$playerName} touched {$actorName}'s {$bodyPart}";
+            // Non-sexual area - just a regular touch
+            return "{$playerName} brushed near {$actorName}'s " . self::approximateBodyAreaLabel($bodyPart) . " (VR contact zone is approximate)";
+        }
+    }
+
+    private static function approximateBodyAreaLabel($bodyPart) {
+        switch (self::normalizeBodyPart($bodyPart)) {
+            case 'Head':
+                return 'head/face area';
+            case 'Face':
+                return 'face';
+            case 'Neck':
+                return 'neck/face area';
+            case 'Shoulder':
+                return 'shoulder/upper chest area';
+            case 'Chest':
+                return 'chest';
+            case 'Back':
+                return 'back/shoulder area';
+            case 'Belly':
+                return 'torso/belly area';
+            case 'Arm':
+                return 'arm/side area';
+            case 'Hand':
+                return 'hand';
+            case 'Leg':
+                return 'leg/thigh area';
+            case 'Foot':
+                return 'foot';
+            case 'Body':
+            case 'Other':
+                return 'body';
+            default:
+                return self::normalizeBodyPart($bodyPart);
         }
     }
 
@@ -477,8 +1125,10 @@ class NsfwPhysics {
         switch ($bodyPart) {
             case 'Breasts':
                 return 'accidentally brushed against';
+            case 'Chest':
+                return 'accidentally brushed against';
             case 'Butt':
-                return 'bumped into';
+                return 'accidentally touched';
             case 'Pussy':
                 return 'accidentally touched';
             case 'Anal':

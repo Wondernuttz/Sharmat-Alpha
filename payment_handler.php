@@ -88,21 +88,14 @@ class PaymentHandler {
      * Transfer gold from one entity to another
      */
     private function transferGold($fromRefId, $toRefId, $amount) {
-        $result = ['success' => true, 'from' => $fromRefId, 'to' => $toRefId, 'amount' => $amount];
-
-        // Remove gold from player
-        $removeCmd = $this->skyrim->ObjectReference->RemoveItem($fromRefId, GOLD_FORM_ID, $amount, false);
-        $this->skyrim->send($removeCmd);
-        $result['remove_cmd'] = $removeCmd;
-
-        // Add gold to NPC (if we have their refid)
-        if ($toRefId) {
-            $addCmd = $this->skyrim->ObjectReference->AddItem($toRefId, GOLD_FORM_ID, $amount, true);
-            $this->skyrim->send($addCmd);
-            $result['add_cmd'] = $addCmd;
-        }
-
-        return $result;
+        error_log("PaymentHandler: refusing direct PHP gold transfer; Papyrus TakeGold must verify player gold first");
+        return [
+            'success' => false,
+            'from' => $fromRefId,
+            'to' => $toRefId,
+            'amount' => $amount,
+            'error' => 'Gold transfer requires Papyrus GetItemCount/RemoveItem confirmation via TakeGold',
+        ];
     }
 
     /**
@@ -172,6 +165,11 @@ class PaymentHandler {
      * @return array Price breakdown
      */
     public function calculateSessionPrice($npcName, $acts = [], $bookingType = 'per_act', $addons = [], $groupSize = 1) {
+
+        // DEPRECATION CANDIDATE (user directive 2026-06-29): the elaborate per-act / style-addon / group-premium /
+        // time-booking pricing below is only half-wired and rarely invoked - and now that NPCs initiate their own
+        // scenes, it is largely moot. Likely to be REMOVED in favour of a single per-NPC minimum rate, and the
+        // pricing form pulled from the UI. Do NOT invest further here without revisiting that decision first.
 
         // Get NPC pricing data
         $pricing = $this->getNpcPricing($npcName);
@@ -269,6 +267,7 @@ class PaymentHandler {
      */
     private function logTransaction($npcName, $amount, $paymentType, $serviceType, $success) {
         $this->db->insert('eventlog', [
+            'gamets' => $GLOBALS["gameRequest"][2] ?? time(),
             'localts' => time(),
             'type' => 'nsfw_payment',
             'data' => json_encode([
@@ -286,7 +285,7 @@ class PaymentHandler {
      */
     public function getTransactionHistory($npcName, $limit = 20) {
         return $this->db->fetchAll(
-            "SELECT * FROM eventlog WHERE type = 'nsfw_payment' AND data->>'npc' = :name ORDER BY localts DESC LIMIT :limit",
+            "SELECT * FROM eventlog WHERE type = 'nsfw_payment' AND (data::jsonb)->>'npc' = :name ORDER BY localts DESC LIMIT :limit",
             ['name' => $npcName, 'limit' => $limit]
         );
     }

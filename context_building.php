@@ -2,6 +2,11 @@
 
 // Current historic context data here. $GLOBALS["CONTEXT_BUILDING_DATA"]
 // This is called when build NPC context, we can filter here our custom eventypes
+require_once __DIR__ . "/scene_threads.php";
+require_once __DIR__ . "/contact_state.php";
+
+aiagentNsfwSceneThreadCleanContextArray($GLOBALS["CONTEXT_BUILDING_DATA"], "content");
+aiagentNsfwContactCleanContextArray($GLOBALS["CONTEXT_BUILDING_DATA"], "content");
 
 foreach ($GLOBALS["CONTEXT_BUILDING_DATA"] as $n => $line) {
     if ($line["role"] == "ext_nsfw_scene") {
@@ -19,10 +24,6 @@ foreach ($GLOBALS["CONTEXT_BUILDING_DATA"] as $n => $line) {
 
     } else  if ($line["role"] == "ext_nsfw_physics_blocked") {
         // Blocked touch attempts (chastity devices, armor)
-        $GLOBALS["CONTEXT_BUILDING_DATA"][$n]["role"] = "user";
-
-    } else  if ($line["role"] == "ext_vr_item_pickup" || $line["role"] == "ext_vr_item_drop") {
-        // VR item events (HIGGS pickup/drop)
         $GLOBALS["CONTEXT_BUILDING_DATA"][$n]["role"] = "user";
 
     } else  if ($line["role"] == "ext_nsfw_npc_scene") {

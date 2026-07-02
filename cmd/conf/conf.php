@@ -2,7 +2,7 @@
 
 
 //<strong>This is automatically set from your game character.</strong> The player name is retrieved from Skyrim when you load a save or start a new game. This field cannot be manually edited.
-$PLAYER_NAME='Bannon';
+$PLAYER_NAME='Player';
 
 
 //Do not change.

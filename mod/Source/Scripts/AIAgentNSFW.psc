@@ -14,8 +14,6 @@ import Utility
 ; To extract VR Item Tracking for core CHIM:
 ;
 ; PROPERTIES TO COPY [CHIM-CORE]:
-;   - vrLeftHandItem, vrRightHandItem (hand state tracking)
-;   - vrLastItemEventTime, vrItemEventCooldown (debouncing)
 ;
 ; FUNCTIONS TO COPY [CHIM-CORE]:
 ;   - OnHIGGSObjectGrabbed() - item pickup detection
@@ -60,12 +58,13 @@ bool Property enableHIGGS = true Auto
 bool hasHIGGS = false
 Actor currentlyGrabbedActor = None
 string currentlyGrabbedNode = ""
+string currentlyGrabbedBodyPart = ""
 float grabStartTime = 0.0
 bool isGrabbing = false
 
 ; [NSFW-ONLY] HIGGS + CBPC Correlation (for determining WHERE on body the grab occurred)
 ; When HIGGS returns OTHER/unknown body part, we wait for CBPC to tell us the exact location
-float Property grabCorrelationWindow = 0.5 Auto  ; 500ms window for CBPC to fire after HIGGS
+float Property grabCorrelationWindow = 1.25 Auto  ; Window for CBPC to identify exact body part after HIGGS
 Actor pendingGrabActor = None
 string pendingGrabHand = ""
 float pendingGrabTime = 0.0
@@ -79,14 +78,19 @@ bool hasPendingGrab = false
 ; ============================================================================
 ; This section can be moved to core CHIM for general VR immersion
 ; No NSFW content - just tracks items like swords, potions, food, etc.
-string vrLeftHandItem = ""
-string vrRightHandItem = ""
-float vrLastItemEventTime = 0.0
-float Property vrItemEventCooldown = 1.0 Auto
 
 ; VR Detection - auto-detected based on HIGGS presence, or can be set manually
 ; true = VR mode (use UIWheelMenu), false = flatscreen (use SkyMessage)
 bool isVRMode = false
+bool usePrismaConsent = false ; flip true + wire ShowPrismaConsent once CHIM ships Prisma confirmations
+int npcSceneTalkCounter = 0
+int consentBarkThreadId = -1 ; consent bark: last OStim thread we fired a fast accept/refuse decision for (one bark per scene)
+int npcSceneActorStash = 0 ; JContainers JMap: "thr_<id>" -> JArray of participant display names (teardown fallback)
+string lastResolvedOStimOrgasmActionType = ""
+string OSTIM_ORGASM_ACTION_TYPES = "vaginalsex,VaginalSex,vaginal,Vaginal,vaginalpullout,analsex,AnalSex,anal,Anal,analpullout,blowjob,lickingpenis,lickingtesticles,rubbingpenisagainstface,cunnilingus,handjob,boobjob,footjob,thighjob,grindingthigh,buttjob,malemasturbation,femalemasturbation"
+; Penetrative/primary acts ONLY - the orgasm partner is whoever the orgasmer is penetrating or penetrated by, not a
+; secondary act (handjob/footjob) merely listed first. Searched FIRST so 3-ways credit the real partner (no FMR dep).
+string OSTIM_PENETRATIVE_ACTION_TYPES = "vaginalsex,VaginalSex,vaginal,Vaginal,vaginalpullout,analsex,AnalSex,anal,Anal,analpullout,blowjob,deepthroat,cunnilingus"
 
 Actor playerRef
 int touchedLocations = 0
@@ -137,103 +141,154 @@ string ACTORREF_KEY = "ActorRef"
 string GENITAL_COLLISION_KEY = "GenitalCollision"
 
 ; Devious Devices integration (soft dependency - no master required)
-Keyword zad_DeviousBelt
-Keyword zad_DeviousBra
+; Grab the zadLibs quest by its one FormID, read keyword props off it.
+zadLibs libs
 bool hasDeviousDevices = false
 
 ; ============================================
 ; DEVIOUS DEVICES INTEGRATION
 ; ============================================
-; Initialize DD keywords at runtime (no ESP master needed)
+; Initialize the DD library at runtime (soft - no ESP master needed)
 Function InitDeviousDevices()
 	hasDeviousDevices = false
-	zad_DeviousBelt = None
-	zad_DeviousBra = None
+	libs = None
 
-	; Check if Devious Devices is loaded
 	if (Game.GetModByName("Devious Devices - Integration.esm") == 255)
 		Debug.Trace("[CHIM-NSFW] Devious Devices not installed")
 		return
 	endif
 
-	; Get keywords from DD
-	zad_DeviousBelt = Game.GetFormFromFile(0x003330, "Devious Devices - Integration.esm") as Keyword
-	zad_DeviousBra = Game.GetFormFromFile(0x003894, "Devious Devices - Integration.esm") as Keyword
-
-	if (zad_DeviousBelt && zad_DeviousBra)
+	libs = Game.GetFormFromFile(0x00F624, "Devious Devices - Integration.esm") as zadLibs
+	if (libs)
 		hasDeviousDevices = true
 		Debug.Trace("[CHIM-NSFW] Devious Devices integration enabled")
 	else
-		Debug.Trace("[CHIM-NSFW] Devious Devices keywords not found")
+		Debug.Trace("[CHIM-NSFW] Devious Devices zadLibs not found")
 	endif
 EndFunction
 
+; Build a CSV of the locked device types the actor is wearing (server maps these to prose)
+string Function GetWornDevicesCSV(Actor akActor)
+	if (!hasDeviousDevices || !akActor || !libs)
+		return ""
+	endif
+	string csv = ""
+	if (akActor.WornHasKeyword(libs.zad_DeviousBelt))
+		csv += "belt,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousBra))
+		csv += "bra,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousGag) || akActor.WornHasKeyword(libs.zad_DeviousGagPanel) || akActor.WornHasKeyword(libs.zad_DeviousGagLarge))
+		csv += "gag,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousCollar))
+		csv += "collar,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousArmbinder))
+		csv += "armbinder,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousYoke))
+		csv += "yoke,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousElbowTie))
+		csv += "elbowtie,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousStraitJacket))
+		csv += "straitjacket,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousBlindfold))
+		csv += "blindfold,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousHobbleSkirt))
+		csv += "hobbleskirt,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousArmCuffs))
+		csv += "armcuffs,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousLegCuffs))
+		csv += "legcuffs,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousAnkleShackles))
+		csv += "ankleshackles,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousPlugVaginal))
+		csv += "plugvaginal,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousPlugAnal))
+		csv += "pluganal,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousClamps))
+		csv += "clamps,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousCorset))
+		csv += "corset,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousHood))
+		csv += "hood,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousHarness))
+		csv += "harness,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousGloves))
+		csv += "gloves,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousSuit) || akActor.WornHasKeyword(libs.zad_DeviousPetSuit))
+		csv += "suit,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousPiercingsNipple))
+		csv += "piercingsnipple,"
+	endif
+	if (akActor.WornHasKeyword(libs.zad_DeviousPiercingsVaginal))
+		csv += "piercingsvaginal,"
+	endif
+	return csv
+EndFunction
+
+; Push the actor's current device list to the server (fires on equip/remove)
+Function SendDeviceState(Actor akActor)
+	if (!hasDeviousDevices || !akActor)
+		return
+	endif
+	AIAgentFunctions.logMessage(akActor.GetDisplayName() + "^" + GetWornDevicesCSV(akActor), "ext_nsfw_devices")
+EndFunction
+
+Event OnDDDeviceChanged(Form inventoryDevice, Form deviceKeyword, Form akActor)
+	SendDeviceState(akActor as Actor)
+EndEvent
+
 ; Check if actor is wearing chastity belt
 bool Function IsWearingChastityBelt(Actor akActor)
-	if (!hasDeviousDevices || !akActor || !zad_DeviousBelt)
+	if (!hasDeviousDevices || !akActor || !libs)
 		return false
 	endif
-	return akActor.WornHasKeyword(zad_DeviousBelt)
+	return akActor.WornHasKeyword(libs.zad_DeviousBelt)
 EndFunction
 
 ; Check if actor is wearing chastity bra
 bool Function IsWearingChastityBra(Actor akActor)
-	if (!hasDeviousDevices || !akActor || !zad_DeviousBra)
+	if (!hasDeviousDevices || !akActor || !libs)
 		return false
 	endif
-	return akActor.WornHasKeyword(zad_DeviousBra)
+	return akActor.WornHasKeyword(libs.zad_DeviousBra)
 EndFunction
 
 ; ============================================
-; VR CONSENT MENU (UIExtensions wheel)
+; CONSENT MENU (UIExtensions list - works in VR and flatscreen)
 ; ============================================
-; Shows a VR-compatible consent popup using UIWheelMenu
+; Shows a Yes/No list popup; the question is shown as a notification
 ; Returns true if user accepts, false if declined
-; Uses UIExtensions which works in VR (unlike SkyMessage)
 bool Function ShowVRConsentMenu(string npcName, string actionDescription)
-	; Initialize wheel menu with Yes/No options
-	string[] _options = new String[8]
-	string[] _labels = new String[8]
-
-	_options[0] = "Yes"
-	_options[1] = "No"
-	_options[2] = ""
-	_options[3] = ""
-	_options[4] = ""
-	_options[5] = ""
-	_options[6] = ""
-	_options[7] = ""
-
-	_labels[0] = "Yes, please!"
-	_labels[1] = "No, thanks"
-	_labels[2] = ""
-	_labels[3] = ""
-	_labels[4] = ""
-	_labels[5] = ""
-	_labels[6] = ""
-	_labels[7] = ""
-
-	; Show notification with the question
 	Debug.Notification(npcName + " " + actionDescription)
-
-	UIExtensions.InitMenu("UIWheelMenu")
-
-	int j = 0
-	while j < 8
-		UIExtensions.SetMenuPropertyIndexString("UIWheelMenu", "optionLabelText", j, _labels[j])
-		UIExtensions.SetMenuPropertyIndexString("UIWheelMenu", "optionText", j, _options[j])
-		; Only enable first two options (Yes/No)
-		if j < 2
-			UIExtensions.SetMenuPropertyIndexBool("UIWheelMenu", "optionEnabled", j, true)
-		else
-			UIExtensions.SetMenuPropertyIndexBool("UIWheelMenu", "optionEnabled", j, false)
-		endif
-		j = j + 1
-	endwhile
-
-	int ret = UIExtensions.OpenMenu("UIWheelMenu")
-
-	; ret == 0 is "Yes", ret == 1 is "No", ret == -1 is cancelled
+	UIListMenu listMenu = UIExtensions.GetMenu("UIListMenu") as UIListMenu
+	if !listMenu
+		return false
+	endif
+	listMenu.AddEntryItem("Yes")
+	listMenu.AddEntryItem("No")
+	listMenu.OpenMenu()
+	int ret = listMenu.GetResultInt()
+	; 0 = Yes, 1 = No, -1 = cancelled
 	if ret == 0
 		return true
 	else
@@ -241,27 +296,26 @@ bool Function ShowVRConsentMenu(string npcName, string actionDescription)
 	endif
 EndFunction
 
-; Unified consent function - uses VR wheel or SkyMessage based on VR detection
-string Function GetPlayerConsent(string npcName, string actionDescription)
-	if isVRMode
-		; VR Mode - use UIWheelMenu (SkyMessage doesn't work in VR)
-		bool accepted = ShowVRConsentMenu(npcName, actionDescription)
-		if accepted
-			return "Yes, please!"
-		else
-			return "No, thanks"
-		endif
-	else
-		; Flatscreen mode - use SkyMessage
-		; SkyMessage.Show returns the button label as a String
-		; 0 = first button (Yes), 1 = second button (No), -1 = cancelled/timeout
-		string choice = SkyMessage.Show(npcName + " " + actionDescription, "Yes, please!", "No, thanks")
-		if choice == "Yes, please!"
-			return "Yes, please!"
-		else
-			return "No, thanks"
-		endif
+; Prisma consent seam: returns 1=yes 0=no -1=unavailable (Rangroo's prisma-ui-confirmations, unreleased)
+int Function ShowPrismaConsent(string npcName, string actionDescription)
+	if !usePrismaConsent
+		return -1
 	endif
+	; TODO(prisma): call CHIM's Prisma confirmation API here and map its result to 1/0
+	return -1
+EndFunction
+
+; Consent gate: Prisma confirmation when available, otherwise auto-accept (no prompt without Prisma)
+string Function GetPlayerConsent(string npcName, string actionDescription)
+	int prismaResult = ShowPrismaConsent(npcName, actionDescription)
+	if prismaResult == 1
+		return "Yes, please!"
+	elseif prismaResult == 0
+		return "No, thanks"
+	endif
+
+	; No Prisma available -> auto-accept (ShowVRConsentMenu kept below to re-enable a fallback prompt if wanted)
+	return "Yes, please!"
 EndFunction
 
 ; ============================================
@@ -328,96 +382,6 @@ string Function GetHeldItemInOtherHand(bool grabbingWithLeft)
 	return itemName
 EndFunction
 
-; ============================================================================
-; [CHIM-CORE] VR ITEM GRAB/DROP HANDLERS
-; ============================================================================
-; These two functions handle non-actor item pickup/drop.
-; Ready for migration to core CHIM - no NSFW content.
-; ============================================================================
-
-; [CHIM-CORE] Handle item grabbed (non-actor objects)
-Function HandleItemGrabbed(ObjectReference refr, bool isLeft)
-	if !hasHIGGS
-		return
-	endif
-
-	; Get item name
-	string itemName = refr.GetDisplayName()
-	if itemName == ""
-		Form baseForm = refr.GetBaseObject()
-		if baseForm
-			itemName = baseForm.GetName()
-		endif
-	endif
-
-	if itemName == ""
-		itemName = "something"
-	endif
-
-	; Update hand tracking
-	string handSide = "right"
-	if isLeft
-		handSide = "left"
-		vrLeftHandItem = itemName
-	else
-		vrRightHandItem = itemName
-	endif
-
-	Debug.Trace("[CHIM-VR] Item grabbed: " + itemName + " with " + handSide + " hand")
-
-	; Debounce check
-	float currentTime = Utility.GetCurrentRealTime()
-	if currentTime - vrLastItemEventTime < vrItemEventCooldown
-		return
-	endif
-	vrLastItemEventTime = currentTime
-
-	; Send to PHP - format: itemname^pickup^hand
-	string rawData = itemName + "^pickup^" + handSide
-	AIAgentFunctions.logMessage(rawData, "ext_vr_item_raw")
-EndFunction
-
-; [CHIM-CORE] Handle item dropped (non-actor objects)
-Function HandleItemDropped(ObjectReference refr, bool isLeft)
-	if !hasHIGGS
-		return
-	endif
-
-	; Get item name
-	string itemName = refr.GetDisplayName()
-	if itemName == ""
-		Form baseForm = refr.GetBaseObject()
-		if baseForm
-			itemName = baseForm.GetName()
-		endif
-	endif
-
-	if itemName == ""
-		itemName = "something"
-	endif
-
-	; Update hand tracking
-	string handSide = "right"
-	if isLeft
-		handSide = "left"
-		vrLeftHandItem = ""
-	else
-		vrRightHandItem = ""
-	endif
-
-	Debug.Trace("[CHIM-VR] Item dropped: " + itemName + " from " + handSide + " hand")
-
-	; Debounce check
-	float currentTime = Utility.GetCurrentRealTime()
-	if currentTime - vrLastItemEventTime < vrItemEventCooldown
-		return
-	endif
-	vrLastItemEventTime = currentTime
-
-	; Send to PHP - format: itemname^drop^hand
-	string rawData = itemName + "^drop^" + handSide
-	AIAgentFunctions.logMessage(rawData, "ext_vr_item_raw")
-EndFunction
 
 ; ============================================================================
 ; [NSFW-ONLY] HIGGS ACTOR GRAB/DROP EVENTS - GROPING DETECTION
@@ -437,8 +401,8 @@ Event OnObjectGrabbed(ObjectReference refr, bool isLeft)
 
 	Actor target = refr as Actor
 	if !target
-		; Not an actor - handle as item pickup
-		HandleItemGrabbed(refr, isLeft)
+		; Not an actor - VR item pickup is owned by AIAgentVRItems.psc (the CHIM-core-bound VR-items script).
+		; Don't emit ext_vr_item_raw here too, or every VR grab double-fires. Grope (actor) path continues below.
 		return
 	endif
 
@@ -473,13 +437,14 @@ Event OnObjectGrabbed(ObjectReference refr, bool isLeft)
 	; Track for drop event
 	currentlyGrabbedActor = target
 	currentlyGrabbedNode = nodeName
+	currentlyGrabbedBodyPart = bodyPart
 	grabStartTime = Utility.GetCurrentRealTime()
 	isGrabbing = true
 
 	; Get what's in the OTHER hand (the one not grabbing the NPC)
 	string heldItem = GetHeldItemInOtherHand(isLeft)
 
-	; Ambiguous body parts that might actually be sensitive areas
+	; Ambiguous body parts that might actually be sexual areas
 	; Shoulder (near breasts), Back (near butt), Belly (near vaginal)
 	; For these, wait for CBPC to tell us the precise location
 	bool needsCBPCConfirmation = (bodyPart == SHOULDER_KEY || bodyPart == BACK_KEY || bodyPart == BELLY_KEY)
@@ -494,7 +459,7 @@ Event OnObjectGrabbed(ObjectReference refr, bool isLeft)
 		hasPendingGrab = false
 	else
 		; HIGGS returned generic or ambiguous node - wait for CBPC to tell us exact location
-		; Ambiguous nodes (Shoulder/Back/Belly) might actually be sensitive areas (Breasts/Butt/Pussy)
+		; Ambiguous nodes (Shoulder/Back/Belly) might actually be sexual areas (Breasts/Butt/Pussy)
 		; Store pending grab info for CBPC correlation
 		pendingGrabActor = target
 		pendingGrabHand = handSide
@@ -556,6 +521,7 @@ Function SendCorrelatedGrab(string bodyPart, Actor akActor)
 	Debug.Trace("[CHIM-NSFW] HIGGS+CBPC Correlated: " + rawData)
 	AIAgentFunctions.logMessage(rawData, "ext_nsfw_physics_raw")
 	lastPhysicsSpeechTime = Utility.GetCurrentRealTime()
+	currentlyGrabbedBodyPart = bodyPart
 
 	ClearPendingGrab()
 EndFunction
@@ -598,8 +564,8 @@ Event OnObjectDropped(ObjectReference refr, bool isLeft)
 
 	Actor target = refr as Actor
 	if !target
-		; Not an actor - handle as item drop
-		HandleItemDropped(refr, isLeft)
+		; Not an actor - VR item drop is owned by AIAgentVRItems.psc (the CHIM-core-bound VR-items script).
+		; Don't emit ext_vr_item_raw here too, or every VR drop double-fires. Grope (actor) path continues below.
 		return
 	endif
 
@@ -609,6 +575,9 @@ Event OnObjectDropped(ObjectReference refr, bool isLeft)
 
 	float holdDuration = Utility.GetCurrentRealTime() - grabStartTime
 	string bodyPart = MapNodeToBodyPart(currentlyGrabbedNode)
+	if currentlyGrabbedBodyPart != ""
+		bodyPart = currentlyGrabbedBodyPart
+	endif
 	string actorName = target.GetDisplayName()
 	string handSide = "right"
 	if isLeft
@@ -625,6 +594,7 @@ Event OnObjectDropped(ObjectReference refr, bool isLeft)
 	isGrabbing = false
 	currentlyGrabbedActor = None
 	currentlyGrabbedNode = ""
+	currentlyGrabbedBodyPart = ""
 	grabStartTime = 0.0
 EndEvent
 
@@ -868,7 +838,6 @@ function DoRegister()
 	RegisterForModEvent("CHIM_SpeechStarted", "HelperSpeechStart")
 	
 	RegisterForModEvent("ostim_event", "OstimEvent")
-	RegisterForModEvent("ostim_thread_start", "OStimStart")
 	RegisterForModEvent("ostim_actor_orgasm", "OStimOrgasm")
 	;RegisterForModEvent("ocum_play_cum_shoot_effect", "OCumPlayCumShoot")
 	RegisterForModEvent("ostim_scenechanged", "OStimSceneChanged")
@@ -891,6 +860,27 @@ function DoRegister()
 	; NPC-to-NPC invite phase - when dom actor approaches sub actor
 	UnRegisterForModEvent("ostim_npc_invite")
 	RegisterForModEvent("ostim_npc_invite", "OStimNpcInvite")
+
+	; ============================================
+	; SEXLAB EVENTS - global Hook* ModEvents fire for EVERY SexLab scene (incl NPC-to-NPC).
+	; No SetHook needed. Handlers below mirror the OStim paths.
+	; ============================================
+	UnRegisterForModEvent("HookAnimationStart")
+	UnRegisterForModEvent("HookStageStart")
+	UnRegisterForModEvent("HookAnimationEnd")
+	UnRegisterForModEvent("SexLabOrgasm")
+	RegisterForModEvent("HookAnimationStart", "OnSexLabAnimStart")
+	RegisterForModEvent("HookStageStart", "OnSexLabStageStart")
+	RegisterForModEvent("HookAnimationEnd", "OnSexLabAnimEnd")
+	RegisterForModEvent("SexLabOrgasm", "OnSexLabActorOrgasm")
+
+	; ============================================
+	; DEVIOUS DEVICES EVENTS (soft - only matter if DD is installed)
+	; ============================================
+	UnRegisterForModEvent("DDI_DeviceEquipped")
+	UnRegisterForModEvent("DDI_DeviceRemoved")
+	RegisterForModEvent("DDI_DeviceEquipped", "OnDDDeviceChanged")
+	RegisterForModEvent("DDI_DeviceRemoved", "OnDDDeviceChanged")
 
 	UnRegisterForModEvent("FertilityModeImpregnate")
 	RegisterForModEvent("FertilityModeImpregnate", "FertilityImpregnated")
@@ -939,6 +929,9 @@ function DoRegister()
 	playerRef = Game.GetPlayer()
 	InitDeviousDevices()  ; Initialize DD soft dependency
 	InitHIGGS()           ; Initialize HIGGS soft dependency
+	if grabCorrelationWindow < 1.25
+		grabCorrelationWindow = 1.25
+	endif
 
 	; Initialize collider tracking map
 	if (actorsWithColliders == 0)
@@ -1000,7 +993,7 @@ Function InitNodeDefinitions()
 	BackNodes[0] = "NPC Spine [Spn0]"
 	BackNodes[1] = "CME Spine [Spn0]"
 
-	; Breast nodes - expanded from MinAI
+	; Breast nodes
 	BreastNodes = new String[10]
 	BreastNodes[0] = "L Breast01"
 	BreastNodes[1] = "L Breast02"
@@ -1542,12 +1535,283 @@ Event HelperSpeechStop(Form npc)
 	EndIf
 EndEvent
 
+string Function FormatNsfwCommandNotification(String npcname, String command, String parameter)
+	if command == "ExtCmdPoisonMasterFood"
+		return ""
+	elseif command == "ExtCmdWhiskeyDick"
+		return ""
+	elseif command == "ExtCmdDrunkPhysics"
+		return ""
+	elseif command == "ExtCmdRefuseSex"
+		return npcname + " refused intimacy."
+	elseif command == "ExtCmdStopScene"
+		return npcname + " ended the scene."
+	elseif command == "ExtCmdStopNpcScene"
+		return npcname + " ended the NPC scene."
+	elseif command == "ExtCmdCollectPayment"
+		return npcname + " collected payment."
+	elseif command == "ExtCmdQuitProstitution"
+		return npcname + " quit prostitution."
+	elseif command == "ExtCmdWorshipMaster"
+		return npcname + " worships their master."
+	elseif command == "ExtCmdAskForFreedom"
+		return npcname + " asks their master for freedom."
+	elseif command == "ExtCmdAcceptFreedom"
+		return npcname + " is freed by their master."
+	elseif command == "ExtCmdSexCommand"
+		if parameter != ""
+			return npcname + " changed the scene: " + parameter
+		endif
+		return npcname + " changed the scene."
+	elseif command == "ExtCmdHug"
+		return npcname + " hugged " + parameter + "."
+	elseif command == "ExtCmdHoldHands"
+		return npcname + " held hands with " + parameter + "."
+	elseif command == "ExtCmdKiss"
+		return npcname + " kissed " + parameter + "."
+	elseif command == "ExtCmdRemoveClothes"
+		return npcname + " removed clothing."
+	elseif command == "ExtCmdPutOnClothes"
+		return npcname + " got dressed."
+	elseif command == "ExtCmdStartMassage"
+		return npcname + " started a massage with " + parameter + "."
+	elseif command == "ExtCmdStartSex" || command == "ExtCmdStartThreesome" || command == "ExtCmdStartBlowJob" || command == "ExtCmdStartTitfuck" || command == "ExtCmdStartAnalSex" || command == "ExtCmdStartHandjobSex" || command == "ExtCmdStartHandJobSex"
+		return npcname + " started an intimate scene with " + parameter + "."
+	endif
+
+	return ""
+EndFunction
+
 
 Event CommandManager(String npcname,String  command, String parameter)
 
-	Debug.Notification("[CHIM NSFW] External command "+command+ " received for "+npcname)
-	Debug.Trace("[CHIM NSFW] External command "+command+ " received for "+npcname)
+	string readableCommand = FormatNsfwCommandNotification(npcname, command, parameter)
+	if readableCommand != ""
+		Debug.Notification(readableCommand)
+	endif
+	Debug.Trace("[CHIM NSFW] External command "+command+ " received for "+npcname+" parameter="+parameter)
 	Actor npc=AIAgentFunctions.getAgentByName(npcname);
+
+	; VAMPIRE DETECTION (report once per NPC): the SERVER cannot detect vampires because Skyrim collapses the race to
+	; its base name ("Nord"), so the stored race never contains "vampire". Report it here the way Fertility Mode
+	; Reloaded does - the RACE FORM carries a "Vampire" keyword even when its display name is just "Nord". Cached in
+	; StorageUtil so the silent ext_nsfw_vampire fast event fires only once per actor per session. Gates DrinkBloodSex.
+	if npc != None && StorageUtil.GetIntValue(npc, "sharmat_vampchecked", 0) == 0
+		StorageUtil.SetIntValue(npc, "sharmat_vampchecked", 1)
+		string vflag = "0"
+		Race npcRace = npc.GetRace()
+		if npcRace != None && npcRace.HasKeywordString("Vampire")
+			vflag = "1"
+		endif
+		AIAgentFunctions.logMessage("VAMPIRE^" + npcname + "^" + vflag, "ext_nsfw_vampire")
+		Debug.Trace("[CHIM-NSFW] Vampire check for " + npcname + " -> " + vflag)
+	endif
+
+	if (command=="ExtCmdWhiskeyDick")
+		; PLAYER-ONLY EFFECT (fix 2026-07-02): the named NPC is just the delivery carrier (the DLL only
+		; dispatches commands addressed to a registered agent) - everything here targets the PLAYER.
+		Debug.Notification("Sharmat- You have Whiskey Dick!")
+		Debug.SendAnimationEvent(Game.GetPlayer(), "SOSFlaccid") ; limp the schlong via SOS (base-game anim event; no-op if SOS/schlong absent)
+		if parameter == "stopscene"
+			; In-scene trigger: the carrier IS the player's scene partner - end the player's scene.
+			Debug.Trace("[CHIM-NSFW] WhiskeyDick: notifying player, limping (SOSFlaccid), stopping player scene")
+			command = "ExtCmdStopScene"
+		else
+			; On-drink trigger (no scene): do NOT fall through to StopScene - the carrier may be in her
+			; own unrelated scene and must not be touched.
+			Debug.Trace("[CHIM-NSFW] WhiskeyDick: notifying player, limping (SOSFlaccid) - no scene stop")
+			return
+		endif
+	endif
+
+	if (command=="ExtCmdPoisonMasterFood")
+		SendModEvent("SHARMAT_ArmSlavePoison", npcname + "@" + parameter, 0.0)
+		AIAgentFunctions.logMessageForActor("command@ExtCmdPoisonMasterFood@armed@poison trap armed", "funcret", npcname)
+		return
+	endif
+
+	if (command=="ExtCmdCollectPayment")
+		Form gold = Game.GetForm(0x0000000F)
+		Actor playerRefLocal = Game.GetPlayer()
+		String[] paymentParts = StringUtil.Split(parameter, "@")
+		int amount = 0
+		string serviceDesc = "services"
+		if paymentParts.Length > 0
+			amount = paymentParts[0] as int
+		else
+			amount = parameter as int
+		endif
+		if paymentParts.Length > 1
+			serviceDesc = paymentParts[1]
+		endif
+
+		if amount <= 0
+			Debug.Trace("[CHIM-NSFW] TakeGold failed: invalid amount '" + parameter + "'")
+			AIAgentFunctions.logMessageForActor("command@ExtCmdCollectPayment@" + amount + "@payment_failed: invalid gold amount", "funcret", npcname)
+			return
+		endif
+
+		int playerGold = playerRefLocal.GetItemCount(gold)
+		if playerGold < amount
+			Debug.Trace("[CHIM-NSFW] TakeGold failed: player has " + playerGold + " gold, needs " + amount)
+			AIAgentFunctions.logMessageForActor("command@ExtCmdCollectPayment@" + amount + "@payment_failed: player has " + playerGold + " gold, needs " + amount, "funcret", npcname)
+			return
+		endif
+
+		playerRefLocal.RemoveItem(gold, amount, true)
+		if npc != None
+			npc.AddItem(gold, amount, true)
+		endif
+
+		int playerGoldAfter = playerRefLocal.GetItemCount(gold)
+		Debug.Trace("[CHIM-NSFW] TakeGold success: transferred " + amount + " gold to " + npcname + " for " + serviceDesc + ". Player gold now " + playerGoldAfter)
+		AIAgentFunctions.logMessageForActor("command@ExtCmdCollectPayment@" + amount + "@payment_success: took " + amount + " gold for " + serviceDesc + "; player_gold_before=" + playerGold + "; player_gold_after=" + playerGoldAfter, "funcret", npcname)
+		return
+	endif
+
+	if (command=="ExtCmdQuitProstitution")
+		AIAgentFunctions.logMessageForActor("command@ExtCmdQuitProstitution@" + parameter + "@" + npcname + " stops working as a prostitute", "funcret", npcname)
+		return
+	endif
+
+	if (command=="ExtCmdGiveFreeService")
+		AIAgentFunctions.logMessageForActor("command@ExtCmdGiveFreeService@" + parameter + "@" + npcname + " gives this service for free", "funcret", npcname)
+		return
+	endif
+
+	if (command=="ExtCmdWorshipMaster")
+		AIAgentFunctions.logMessageForActor("command@ExtCmdWorshipMaster@" + parameter + "@" + npcname + " worships their master", "funcret", npcname)
+		return
+	endif
+
+	if (command=="ExtCmdAskForFreedom")
+		AIAgentFunctions.logMessageForActor("command@ExtCmdAskForFreedom@" + parameter + "@" + npcname + " asks for freedom", "funcret", npcname)
+		return
+	endif
+
+	if (command=="ExtCmdAcceptFreedom")
+		AIAgentFunctions.logMessageForActor("command@ExtCmdAcceptFreedom@" + parameter + "@" + npcname + " is freed by their master", "funcret", npcname)
+		return
+	endif
+
+	if (command=="ExtCmdStartSex" || command=="ExtCmdStartThreesome" || command=="ExtCmdStartBlowJob" || command=="ExtCmdStartTitfuck" || command=="ExtCmdStartAnalSex" || command=="ExtCmdStartHandJobSex" || command=="ExtCmdStartHandjobSex" || command=="ExtCmdStartMassage" || command=="ExtCmdDrinkBloodSex")
+		; REAL EXECUTION (2026-06-29): the old path only printed "started an intimate scene" and never animated.
+		; Resolve the target and actually START (or JOIN, for a threesome) an OStim/SexLab scene via the engine.
+		Actor sceneTarget = AIAgentFunctions.getAgentByName(parameter)
+		if sceneTarget == None
+			sceneTarget = Game.GetPlayer()
+		endif
+		; Steer scene selection by the act the model actually called, so StartBlowJob picks a blowjob scene,
+		; StartAnalSex an anal scene, etc. (the engine falls back to a random scene if no tagged match exists).
+		string sceneAct = ""
+		if command=="ExtCmdStartSex"
+			sceneAct = "vaginal"
+		elseif command=="ExtCmdStartBlowJob"
+			sceneAct = "oral"
+		elseif command=="ExtCmdStartAnalSex"
+			sceneAct = "anal"
+		elseif command=="ExtCmdStartHandJobSex" || command=="ExtCmdStartHandjobSex"
+			sceneAct = "handjob"
+		elseif command=="ExtCmdStartTitfuck"
+			sceneAct = "boobjob"
+		elseif command=="ExtCmdStartMassage"
+			sceneAct = "massage"
+		elseif command=="ExtCmdDrinkBloodSex"
+			sceneAct = "bloodfeed"
+		endif
+		bool sceneHandled = AIAgentNSFWSceneEngine.StartOrJoinScene(npc, sceneTarget, true, sceneAct)
+		if sceneHandled
+			AIAgentFunctions.logMessageForActor("command@" + command + "@" + parameter + "@" + npcname + " started/joined an intimate scene with " + parameter, "funcret", npcname)
+		else
+			AIAgentFunctions.logMessageForActor("command@" + command + "@" + parameter + "@error: could not start or join a scene with " + parameter, "funcret", npcname)
+		endif
+		return
+	endif
+
+	if (command=="ExtCmdDrunkPhysics")
+		if npc == None
+			Debug.Trace("[CHIM-NSFW] DrunkPhysics skipped: actor not found for " + npcname)
+			return
+		endif
+
+		String[] drunkPhysParts = StringUtil.Split(parameter, "@")
+		string reaction = "stumble"
+		int stage = 0
+		float force = 6.0
+		bool requireMovement = true
+		int movingFallChance = 60
+		int standingFallChance = 20
+		int stage9StumbleChance = 50
+		if drunkPhysParts.Length > 0
+			reaction = drunkPhysParts[0]
+		endif
+		if drunkPhysParts.Length > 1
+			stage = drunkPhysParts[1] as int
+		endif
+		if drunkPhysParts.Length > 2
+			force = drunkPhysParts[2] as float
+		endif
+		if drunkPhysParts.Length > 3
+			requireMovement = (drunkPhysParts[3] as int) != 0
+		endif
+		if drunkPhysParts.Length > 4
+			movingFallChance = drunkPhysParts[4] as int
+		endif
+		if drunkPhysParts.Length > 5
+			standingFallChance = drunkPhysParts[5] as int
+		endif
+		if drunkPhysParts.Length > 6
+			stage9StumbleChance = drunkPhysParts[6] as int
+		endif
+
+		float animSpeed = npc.GetAnimationVariableFloat("Speed")
+		if animSpeed < 0.0
+			animSpeed = 0.0 - animSpeed
+		endif
+		bool actorMoving = animSpeed > 0.10 || npc.IsRunning() || npc.IsSprinting()
+
+		if requireMovement && !actorMoving && reaction != "stage9_roll"
+			Debug.Trace("[CHIM-NSFW] DrunkPhysics skipped for " + npcname + ": stationary at stage " + stage + " (reaction " + reaction + ")")
+			return
+		endif
+
+		if reaction == "stage9_roll"
+			int roll = Utility.RandomInt(1, 100)
+			int movingStumbleLimit = movingFallChance + stage9StumbleChance
+			int standingStumbleLimit = standingFallChance + stage9StumbleChance
+			if actorMoving
+				if roll <= movingFallChance
+					npc.PushActorAway(npc, 2.0)
+					Debug.Trace("[CHIM-NSFW] DrunkPhysics stage9 moving fall fired for " + npcname + " speed " + animSpeed + " roll " + roll + "/" + movingFallChance)
+				elseif roll <= movingStumbleLimit
+					float angle9 = Utility.RandomFloat(0.0, 6.28318)
+					npc.ApplyHavokImpulse(Math.Sin(angle9), Math.Cos(angle9), 0.0, force)
+					Debug.Trace("[CHIM-NSFW] DrunkPhysics stage9 moving stumble fired for " + npcname + " speed " + animSpeed + " roll " + roll)
+				else
+					Debug.Trace("[CHIM-NSFW] DrunkPhysics stage9 moving no-op for " + npcname + " speed " + animSpeed + " roll " + roll)
+				endif
+			else
+				if roll <= standingFallChance
+					npc.PushActorAway(npc, 0.8)
+					Debug.Trace("[CHIM-NSFW] DrunkPhysics stage9 standing fall fired for " + npcname + " roll " + roll + "/" + standingFallChance)
+				elseif roll <= standingStumbleLimit
+					float angle9s = Utility.RandomFloat(0.0, 6.28318)
+					npc.ApplyHavokImpulse(Math.Sin(angle9s), Math.Cos(angle9s), 0.0, force)
+					Debug.Trace("[CHIM-NSFW] DrunkPhysics stage9 standing stumble fired for " + npcname + " roll " + roll)
+				else
+					Debug.Trace("[CHIM-NSFW] DrunkPhysics stage9 stationary no-op for " + npcname + " roll " + roll)
+				endif
+			endif
+		elseif reaction == "fall"
+			npc.PushActorAway(npc, 2.0)
+			Debug.Trace("[CHIM-NSFW] DrunkPhysics fall fired for " + npcname + " at stage " + stage + " speed " + animSpeed)
+		else
+			float angle = Utility.RandomFloat(0.0, 6.28318)
+			npc.ApplyHavokImpulse(Math.Sin(angle), Math.Cos(angle), 0.0, force)
+			Debug.Trace("[CHIM-NSFW] DrunkPhysics stumble fired for " + npcname + " at stage " + stage + " speed " + animSpeed + " force " + force)
+		endif
+		return
+	endif
 	
 	if (command=="ExtCmdRemoveClothes")
 	
@@ -2125,7 +2389,68 @@ Event CommandManager(String npcname,String  command, String parameter)
 
 	endIf	
 	
-	if (command=="ExtCmdStartSex" || command=="ExtCmdStartThreesome" || command=="ExtCmdStartBlowJob" || command=="ExtCmdStartMassage" || command=="ExtCmdStartTitfuck" || command=="ExtCmdStartAnalSex" || command=="ExtCmdStartHandjobSex")
+	if (command=="ExtCmdHoldHands")
+
+
+		string result = GetPlayerConsent(npc.GetDisplayName(), "wants to hold your hand. Allow?")
+		if result == "No, thanks"
+			AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Player refused to hold hands","funcret",npcname)
+			return;
+		endif
+
+		Actor receiver=Game.GetPlayer();
+		if (npc.GetSitState()==3 || npc.GetSitState()==2)
+			Debug.SendAnimationEvent(npc, "IdleForceDefaultState")
+		endif
+
+		if (npc.GetDistance(receiver)>512)
+			AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Player is too far away to hold hands","funcret",npcname)
+			return
+		endif
+
+		Debug.Trace("[CHIM-NSFW] HoldHands: Using OStim for hand-holding alignment")
+
+		AIAgentAIMind.ResetPackages(npc)
+		Package doNothing = Game.GetForm(0x654e2) as Package
+		ActorUtil.AddPackageOverride(npc, doNothing, 100, 0)
+		npc.EvaluatePackage()
+
+		Actor[] handActors = new Actor[2]
+		handActors[0] = npc
+		handActors[1] = receiver
+
+		Actor[] sortedActors = OActorUtil.Sort(handActors, OActorUtil.toArray())
+
+		if OActor.VerifyActors(sortedActors)
+			string handScene = "OARE_StandingHandHolding"
+
+			int builderID = OThreadBuilder.create(sortedActors)
+			OThreadBuilder.SetStartingAnimation(builderID, handScene)
+			int handThreadID = OThreadBuilder.Start(builderID)
+
+			Debug.Trace("[CHIM-NSFW] HoldHands: Started OStim thread " + handThreadID + " with scene: " + handScene)
+
+			AIAgentFunctions.setAnimationBusy(1, npcname)
+			Wait(5)
+
+			if handThreadID >= 0 && OThread.IsRunning(handThreadID)
+				OThread.Stop(handThreadID)
+			endif
+
+			AIAgentFunctions.setAnimationBusy(0, npcname)
+		else
+			Debug.Trace("[CHIM-NSFW] HoldHands: Actor verification failed")
+			AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Could not start hand-holding animation","funcret",npcname)
+		endif
+
+		ActorUtil.RemovePackageOverride(npc, doNothing)
+		npc.EvaluatePackage()
+
+		AIAgentFunctions.logMessageForActor("command@ExtCmdHoldHands@"+parameter+"@"+npcname+" holds hands with "+parameter+"","funcret",npcname)
+
+	endIf	
+	
+	if (command=="ExtCmdStartSex" || command=="ExtCmdStartThreesome" || command=="ExtCmdStartBlowJob" || command=="ExtCmdStartMassage" || command=="ExtCmdStartTitfuck" || command=="ExtCmdStartAnalSex" || command=="ExtCmdStartHandjobSex" || command=="ExtCmdStartHandJobSex")
 		
 		
 		noFacialExpressionsFaction = Game.GetFormFromFile(0xD92, "OStim.esp") as Faction ; Package Travelto
@@ -2145,7 +2470,48 @@ Event CommandManager(String npcname,String  command, String parameter)
 		
 		;AIAgentFunctions.logMessage("ENJOY THE SEX SCENE!. NO QUEST, NO DUTIES NOW. ONLY PLEASURE","force_current_task")
 		AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@Intimate scene starts","funcret",npcname)
-		
+
+		; ENGINE SELECT: OStim if installed, otherwise SexLab. Both use actorsInvolved, which PrepareScene has
+		; already populated with the PLAYER as the default partner. The OStim path continues below unchanged;
+		; the SexLab path starts the scene here and returns. (Verified against SexLabUtil.QuickStart signature.)
+		if (Game.GetModByName("OStim.esp") == 255)
+			string slTag = ""
+			if (command=="ExtCmdStartSex")
+				slTag = "Vaginal"
+			elseif (command=="ExtCmdStartBlowJob")
+				slTag = "Blowjob"
+			elseif (command=="ExtCmdStartAnalSex")
+				slTag = "Anal"
+			elseif (command=="ExtCmdStartTitfuck")
+				slTag = "Boobjob"
+			elseif (command=="ExtCmdStartHandjobSex" || command=="ExtCmdStartHandJobSex")
+				slTag = "Handjob"
+			endif
+			Actor slA2 = none
+			Actor slA3 = none
+			Actor slA4 = none
+			Actor slA5 = none
+			if (actorsInvolved.Length > 1)
+				slA2 = actorsInvolved[1]
+			endif
+			if (actorsInvolved.Length > 2)
+				slA3 = actorsInvolved[2]
+			endif
+			if (actorsInvolved.Length > 3)
+				slA4 = actorsInvolved[3]
+			endif
+			if (actorsInvolved.Length > 4)
+				slA5 = actorsInvolved[4]
+			endif
+			sslThreadController slc = SexLabUtil.QuickStart(actorsInvolved[0], slA2, slA3, slA4, slA5, none, "", slTag)
+			if (!slc && slTag != "")
+				; Tag found no matching animation in the player's pack - retry untagged so a scene still starts.
+				slc = SexLabUtil.QuickStart(actorsInvolved[0], slA2, slA3, slA4, slA5, none, "", "")
+			endif
+			Debug.Trace("[CHIM-NSFW] Launched SexLab scene (tag="+slTag+", actors="+actorsInvolved.Length+")")
+			return
+		endif
+
 		mdi=AIAgentFunctions.get_conf_i("_max_distance_inside");
 		mdo=AIAgentFunctions.get_conf_i("_max_distance_outside");
 		
@@ -2163,7 +2529,7 @@ Event CommandManager(String npcname,String  command, String parameter)
 			
 			String initialSceneText="";
 			if (command=="ExtCmdStartSex" )
-				initialSceneText="idle";
+				initialSceneText="vaginalsex";
 			elseif (command=="ExtCmdStartThreesome" )
 				initialSceneText="idle";
 			elseif	(command=="ExtCmdStartBlowJob")
@@ -2218,7 +2584,7 @@ Event CommandManager(String npcname,String  command, String parameter)
 				initialSceneText="analsex";
 				
 			
-			elseif (command=="ExtCmdStartHandjobSex")
+			elseif (command=="ExtCmdStartHandjobSex" || command=="ExtCmdStartHandJobSex")
 				int limit = 15
 				int n = 0
 				while (n < limit)
@@ -2324,6 +2690,7 @@ Event CommandManager(String npcname,String  command, String parameter)
 		; Actor firing the event
 		
 		Actor[] actorsInvolved=PrepareScene(npc,"");
+		AIAgentNSFWSceneEngine.StartSoloScene(npc, "masturbation") ; actually animate the solo scene (2026-06-29)
 		AIAgentFunctions.logMessage("ENJOY THE SEX SCENE!. NO QUEST, NO DUTIES NOW. ONLY PLEASURE","force_current_task")
 		AIAgentFunctions.logMessageForActor("command@ExtCmdStartSelfMasturbation@"+parameter,"funcret",npcname)
 		
@@ -2343,6 +2710,25 @@ Event CommandManager(String npcname,String  command, String parameter)
 	endIf	
 	
 	
+	if (command=="ExtCmdQuickenPace" || command=="ExtCmdSlowPace")
+		if (OActor.IsInOStim(npc))
+			int paceThr = OActor.GetSceneId(npc)
+			if paceThr >= 0 && OThread.IsRunning(paceThr)
+				int curSpeed = OThread.GetSpeed(paceThr)
+				int newSpeed = curSpeed + 1
+				if command=="ExtCmdSlowPace"
+					newSpeed = curSpeed - 1
+				endif
+				if newSpeed < 0
+					newSpeed = 0
+				endif
+				OThread.SetSpeed(paceThr, newSpeed) ; OStim clamps to the scene's max
+				Debug.Trace("[CHIM-NSFW] "+command+": "+npc.GetDisplayName()+" pace "+curSpeed+" -> "+newSpeed+" (thread "+paceThr+")")
+			endif
+		endif
+		return
+	endif
+
 	if (command=="ExtCmdSexCommand")
 		;
 		if (OActor.IsInOStim(npc))
@@ -2353,7 +2739,11 @@ Event CommandManager(String npcname,String  command, String parameter)
 			String sceneId=OThread.GetScene(thrId2)
 			
 			Debug.Trace("[CHIM-NSFW] "+npc.GetDisplayName()+"@ExtCmdSexCommand@"+parameter+" thrId: "+thrId+" thrId2: "+thrId2);
-			Actor[] actorsInvolved=OThread.GetActors(thrId)
+			Actor[] actorsInvolved = GetOStimThreadParticipantsSafe(thrId2) ; LIVE thread - the SceneEngine does not set ostimThreadId storage, so thrId can be stale/0
+			if actorsInvolved == None || CountValidActors(actorsInvolved) < 1
+				Debug.Trace("[CHIM-NSFW] ExtCmdSexCommand: No actors for thread " + thrId2)
+				return
+			endif
 			
 			int i=0
 			while i < actorsInvolved.Length
@@ -2452,7 +2842,7 @@ Event CommandManager(String npcname,String  command, String parameter)
 			
 			
 			;String newScene=OLibrary.GetRandomScene(actorsInvolved)
-			OThread.WarpTo(thrId,actionScene2,true)
+			OThread.WarpTo(thrId2,actionScene2,true)
 			
 			Debug.Trace("[CHIM-NSFW] <"+actionScene2+"> <"+sanitizedTag+">, Actors:"+actorsInvolved.length);			
 		endif
@@ -2473,22 +2863,63 @@ Event CommandManager(String npcname,String  command, String parameter)
 	endif
 
 	; ============================================
-	; ExtCmdStopScene / ExtCmdRefuseSex - Stop player OStim scene
-	; Both commands stop the scene, PHP handles the semantic difference
-	; (RefuseSex sets rejected phase, StopScene just ends it)
+	; ExtCmdStopScene - Stop player OStim/SexLab scene
 	; ============================================
-	if (command == "ExtCmdStopScene" || command == "ExtCmdRefuseSex")
+	; ExtCmdRefuseSex is SPEECH/STATE ONLY now - decoupled from the mechanical stop. PHP owns the routing and
+	; queues a SEPARATE ExtCmdStopScene only when the NPC is NOT drunk/sap exit-locked. So RefuseSex must NOT
+	; stop the scene here; it only logs the refusal. The drunk/sap "can refuse, cannot exit" rule lives in PHP.
+	if (command == "ExtCmdRefuseSex")
+		Debug.Trace("[CHIM-NSFW] ExtCmdRefuseSex: refusal recorded, no scene stop (PHP routes the mechanical stop)")
+		AIAgentFunctions.logMessage("NPC refused sexual advances", "ext_nsfw_action")
+	endif
+
+	if (command == "ExtCmdStopScene")
 		Debug.Trace("[CHIM-NSFW] " + command + ": Stopping player scene")
-		; Stop all running threads that involve the player
+		bool stoppedAny = false
+		Actor playerActor = Game.GetPlayer()
+
+		; OStim thread IDs are not guaranteed to be dense 0..GetThreadCount()-1 values.
+		; Ask OStim which thread the player/NPC is actually in before falling back to a scan.
+		int playerThreadId = OActor.GetSceneId(playerActor)
+		if playerThreadId >= 0 && OThread.IsRunning(playerThreadId)
+			Debug.Trace("[CHIM-NSFW] Stopping player scene thread from OActor.GetSceneId(player): " + playerThreadId)
+			OThread.Stop(playerThreadId)
+			stoppedAny = true
+		endif
+
+		if npc && OActor.IsInOStim(npc)
+			int npcThreadId = OActor.GetSceneId(npc)
+			if npcThreadId >= 0 && npcThreadId != playerThreadId && OThread.IsRunning(npcThreadId)
+				Actor[] npcThreadActors = GetOStimThreadParticipantsSafe(npcThreadId)
+				int na = 0
+				bool npcThreadHasPlayer = false
+				while npcThreadActors != None && na < npcThreadActors.Length
+					if npcThreadActors[na] != None && npcThreadActors[na] == playerActor
+						npcThreadHasPlayer = true
+					endif
+					na += 1
+				endwhile
+				if npcThreadHasPlayer
+					Debug.Trace("[CHIM-NSFW] Stopping player scene thread from OActor.GetSceneId(npc): " + npcThreadId)
+					OThread.Stop(npcThreadId)
+					stoppedAny = true
+				endif
+			endif
+		endif
+
+		; Fallback for older OStim behavior where GetSceneId is unavailable/stale.
 		int threadCount = OThread.GetThreadCount()
 		int t = 0
 		while t < threadCount
 			if OThread.IsRunning(t)
-				Actor[] actors = OThread.GetActors(t)
+				Actor[] actors = GetOStimThreadParticipantsSafe(t)
+				if actors == None || CountValidActors(actors) < 1
+					Debug.Trace("[CHIM-NSFW] ExtCmdStopScene: No actors for running thread " + t)
+				else
 				int a = 0
 				bool playerInThread = false
 				while a < actors.Length
-					if actors[a] == Game.GetPlayer()
+					if actors[a] != None && actors[a] == playerActor
 						playerInThread = true
 					endif
 					a += 1
@@ -2496,15 +2927,28 @@ Event CommandManager(String npcname,String  command, String parameter)
 				if playerInThread
 					Debug.Trace("[CHIM-NSFW] Stopping player scene thread: " + t)
 					OThread.Stop(t)
+					stoppedAny = true
+				endif
 				endif
 			endif
 			t += 1
 		endwhile
-		if (command == "ExtCmdRefuseSex")
-			AIAgentFunctions.logMessage("NPC refused sexual advances", "ext_nsfw_action")
-		else
-			AIAgentFunctions.logMessage("Scene ended by NPC", "ext_nsfw_action")
+		if !stoppedAny
+			Debug.Trace("[CHIM-NSFW] " + command + ": no running player OStim thread found to stop")
 		endif
+		; Also end any SexLab player scene so refuse/stop exits both engines
+		SexLabFramework SexLabStop = SexLabUtil.GetAPI()
+		if (SexLabStop)
+			int slTid = SexLabStop.FindActorController(Game.GetPlayer())
+			if (slTid >= 0)
+				sslThreadController slController = SexLabStop.GetController(slTid)
+				if (slController)
+					Debug.Trace("[CHIM-NSFW] Stopping player SexLab scene thread: " + slTid)
+					slController.EndAnimation()
+				endif
+			endif
+		endif
+		AIAgentFunctions.logMessage("Scene ended by NPC", "ext_nsfw_action")
 	endif
 
 EndEvent
@@ -2538,7 +2982,16 @@ Actor[] Function PrepareScene(Actor npc,String parameter)
 		EndIf
 		i = i+1
 	EndWhile
-	
+
+	; If the parameter named no partner (e.g. it was an act like "vaginalsex", or empty), the scene is meant
+	; with the PLAYER she's talking to - add the player as the partner so OStim builds a couple scene instead
+	; of a solo / masturbation one.
+	bool defaultPlayerPartner = false
+	if (totalArraySize == 0 && !addplayer)
+		defaultPlayerPartner = true
+		totalArraySize = totalArraySize + 1
+	endif
+
 	Actor[] actorsInvolved= PapyrusUtil.ActorArray(totalArraySize+1, None)
 	int j=1
 	actorsInvolved[0] = npc; Add caller NPC
@@ -2567,9 +3020,14 @@ Actor[] Function PrepareScene(Actor npc,String parameter)
 		i = i+1
 
 	EndWhile
-	
-		
-	return actorsInvolved;	
+
+	if (defaultPlayerPartner)
+		actorsInvolved[j] = Game.GetPlayer()
+		j = j+1
+		Debug.Trace("[CHIM-NSFW] [2] No partner named in parameter - defaulting scene partner to the player")
+	endif
+
+	return actorsInvolved;
 	
 endFunction
 
@@ -2588,23 +3046,30 @@ Event OStimStart(string eventName, string strArg, float numArg, Form sender)
 	int threadID = numArg as int
 
 	; Get actors in this thread
-	Actor[] Actors = OThread.GetActors(threadID)
+	Actor[] Actors = GetOStimThreadParticipantsSafe(threadID)
 	string SceneID = OThread.GetScene(threadID)
 
-	Debug.Trace("[CHIM-NSFW] OStimStart: ThreadID=" + threadID + ", SceneID=" + SceneID + ", Actors count=" + Actors.Length)
+	if Actors == None || CountValidActors(Actors) < 1
+		Debug.Trace("[CHIM-NSFW] OStimStart: No valid actors for ThreadID=" + threadID + ", SceneID=" + SceneID)
+		return
+	endif
+
+	Debug.Trace("[CHIM-NSFW] OStimStart: ThreadID=" + threadID + ", SceneID=" + SceneID + ", Actors count=" + CountValidActors(Actors))
 
 	; Check if player is in scene and find first NPC
 	bool playerInScene = false
 	Actor firstNpcInScene = None
 	int i = 0
 	while i < Actors.Length
-		if Actors[i] == Game.GetPlayer()
-			playerInScene = true
-			Debug.Trace("[CHIM-NSFW] OStimStart: Player is in scene")
-		else
-			if firstNpcInScene == None
-				firstNpcInScene = Actors[i]
-				Debug.Trace("[CHIM-NSFW] OStimStart: First NPC is " + Actors[i].GetDisplayName())
+		if Actors[i] != None
+			if Actors[i] == Game.GetPlayer()
+				playerInScene = true
+				Debug.Trace("[CHIM-NSFW] OStimStart: Player is in scene")
+			else
+				if firstNpcInScene == None
+					firstNpcInScene = Actors[i]
+					Debug.Trace("[CHIM-NSFW] OStimStart: First NPC is " + Actors[i].GetDisplayName())
+				endif
 			endif
 		endif
 		i += 1
@@ -2622,7 +3087,9 @@ Event OStimStart(string eventName, string strArg, float numArg, Form sender)
 		string actorList = ""
 		int j = 0
 		while j < Actors.Length
-			actorList = actorList + "/" + Actors[j].GetDisplayName()
+			if Actors[j] != None
+				actorList = actorList + "/" + Actors[j].GetDisplayName()
+			endif
 			j += 1
 		endwhile
 
@@ -2642,10 +3109,280 @@ Event OStimStart(string eventName, string strArg, float numArg, Form sender)
 
 EndEvent
 
+int Function FindActorIndexInList(Actor[] actors, Actor target)
+	if actors == None || target == None
+		return -1
+	endif
+
+	int i = 0
+	while i < actors.Length
+		if actors[i] == target
+			return i
+		endif
+		i += 1
+	endwhile
+
+	return -1
+EndFunction
+
+int Function CountValidActors(Actor[] participants)
+	if participants == None
+		return 0
+	endif
+
+	int count = 0
+	int i = 0
+	while i < participants.Length
+		if participants[i] != None
+			count += 1
+		endif
+		i += 1
+	endwhile
+
+	return count
+EndFunction
+
+Actor[] Function GetOStimThreadParticipantsSafe(int threadID)
+	Actor[] participants = new Actor[6]
+	int count = 0
+	int index = 0
+	while index < 6
+		Actor participant = OThread.GetActor(threadID, index)
+		if participant != None
+			participants[count] = participant
+			count += 1
+		endif
+		index += 1
+	endwhile
+
+	if count < 1
+		return None
+	endif
+
+	return participants
+EndFunction
+
+; ============================================
+; NPC SCENE ROSTER + TEARDOWN STASH (up to 5 NPC actors)
+; ============================================
+; Live actor resolution is unreliable at the moments we need it (thread-start JSON is empty,
+; thread-end JSON often fails to parse / the thread is already torn down). So we:
+;   1. carry the FULL roster on the wire as actors=<json> (server registers everyone), and
+;   2. stash the roster per-thread so the end event can always fire chatnf_sl_end -> clean teardown.
+
+int Function GetNpcSceneStashMap()
+	if npcSceneActorStash == 0
+		npcSceneActorStash = JMap.Object()
+		JValue.Retain(npcSceneActorStash)
+	endif
+	return npcSceneActorStash
+EndFunction
+
+string Function BuildNpcActorsJson(Actor[] participants)
+	string j = "["
+	int i = 0
+	int added = 0
+	while i < participants.Length && added < 5
+		if participants[i] != None && participants[i] != Game.GetPlayer()
+			if added > 0
+				j += ","
+			endif
+			j += "\"" + participants[i].GetDisplayName() + "\""
+			added += 1
+		endif
+		i += 1
+	endwhile
+	j += "]"
+	return j
+EndFunction
+
+Function StashNpcSceneActors(int threadID, Actor[] participants)
+	if participants == None || threadID < 0
+		return
+	endif
+	int names = JArray.Object()
+	int i = 0
+	int added = 0
+	while i < participants.Length && added < 5
+		if participants[i] != None && participants[i] != Game.GetPlayer()
+			JArray.AddStr(names, participants[i].GetDisplayName())
+			added += 1
+		endif
+		i += 1
+	endwhile
+	if added > 0
+		JMap.SetObj(GetNpcSceneStashMap(), "thr_" + threadID, names)
+	endif
+EndFunction
+
+string Function BuildScoringFromStash(int threadID)
+	if threadID < 0
+		return ""
+	endif
+	int names = JMap.GetObj(GetNpcSceneStashMap(), "thr_" + threadID)
+	if names == 0 || JArray.Count(names) < 1
+		return ""
+	endif
+	string scoring = ""
+	int i = 0
+	while i < JArray.Count(names)
+		scoring = scoring + "/" + JArray.GetStr(names, i) + "@100"
+		i += 1
+	endwhile
+	return scoring
+EndFunction
+
+Function ClearStashedNpcSceneActors(int threadID)
+	JMap.RemoveKey(GetNpcSceneStashMap(), "thr_" + threadID)
+EndFunction
+
+string Function ResolveOStimOrgasmPartnerName(Actor orgasmer, int threadID, string sceneID)
+	lastResolvedOStimOrgasmActionType = ""
+
+	if orgasmer == None
+		return ""
+	endif
+
+	Actor[] actors = None
+	if threadID >= 0
+		actors = GetOStimThreadParticipantsSafe(threadID)
+	endif
+
+	int orgasmerIndex = FindActorIndexInList(actors, orgasmer)
+	if sceneID != "" && orgasmerIndex >= 0 && actors != None
+		; PENETRATIVE-PRIORITY (no FMR dependency): the orgasm partner is whoever the orgasmer is actually penetrating
+		; or being penetrated by - NOT whatever secondary act (handjob/footjob) happens to be listed first. In a 3-way
+		; this is what credited the scene-starter (e.g. Lisette) instead of the real partner (Vivian). Search the
+		; penetrative acts FIRST and return that target; only fall through to the broader list below if none. (2026-06-29)
+		int penActionIndex = OMetadata.FindAnyActionForActorCSV(sceneID, orgasmerIndex, OSTIM_PENETRATIVE_ACTION_TYPES)
+		if penActionIndex != -1
+			lastResolvedOStimOrgasmActionType = OMetadata.GetActionType(sceneID, penActionIndex)
+			int penTargetIndex = OMetadata.GetActionTarget(sceneID, penActionIndex)
+			if penTargetIndex >= 0 && penTargetIndex < actors.Length
+				Actor penTarget = actors[penTargetIndex]
+				if penTarget != None && penTarget != orgasmer
+					Debug.Trace("[CHIM-NSFW] OStim orgasm PENETRATIVE actor->target: " + orgasmer.GetDisplayName() + " -> " + penTarget.GetDisplayName() + " action=" + lastResolvedOStimOrgasmActionType)
+					return penTarget.GetDisplayName()
+				endif
+			endif
+		endif
+		penActionIndex = OMetadata.FindAnyActionForTargetCSV(sceneID, orgasmerIndex, OSTIM_PENETRATIVE_ACTION_TYPES)
+		if penActionIndex != -1
+			lastResolvedOStimOrgasmActionType = OMetadata.GetActionType(sceneID, penActionIndex)
+			int penActorIndex = OMetadata.GetActionActor(sceneID, penActionIndex)
+			if penActorIndex >= 0 && penActorIndex < actors.Length
+				Actor penActor = actors[penActorIndex]
+				if penActor != None && penActor != orgasmer
+					Debug.Trace("[CHIM-NSFW] OStim orgasm PENETRATIVE target<-actor: " + orgasmer.GetDisplayName() + " <- " + penActor.GetDisplayName() + " action=" + lastResolvedOStimOrgasmActionType)
+					return penActor.GetDisplayName()
+				endif
+			endif
+		endif
+		int actionIndex = OMetadata.FindAnyActionForActorCSV(sceneID, orgasmerIndex, OSTIM_ORGASM_ACTION_TYPES)
+		if actionIndex != -1
+			lastResolvedOStimOrgasmActionType = OMetadata.GetActionType(sceneID, actionIndex)
+			int targetIndex = OMetadata.GetActionTarget(sceneID, actionIndex)
+			if targetIndex >= 0 && targetIndex < actors.Length
+				Actor targetActor = actors[targetIndex]
+				if targetActor != None && targetActor != orgasmer
+					Debug.Trace("[CHIM-NSFW] OStim orgasm metadata actor->target: " + orgasmer.GetDisplayName() + " -> " + targetActor.GetDisplayName() + " action=" + lastResolvedOStimOrgasmActionType)
+					return targetActor.GetDisplayName()
+				endif
+			endif
+		endif
+
+		actionIndex = OMetadata.FindAnyActionForTargetCSV(sceneID, orgasmerIndex, OSTIM_ORGASM_ACTION_TYPES)
+		if actionIndex != -1
+			lastResolvedOStimOrgasmActionType = OMetadata.GetActionType(sceneID, actionIndex)
+			int actorIndex = OMetadata.GetActionActor(sceneID, actionIndex)
+			if actorIndex >= 0 && actorIndex < actors.Length
+				Actor actorPartner = actors[actorIndex]
+				if actorPartner != None && actorPartner != orgasmer
+					Debug.Trace("[CHIM-NSFW] OStim orgasm metadata target<-actor: " + orgasmer.GetDisplayName() + " <- " + actorPartner.GetDisplayName() + " action=" + lastResolvedOStimOrgasmActionType)
+					return actorPartner.GetDisplayName()
+				endif
+			endif
+		endif
+	endif
+
+	OSexIntegrationMain ostim = Game.GetFormFromFile(0x000801, "Ostim.esp") as OSexIntegrationMain
+	if ostim
+		Actor sexPartner = ostim.GetSexPartner(orgasmer)
+		if sexPartner != None && sexPartner != orgasmer
+			lastResolvedOStimOrgasmActionType = "ostim_partner_fallback"
+			Debug.Trace("[CHIM-NSFW] OStim orgasm partner fallback: " + orgasmer.GetDisplayName() + " -> " + sexPartner.GetDisplayName())
+			return sexPartner.GetDisplayName()
+		endif
+	endif
+
+	if actors != None
+		int i = 0
+		while i < actors.Length
+			if actors[i] != None && actors[i] != orgasmer
+				lastResolvedOStimOrgasmActionType = "actor_list_fallback"
+				Debug.Trace("[CHIM-NSFW] OStim orgasm actor-list fallback: " + orgasmer.GetDisplayName() + " -> " + actors[i].GetDisplayName())
+				return actors[i].GetDisplayName()
+			endif
+			i += 1
+		endwhile
+	endif
+
+	return ""
+EndFunction
+
+; General per-actor scene-partner resolver for the SPEAKING NPC. Engine-authoritative so 3+ scenes attribute
+; correctly: the server used to GUESS first-other, so in a threesome two NPCs would "talk like they're fucking
+; each other" while both were actually paired with the third. OStim: metadata action->target (reuses
+; ResolveOStimOrgasmPartnerName, whose action-type CSV covers all partnered acts, not just orgasm). SexLab: the
+; other position (exact for 2 actors; best-effort first-other for 3+, since SexLab has no per-action targeting).
+string Function ResolveSceneSpeakerPartner(Actor speaker, int threadID, string routeName)
+	if speaker == None
+		return ""
+	endif
+
+	if routeName == "SexLabNpcSceneStart" || routeName == "SexLabNpcStage"
+		SexLabFramework SexLab = SexLabUtil.GetAPI()
+		if SexLab
+			int tid = threadID
+			if tid < 0
+				tid = SexLab.FindActorController(speaker)
+			endif
+			if tid >= 0
+				sslThreadController controller = SexLab.GetController(tid)
+				if controller
+					Actor[] pos = controller.Positions
+					if pos
+						int i = 0
+						while i < pos.Length
+							if pos[i] != None && pos[i] != speaker && pos[i] != Game.GetPlayer()
+								return pos[i].GetDisplayName()
+							endif
+							i += 1
+						endwhile
+					endif
+				endif
+			endif
+		endif
+		return ""
+	endif
+
+	; OStim route - resolve the speaker's CURRENT action partner from scene metadata.
+	string sceneID = ""
+	if threadID >= 0
+		sceneID = OThread.GetScene(threadID)
+	endif
+	return ResolveOStimOrgasmPartnerName(speaker, threadID, sceneID)
+EndFunction
+
 Event OstimOrgasm(string eventName, string strArg, float numArg, Form sender)
 
 	int threadID = numArg as int
 	Actor orgasmer = sender as Actor
+
+	if orgasmer == None
+		Debug.Trace("[CHIM-NSFW] OstimOrgasm: No valid orgasmer actor")
+		return
+	endif
 
 	Debug.Trace("[CHIM-NSFW] OstimOrgasm: "+eventName+","+StrArg+","+numArg+","+orgasmer.GetDisplayName())
 	if (sender.GetName()=="OSexIntegrationMainQuest")
@@ -2657,28 +3394,35 @@ Event OstimOrgasm(string eventName, string strArg, float numArg, Form sender)
 	int orgasmerIndex = 0
 	string partnerName = ""
 
+	bool sceneHasPlayer = false
 	if (threadID >= 0)
 		sceneID = OThread.GetScene(threadID)
-		Actor[] actors = OThread.GetActors(threadID)
+		Actor[] actors = GetOStimThreadParticipantsSafe(threadID)
 
-		; Find orgasmer's position and a partner
+		; Find orgasmer's position and a partner; also detect whether the PLAYER is in this thread so an NPC-to-NPC
+		; climax is not misrouted through the player consent/refusal handler (the is_npc_scene misclassification bug).
 		int i = 0
-		while (i < actors.Length)
-			if (actors[i] == orgasmer)
-				orgasmerIndex = i
-			elseif (partnerName == "")
-				partnerName = actors[i].GetDisplayName()
-			endif
-			i += 1
-		endWhile
+		if actors != None
+			while (i < actors.Length)
+				if (actors[i] != None && actors[i] == orgasmer)
+					orgasmerIndex = i
+				endif
+				if (actors[i] != None && actors[i] == playerRef)
+					sceneHasPlayer = true
+				endif
+				i += 1
+			endWhile
+		endif
 	endif
 
-	; Build data string: OrgasmerName/SceneID/OrgasmerIndex/PartnerName
+	partnerName = ResolveOStimOrgasmPartnerName(orgasmer, threadID, sceneID)
+
+	; Build data string: OrgasmerName/SceneID/OrgasmerIndex/PartnerName/ActionType
 	string orgasmData = orgasmer.GetDisplayName()
 	if (sceneID != "")
-		orgasmData = orgasmData + "/" + sceneID + "/" + orgasmerIndex
-		if (partnerName != "")
-			orgasmData = orgasmData + "/" + partnerName
+		orgasmData = orgasmData + "/" + sceneID + "/" + orgasmerIndex + "/" + partnerName
+		if lastResolvedOStimOrgasmActionType != ""
+			orgasmData = orgasmData + "/" + lastResolvedOStimOrgasmActionType
 		endif
 	endif
 
@@ -2688,22 +3432,26 @@ Event OstimOrgasm(string eventName, string strArg, float numArg, Form sender)
 	bool isPlayerOrgasm = (orgasmer == playerRef)
 
 	if (!isPlayerOrgasm)
-		; NPC orgasmed - send directly to that NPC
-		Debug.Trace("[CHIM-NSFW] NPC orgasm - sending to: " + orgasmer.GetDisplayName())
-		AIAgentFunctions.requestMessageForActor(orgasmData, "ext_nsfw_orgasm", orgasmer.GetDisplayName())
-	else
-		; Player orgasmed - ask OStim who the actual sex partner is (handles threesomes correctly)
-		string targetName = partnerName  ; fallback to first non-player found
-		OSexIntegrationMain ostim = Game.GetFormFromFile(0x000801, "Ostim.esp") as OSexIntegrationMain
-		if (ostim)
-			Actor sexPartner = ostim.GetSexPartner(orgasmer)
-			if (sexPartner)
-				targetName = sexPartner.GetDisplayName()
-			endif
+		; NPC orgasmed. Player IN the thread -> ext_nsfw_orgasm (player-scene handler). Player NOT in the thread
+		; (NPC-to-NPC) -> ext_nsfw_npc_orgasm, so the NPC climax is NOT run through the player consent/refusal
+		; suppression (which was leaving is_npc_scene=false and latching scene_phase='rejected'). Mirrors the SexLab
+		; handler + OStimSubthreadOrgasm payload (actor^partner^scene^action).
+		if (sceneHasPlayer)
+			Debug.Trace("[CHIM-NSFW] NPC orgasm (player scene) - sending to: " + orgasmer.GetDisplayName())
+			AIAgentFunctions.requestMessageForActor(orgasmData, "ext_nsfw_orgasm", orgasmer.GetDisplayName())
+		else
+			Debug.Trace("[CHIM-NSFW] NPC-to-NPC orgasm - sending ext_nsfw_npc_orgasm to: " + orgasmer.GetDisplayName())
+			AIAgentFunctions.requestMessageForActor(orgasmer.GetDisplayName() + "^" + partnerName + "^" + sceneID + "^" + lastResolvedOStimOrgasmActionType, "ext_nsfw_npc_orgasm", orgasmer.GetDisplayName())
 		endif
-		if (targetName != "")
-			Debug.Trace("[CHIM-NSFW] Player orgasm - routing to: " + targetName)
-			AIAgentFunctions.requestMessageForActor(orgasmData, "ext_nsfw_orgasm", targetName)
+	else
+		; Player orgasmed - partnerName is the metadata target/fallback; mark PLAYER_ORGASM and route to them
+		if (partnerName != "")
+			string playerOrgasmData = "PLAYER_ORGASM/" + sceneID + "/" + orgasmerIndex + "/" + partnerName
+			if lastResolvedOStimOrgasmActionType != ""
+				playerOrgasmData = playerOrgasmData + "/" + lastResolvedOStimOrgasmActionType
+			endif
+			Debug.Trace("[CHIM-NSFW] Player orgasm - routing to: " + partnerName + " action=" + lastResolvedOStimOrgasmActionType)
+			AIAgentFunctions.requestMessageForActor(playerOrgasmData, "ext_nsfw_orgasm", partnerName)
 		endif
 	endif
 EndEvent
@@ -2729,35 +3477,38 @@ Event OStimSceneChanged(string EventName, string SceneID, float NumArg, Form Sen
 	Debug.Trace("[CHIM-NSFW] Furniture used: "+furnitureType+", ThreadID: "+threadId)
 
 	Actor participantTalk = None;
+	bool playerInScene = false
 
-	Actor[] participants=OThread.GetActors(threadId)
-	String actorList;
+	Actor[] participants = GetOStimThreadParticipantsSafe(threadId)
+	String actorList = "";
 	if (participants != none)
 		int i = 0
 		while i < participants.Length
 			Actor participant = participants[i]
-			; Do something with actor
-			actorList=actorList+"/"+participant.GetDisplayName()
-			
-			
-			String actorTags=OCSV.ToCSVList(OMetadata.GetActorTags(SceneID,i))
-			Debug.Trace("[CHIM-NSFW] Participant: " + participant.GetDisplayName()+" tags:"+actorTags)
-			
-			if (participant == Game.GetPlayer())
-				Debug.Trace("[CHIM-NSFW] Participant is player " + participant.GetDisplayName())
-			else
-				bool isMouthOpen=OActor.HasExpressionOverride(participant)
-				if (isMouthOpen)
-					Debug.Trace("[CHIM-NSFW] Participant is 'mouth busy' :" + participant.GetDisplayName())
-					AIAgentFunctions.setLocked(1,participant.GetDisplayName())
+			if participant != None
+				; Do something with actor
+				String actorTags=OCSV.ToCSVList(OMetadata.GetActorTags(SceneID,i))
+				; Send actor name WITH their role tags so PHP knows who is doing what
+				actorList=actorList+"/"+participant.GetDisplayName()+"^"+actorTags
+				Debug.Trace("[CHIM-NSFW] Participant: " + participant.GetDisplayName()+" tags:"+actorTags)
+				
+				if (participant == Game.GetPlayer())
+					playerInScene = true
+					Debug.Trace("[CHIM-NSFW] Participant is player " + participant.GetDisplayName())
 				else
-					Debug.Trace("[CHIM-NSFW] Participant is NOT 'mouth busy' " + participant.GetDisplayName())
-					AIAgentFunctions.setLocked(0,participant.GetDisplayName())
-					if (OMetadata.HasAnySceneTagCSV(SceneID,"sex,reversecowgirl,cowgirl,missionary,cunnilingus,doggystyle,prone")) ; Define this policy
-						participantTalk=participant
+					bool isMouthOpen=OActor.HasExpressionOverride(participant)
+					if (isMouthOpen)
+						Debug.Trace("[CHIM-NSFW] Participant is 'mouth busy' :" + participant.GetDisplayName())
+						AIAgentFunctions.setLocked(1,participant.GetDisplayName())
+					else
+						Debug.Trace("[CHIM-NSFW] Participant is NOT 'mouth busy' " + participant.GetDisplayName())
+						AIAgentFunctions.setLocked(0,participant.GetDisplayName())
+						if (OMetadata.HasAnySceneTagCSV(SceneID,"sex,reversecowgirl,cowgirl,missionary,cunnilingus,doggystyle,prone")) ; Define this policy
+							participantTalk=participant
+						endif
 					endif
+					AIAgentFunctions.setAnimationBusy(1,participant.GetDisplayName())
 				endif
-				AIAgentFunctions.setAnimationBusy(1,participant.GetDisplayName())
 			endif
 
 			i += 1
@@ -2767,6 +3518,17 @@ Event OStimSceneChanged(string EventName, string SceneID, float NumArg, Form Sen
 	; Always send scene data to Narrator for state tracking (updates current_scene_desc for all actors, no LLM call)
 	AIAgentFunctions.logMessage(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "info_sexscene")
 
+	; CONSENT BARK (fast accept/refuse decision). participantTalk is only set when the scene is at an explicit
+	; sex position (tier 3), so this is the moment the player scene becomes explicit. Fire a fast ext_nsfw_consent_bark
+	; ONCE per thread so the server resolves the NPC's accept/refuse decision INSTANTLY (it is a fast command and
+	; bypasses the MAIN semaphore) instead of waiting on the scene queue. Player scenes only (playerInScene). The
+	; server treats it exactly like the scene's sexcene turn, so the model decides with full context and no player input.
+	if (participantTalk && playerInScene && threadId != consentBarkThreadId)
+		consentBarkThreadId = threadId
+		AIAgentFunctions.requestMessageForActor(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "ext_nsfw_consent_bark", participantTalk.GetDisplayName())
+		Debug.Trace("[CHIM-NSFW] CONSENT BARK fired for thread " + threadId + " -> " + participantTalk.GetDisplayName())
+	endif
+
 	; Also route scene event to NPC for dialogue response (only when mouth is free)
 	if (participantTalk)
 		AIAgentFunctions.requestMessageForActor(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "ext_nsfw_sexcene", participantTalk.GetDisplayName())
@@ -2774,42 +3536,67 @@ Event OStimSceneChanged(string EventName, string SceneID, float NumArg, Form Sen
 
 	; Send chatnf_sl to ALL participants — each has their own 30s cooldown
 	; Removed mouth-lock restriction so NPCs comment during active sex positions
-	int k = 0
-	while (k < participants.Length)
-		Actor talkActor = participants[k]
-		if (talkActor != Game.GetPlayer())
-			float daysPassed = Utility.GetCurrentGameTime()
-			float lastTalkedTime = StorageUtil.GetFloatValue(talkActor, "chim_ostim_talk_cooldown", 0)
-			if ((daysPassed - lastTalkedTime) > 0.00694)	;30 irl seconds
-				float excitement = OActor.GetExcitement(talkActor)
-				Debug.Trace("[CHIM-NSFW] " + talkActor.GetDisplayName() + " auto-talk, excitement:" + excitement)
-				if (excitement <= 80)
-					AIAgentFunctions.requestMessageForActor("", "chatnf_sl", talkActor.GetDisplayName())
-					StorageUtil.SetFloatValue(talkActor, "chim_ostim_talk_cooldown", daysPassed)
+	if participants != None
+		int k = 0
+		while (k < participants.Length)
+			Actor talkActor = participants[k]
+			if (talkActor != None && talkActor != Game.GetPlayer())
+				float daysPassed = Utility.GetCurrentGameTime()
+				float lastTalkedTime = StorageUtil.GetFloatValue(talkActor, "chim_ostim_talk_cooldown", 0)
+				if ((daysPassed - lastTalkedTime) > 0.00694)	;30 irl seconds
+					float excitement = OActor.GetExcitement(talkActor)
+					Debug.Trace("[CHIM-NSFW] " + talkActor.GetDisplayName() + " auto-talk, excitement:" + excitement)
+					if (excitement <= 80)
+						; Legacy chatnf_sl auto-talk disabled. ext_nsfw_sexcene owns model prompting.
+						; AIAgentFunctions.requestMessageForActor("", "chatnf_sl", talkActor.GetDisplayName())
+						StorageUtil.SetFloatValue(talkActor, "chim_ostim_talk_cooldown", daysPassed)
+					else
+						; Legacy chatnf_sl auto-talk disabled. ext_nsfw_sexcene owns model prompting.
+						; AIAgentFunctions.requestMessageForActor("", "chatnf_sl_moan", talkActor.GetDisplayName())
+					endif
 				else
-					AIAgentFunctions.requestMessageForActor("", "chatnf_sl_moan", talkActor.GetDisplayName())
+					Debug.Trace("[CHIM-NSFW] Auto talk in cooldown for " + talkActor.GetDisplayName())
+					; Legacy chatnf_sl auto-talk disabled. ext_nsfw_sexcene owns model prompting.
+					; AIAgentFunctions.requestMessageForActor("", "chatnf_sl_moan", talkActor.GetDisplayName())
 				endif
-			else
-				Debug.Trace("[CHIM-NSFW] Auto talk in cooldown for " + talkActor.GetDisplayName())
-				AIAgentFunctions.requestMessageForActor("", "chatnf_sl_moan", talkActor.GetDisplayName())
 			endif
-		endif
-		k += 1
-	endWhile
+			k += 1
+		endWhile
+	else
+		Debug.Trace("[CHIM-NSFW] OStimSceneChanged: No participants for auto-talk")
+	endif
 	
 EndEvent
 
 Event OStimEnd(string EventName, string Json, float NumArg, Form Sender)
 	; the following code only works with API version 7.3.1 or higher
 	Debug.Trace("[CHIM-NSFW] OStimEnd: "+EventName+","+Json+","+numArg+","+sender.GetName())
-	Actor[] Actors = OJSON.GetActors(Json)
-	string SceneID = OJSON.GetScene(Json)
+	int threadID = NumArg as int
+	Actor[] Actors = None
+	string SceneID = ""
+	if Json != ""
+		Actors = OJSON.GetActors(Json)
+		SceneID = OJSON.GetScene(Json)
+	endif
+	if Actors == None || CountValidActors(Actors) < 1
+		Actors = GetOStimThreadParticipantsSafe(threadID)
+	endif
+	if SceneID == ""
+		SceneID = OThread.GetScene(threadID)
+	endif
+	if Actors == None || CountValidActors(Actors) < 1
+		Debug.Trace("[CHIM-NSFW] OStimEnd: No valid actors for ThreadID=" + threadID + ", SceneID=" + SceneID)
+		return
+	endif
 
 	bool playerInScene=false
 	int i=0;
 	string scoring=""
 	while i < Actors.Length
 			Actor participant = Actors[i]
+			if participant == None
+				i += 1
+			else
 			
 			Debug.Trace("[CHIM-NSFW] OStimEnd. Participant: " + participant.GetDisplayName())
 			
@@ -2821,13 +3608,19 @@ Event OStimEnd(string EventName, string Json, float NumArg, Form Sender)
 				AIAgentFunctions.setAnimationBusy(0,participant.GetDisplayName())
 			endif
 
-			scoring="/"+ participant.GetDisplayName()+"@100";
+			scoring = scoring + "/" + participant.GetDisplayName() + "@100"
 
 			i += 1
+			endif
 	endwhile
 	
-	; Will do on thread end
-	;AIAgentFunctions.requestMessage(scoring,"chatnf_sl_end")
+	; OStimThreadEnd bails for the player thread (thread 0 - OJSON.GetActors fails / thread already torn down),
+	; so the player scene would NEVER tear down: scene_phase/sex_started/current_scene_desc linger and the NPC
+	; keeps narrating sex while just standing. Send the end HERE, where we have valid resolved actors + scoring.
+	if (playerInScene)
+		AIAgentFunctions.requestMessage(scoring,"chatnf_sl_end")
+		Debug.Trace("[CHIM-NSFW] OStimEnd: sent chatnf_sl_end for player scene teardown -> " + scoring)
+	endif
 
 	; Change this to restore from CHIM MCM directly
 	if (playerInScene)
@@ -2842,31 +3635,104 @@ Event OStimEnd(string EventName, string Json, float NumArg, Form Sender)
 		
 EndEvent
 
+Actor Function PickNpcSceneSpeaker(Actor[] participants)
+	if participants == None || participants.Length < 1
+		return None
+	endif
+
+	int usable = 0
+	int i = 0
+	while i < participants.Length
+		if participants[i] != None && participants[i] != Game.GetPlayer()
+			usable += 1
+		endif
+		i += 1
+	endwhile
+	if usable < 1
+		return None
+	endif
+
+	int target = npcSceneTalkCounter
+	while target >= usable
+		target -= usable
+	endwhile
+	npcSceneTalkCounter += 1
+
+	i = 0
+	int seen = 0
+	while i < participants.Length
+		if participants[i] != None && participants[i] != Game.GetPlayer()
+			if seen == target
+				return participants[i]
+			endif
+			seen += 1
+		endif
+		i += 1
+	endwhile
+
+	return None
+EndFunction
+
+Function RequestNpcSceneTurn(Actor[] participants, string npcSceneData, string routeName, int threadID = -1)
+	; Carry the FULL roster (up to 5 NPCs) so the server registers EVERY participant, not just the first two.
+	; The server (processNpcScene) parses the trailing actors=<json> field and falls back to npc1/npc2 only if absent.
+	string fullData = npcSceneData + "^actors=" + BuildNpcActorsJson(participants)
+	; Stash the roster per-thread so the scene-end handler can always tear down cleanly.
+	StashNpcSceneActors(threadID, participants)
+	Actor speaker = PickNpcSceneSpeaker(participants)
+	if speaker != None
+		; Engine-authoritative partner for THIS speaker so threesomes attribute correctly (server consumes partner=).
+		string speakerPartner = ResolveSceneSpeakerPartner(speaker, threadID, routeName)
+		if speakerPartner != ""
+			fullData = fullData + "^partner=" + speakerPartner
+		endif
+		AIAgentFunctions.requestMessageForActor(fullData, "ext_nsfw_npc_scene", speaker.GetDisplayName())
+		Debug.Trace("[CHIM-NSFW] " + routeName + ": Requested ext_nsfw_npc_scene response for " + speaker.GetDisplayName() + " (partner=" + speakerPartner + ")")
+	else
+		AIAgentFunctions.logMessage(fullData, "ext_nsfw_npc_scene")
+		Debug.Trace("[CHIM-NSFW] " + routeName + ": Logged ext_nsfw_npc_scene fallback; no NPC speaker")
+	endif
+EndFunction
+
 Event OStimThreadStart(string EventName, string Json, float ThreadID, Form Sender)
 	; NOTE: Player scene start is handled by OStimStart event instead
 	; This event handles NPC-to-NPC scenes only
 
-	Actor[] Actors = OJSON.GetActors(Json)
-	string SceneID = OJSON.GetScene(Json)
+	int threadIDInt = ThreadID as int
+	Actor[] Actors = None
+	string SceneID = ""
+	if Json != ""
+		Actors = OJSON.GetActors(Json)
+		SceneID = OJSON.GetScene(Json)
+	endif
+	if Actors == None || CountValidActors(Actors) < 1
+		Actors = GetOStimThreadParticipantsSafe(threadIDInt)
+	endif
+	if SceneID == ""
+		SceneID = OThread.GetScene(threadIDInt)
+	endif
 	Debug.Trace("[CHIM-NSFW] OStimThreadStart: "+EventName+","+Json+","+ThreadID+","+sender.GetName())
+	if Actors == None || CountValidActors(Actors) < 1
+		Debug.Trace("[CHIM-NSFW] OStimThreadStart: No actors from JSON or OThread fallback")
+		return
+	endif
 
 	; Check if player is in scene
 	bool playerInScene = false
 	int i = 0
 	while i < Actors.Length
-		if Actors[i] == Game.GetPlayer()
+		if Actors[i] != None && Actors[i] == Game.GetPlayer()
 			playerInScene = true
 		endif
 		i += 1
 	endwhile
 
 	; NPC-to-NPC scene detected - send to PHP for affinity check and potential stop
-	if !playerInScene && Actors.Length >= 2
+	if !playerInScene && CountValidActors(Actors) >= 2
 		Actor npc1 = Actors[0]
 		Actor npc2 = Actors[1]
 		string npc1Name = npc1.GetDisplayName()
 		string npc2Name = npc2.GetDisplayName()
-		int threadIDInt = ThreadID as int
 
 		Debug.Trace("[CHIM-NSFW] NPC-to-NPC scene detected: " + npc1Name + " + " + npc2Name)
 
@@ -2881,11 +3747,51 @@ Event OStimThreadStart(string EventName, string Json, float ThreadID, Form Sende
 		; Send to PHP with relationship ranks - PHP decides whether to stop
 		; Format: npc1^npc2^threadID^sceneID^npc1ToNpc2Rank^npc2ToNpc1Rank (using ^ to avoid CHIM pipe conflict)
 		string rawData = npc1Name + "^" + npc2Name + "^" + threadIDInt + "^" + SceneID + "^" + npc1ToNpc2Rank + "^" + npc2ToNpc1Rank
-		AIAgentFunctions.logMessage(rawData, "ext_nsfw_npc_scene")
+		RequestNpcSceneTurn(Actors, rawData, "OStimThreadStart", threadIDInt)
 	endif
 EndEvent
 
 Event OStimThreadSceneChanged(string EventName, string SceneID, float ThreadID, Form Sender)
+	int npcSceneThreadInt = ThreadID as int
+	Actor[] participants = GetOStimThreadParticipantsSafe(npcSceneThreadInt)
+	string resolvedSceneID = SceneID
+	if resolvedSceneID == ""
+		resolvedSceneID = OThread.GetScene(npcSceneThreadInt)
+	endif
+
+	Debug.Trace("[CHIM-NSFW] OStimThreadSceneChanged: " + EventName + ", SceneID: " + resolvedSceneID + ", ThreadID: " + npcSceneThreadInt)
+
+	if participants == None || CountValidActors(participants) < 2
+		Debug.Trace("[CHIM-NSFW] OStimThreadSceneChanged: No valid participants")
+		return
+	endif
+
+	bool playerInScene = false
+	int i = 0
+	while i < participants.Length
+		if participants[i] != None
+			if participants[i] == Game.GetPlayer()
+				playerInScene = true
+			else
+				AIAgentFunctions.setAnimationBusy(1, participants[i].GetDisplayName())
+				if OActor.HasExpressionOverride(participants[i])
+					AIAgentFunctions.setLocked(1, participants[i].GetDisplayName())
+				else
+					AIAgentFunctions.setLocked(0, participants[i].GetDisplayName())
+				endif
+			endif
+		endif
+		i += 1
+	endwhile
+
+	; NPC-only OStim NPC expansion scenes may arrive here without a usable thread-start JSON payload.
+	; Emit the canonical NPC-scene event from the live thread actor list so CHIM can see it.
+	if !playerInScene
+		int npc1ToNpc2Rank = participants[0].GetRelationshipRank(participants[1])
+		int npc2ToNpc1Rank = participants[1].GetRelationshipRank(participants[0])
+		string npcSceneData = participants[0].GetDisplayName() + "^" + participants[1].GetDisplayName() + "^" + npcSceneThreadInt + "^" + resolvedSceneID + "^" + npc1ToNpc2Rank + "^" + npc2ToNpc1Rank
+		RequestNpcSceneTurn(participants, npcSceneData, "OStimThreadSceneChanged", npcSceneThreadInt)
+	endif
 EndEvent
 
 Event OStimActorOrgasm(string EventName, string SceneID, float ThreadID, Form Sender)
@@ -2898,14 +3804,41 @@ EndEvent
 
 Event OStimThreadEnd(string EventName, string Json, float ThreadID, Form Sender)
 	; the following code only works with API version 7.3.1 or higher
-	Actor[] Actors = OJSON.GetActors(Json)
-	string SceneID = OJSON.GetScene(Json)
+	int threadEndIDInt = ThreadID as int
+	Actor[] Actors = None
+	string SceneID = ""
+	if Json != ""
+		Actors = OJSON.GetActors(Json)
+		SceneID = OJSON.GetScene(Json)
+	endif
+	if Actors == None || CountValidActors(Actors) < 1
+		Actors = GetOStimThreadParticipantsSafe(threadEndIDInt)
+	endif
+	if SceneID == ""
+		SceneID = OThread.GetScene(threadEndIDInt)
+	endif
 	Debug.Trace("[CHIM-NSFW] OStimThreadEnd: "+EventName+","+Json+","+ThreadID+","+sender.GetName())
+	if Actors == None || CountValidActors(Actors) < 1
+		; Live resolution failed (empty end JSON / thread already torn down). Fall back to the stashed roster so
+		; the scene still tears down cleanly - otherwise NPC scene state lingers and bleeds into later dialogue.
+		string stashScoring = BuildScoringFromStash(threadEndIDInt)
+		if stashScoring != ""
+			AIAgentFunctions.requestMessage(stashScoring, "chatnf_sl_end")
+			ClearStashedNpcSceneActors(threadEndIDInt)
+			Debug.Trace("[CHIM-NSFW] OStimThreadEnd: used stashed roster for teardown -> " + stashScoring)
+			return
+		endif
+		Debug.Trace("[CHIM-NSFW] OStimThreadEnd: No actors from JSON or OThread fallback")
+		return
+	endif
 	int i = 0 
 	string scoring=""
 
 	while i < Actors.Length
 			Actor participant = Actors[i]
+			if participant == None
+				i += 1
+			else
 			
 			Debug.Trace("[CHIM-NSFW] OStimThreadEnd. Participant: " + participant.GetDisplayName())
 			
@@ -2916,12 +3849,14 @@ Event OStimThreadEnd(string EventName, string Json, float ThreadID, Form Sender)
 				AIAgentFunctions.setAnimationBusy(0,participant.GetDisplayName())
 			endif
 
-			scoring="/"+ participant.GetDisplayName()+"@100";
+			scoring = scoring + "/" + participant.GetDisplayName() + "@100"
 
 			i += 1
+			endif
 	endwhile
-	
+
 	AIAgentFunctions.requestMessage(scoring,"chatnf_sl_end")
+	ClearStashedNpcSceneActors(threadEndIDInt)
 
 EndEvent
 
@@ -2943,8 +3878,8 @@ Event OStimSubthreadStart(string EventName, string SceneID, float SubthreadID, F
 	int threadId = SubthreadID as int
 
 	; Get actors in this subthread
-	Actor[] participants = OThread.GetActors(threadId)
-	if participants == None || participants.Length < 2
+	Actor[] participants = GetOStimThreadParticipantsSafe(threadId)
+	if participants == None || CountValidActors(participants) < 2
 		Debug.Trace("[CHIM-NSFW] OStimSubthreadStart: No valid participants found")
 		return
 	endif
@@ -2961,32 +3896,36 @@ Event OStimSubthreadStart(string EventName, string SceneID, float SubthreadID, F
 	int i = 0
 	while i < participants.Length
 		Actor participant = participants[i]
-		actorList = actorList + "/" + participant.GetDisplayName()
-
-		; Set animation busy for all NPC participants
-		AIAgentFunctions.setAnimationBusy(1, participant.GetDisplayName())
-
-		; Check mouth state for locking
-		bool isMouthOpen = OActor.HasExpressionOverride(participant)
-		if isMouthOpen
-			AIAgentFunctions.setLocked(1, participant.GetDisplayName())
-			Debug.Trace("[CHIM-NSFW] NPC " + participant.GetDisplayName() + " mouth busy")
+		if participant == None
+			i += 1
 		else
-			AIAgentFunctions.setLocked(0, participant.GetDisplayName())
-		endif
+			actorList = actorList + "/" + participant.GetDisplayName()
 
-		Debug.Trace("[CHIM-NSFW] OStimSubthreadStart participant: " + participant.GetDisplayName())
-		i += 1
+			; Set animation busy for all NPC participants
+			AIAgentFunctions.setAnimationBusy(1, participant.GetDisplayName())
+
+			; Check mouth state for locking
+			bool isMouthOpen = OActor.HasExpressionOverride(participant)
+			if isMouthOpen
+				AIAgentFunctions.setLocked(1, participant.GetDisplayName())
+				Debug.Trace("[CHIM-NSFW] NPC " + participant.GetDisplayName() + " mouth busy")
+			else
+				AIAgentFunctions.setLocked(0, participant.GetDisplayName())
+			endif
+
+			Debug.Trace("[CHIM-NSFW] OStimSubthreadStart participant: " + participant.GetDisplayName())
+			i += 1
+		endif
 	endwhile
 
-	; Send SAME event format as player scenes - PHP handles identically
-	; Format: sexPos/sceneTags/SceneID/Actor1/Actor2...
-	; Use requestMessageForActor to trigger LLM response (like orgasm events)
-	string sceneData = sexPos + "/" + sceneTags + "/" + SceneID + actorList
-	string firstNpcName = participants[0].GetDisplayName()
-	AIAgentFunctions.requestMessageForActor(sceneData, "ext_nsfw_sexcene", firstNpcName)
+	; NPC-only subthreads must stay on the NPC-to-NPC route.
+	; Player-style ext_nsfw_sexcene is reserved for player + NPC scenes.
+	int npc1ToNpc2Rank = participants[0].GetRelationshipRank(participants[1])
+	int npc2ToNpc1Rank = participants[1].GetRelationshipRank(participants[0])
+	string npcSceneData = participants[0].GetDisplayName() + "^" + participants[1].GetDisplayName() + "^" + threadId + "^" + SceneID + "^" + npc1ToNpc2Rank + "^" + npc2ToNpc1Rank
+	RequestNpcSceneTurn(participants, npcSceneData, "OStimSubthreadStart", threadId)
 
-	Debug.Trace("[CHIM-NSFW] OStimSubthreadStart: Sent ext_nsfw_sexcene via requestMessageForActor for NPC scene: " + actorList)
+	Debug.Trace("[CHIM-NSFW] OStimSubthreadStart: Routed ext_nsfw_npc_scene for NPC scene: " + actorList)
 EndEvent
 
 
@@ -2997,8 +3936,16 @@ Event OStimSubthreadEnd(string EventName, string SceneID, float SubthreadID, For
 	int threadId = SubthreadID as int
 
 	; Get actors that were in this subthread
-	Actor[] participants = OThread.GetActors(threadId)
+	Actor[] participants = GetOStimThreadParticipantsSafe(threadId)
 	if participants == None
+		; Fall back to the stashed roster so the scene still tears down cleanly.
+		string stashScoring = BuildScoringFromStash(threadId)
+		if stashScoring != ""
+			AIAgentFunctions.requestMessage(stashScoring, "chatnf_sl_end")
+			ClearStashedNpcSceneActors(threadId)
+			Debug.Trace("[CHIM-NSFW] OStimSubthreadEnd: used stashed roster for teardown -> " + stashScoring)
+			return
+		endif
 		Debug.Trace("[CHIM-NSFW] OStimSubthreadEnd: No participants found")
 		return
 	endif
@@ -3008,20 +3955,25 @@ Event OStimSubthreadEnd(string EventName, string SceneID, float SubthreadID, For
 	int i = 0
 	while i < participants.Length
 		Actor participant = participants[i]
+		if participant == None
+			i += 1
+		else
 
-		; Clear animation and lock states
-		AIAgentFunctions.setLocked(0, participant.GetDisplayName())
-		AIAgentFunctions.setAnimationBusy(0, participant.GetDisplayName())
+			; Clear animation and lock states
+			AIAgentFunctions.setLocked(0, participant.GetDisplayName())
+			AIAgentFunctions.setAnimationBusy(0, participant.GetDisplayName())
 
-		; Add to scoring (same format as player scenes)
-		scoring = scoring + "/" + participant.GetDisplayName() + "@100"
+			; Add to scoring (same format as player scenes)
+			scoring = scoring + "/" + participant.GetDisplayName() + "@100"
 
-		Debug.Trace("[CHIM-NSFW] OStimSubthreadEnd participant: " + participant.GetDisplayName())
-		i += 1
+			Debug.Trace("[CHIM-NSFW] OStimSubthreadEnd participant: " + participant.GetDisplayName())
+			i += 1
+		endif
 	endwhile
 
 	; Send scene end event - PHP handles pillow talk for both NPCs
 	AIAgentFunctions.requestMessage(scoring, "chatnf_sl_end")
+	ClearStashedNpcSceneActors(threadId)
 
 	Debug.Trace("[CHIM-NSFW] OStimSubthreadEnd: Sent chatnf_sl_end for NPC scene")
 EndEvent
@@ -3042,26 +3994,15 @@ Event OStimSubthreadOrgasm(string EventName, string SceneID, float SubthreadID, 
 
 	; Get the other participants to know who they climaxed with
 	int threadId = SubthreadID as int
-	Actor[] participants = OThread.GetActors(threadId)
-
-	string partnerName = ""
-	if participants != None
-		int i = 0
-		while i < participants.Length
-			if participants[i] != orgasmedActor
-				partnerName = participants[i].GetDisplayName()
-			endif
-			i += 1
-		endwhile
-	endif
+	string partnerName = ResolveOStimOrgasmPartnerName(orgasmedActor, threadId, SceneID)
 
 	; Send climax event - same format as player scenes
-	; Format: actorName^partnerName^sceneID (using ^ to avoid CHIM pipe conflict)
-	string climaxData = actorName + "^" + partnerName + "^" + SceneID
-	AIAgentFunctions.logMessage(climaxData, "ext_nsfw_npc_orgasm")
+	; Format: actorName^partnerName^sceneID^actionType (using ^ to avoid CHIM pipe conflict)
+	string climaxData = actorName + "^" + partnerName + "^" + SceneID + "^" + lastResolvedOStimOrgasmActionType
+	AIAgentFunctions.requestMessageForActor(climaxData, "ext_nsfw_npc_orgasm", actorName)
 
 	; Server handles speech triggering via chatnf_sl_climax when appropriate
-	Debug.Trace("[CHIM-NSFW] OStimSubthreadOrgasm: Sent climax event for " + actorName + " with partner " + partnerName)
+	Debug.Trace("[CHIM-NSFW] OStimSubthreadOrgasm: Sent climax event for " + actorName + " with partner " + partnerName + " action=" + lastResolvedOStimOrgasmActionType)
 EndEvent
 
 
@@ -3540,7 +4481,249 @@ EndFunction
 
 
 
-; SEXLAB RELATED
+; ============================================================================
+; SEXLAB INTEGRATION (active) - mirrors the OStim server paths.
+; SexLab fires global Hook<Event> ModEvents (int tid, bool HasPlayer) for EVERY
+; scene including NPC-to-NPC; per-actor orgasm is "SexLabOrgasm" (Form akActor,...).
+; Registered in DoRegister(). Player scenes get speech-style dialogue (chatnf_sl);
+; NPC-to-NPC stays scene-aware only (NO speech styles, by design).
+; ============================================================================
+
+Event OnSexLabAnimStart(int tid, bool HasPlayer)
+	SexLabFramework SexLab = SexLabUtil.GetAPI()
+	if (!SexLab)
+		return
+	endif
+	sslThreadController controller = SexLab.GetController(tid)
+	if (!controller)
+		return
+	endif
+	Actor[] actors = controller.Positions
+	if (actors.Length < 1)
+		return
+	endif
+
+	string sceneID = controller.Animation.Name
+	string sceneTags = PapyrusUtil.StringJoin(controller.Animation.GetTags(), ",") ; GetTags() is string[]; the bare cast produced "[A, B, C]" which broke server CSV tag parsing (fix 2026-07-01)
+	string actorList = ""
+	Actor firstNpc = None
+	int i = 0
+	while (i < actors.Length)
+		actorList = actorList + "/" + actors[i].GetDisplayName()
+		if (actors[i].GetFormID() != 0x14)
+			if (firstNpc == None)
+				firstNpc = actors[i]
+			endif
+			AIAgentFunctions.setAnimationBusy(1, actors[i].GetDisplayName())
+		endif
+		i += 1
+	endWhile
+	if (firstNpc == None)
+		return
+	endif
+
+	; NPC-to-NPC SexLab scene: emit the rich relationship-tier event first (mirrors OStimThreadStart) so the server
+	; sets is_npc_scene/npc_scene_partner and uses the NPC-to-NPC relationship/tier prompts (parity with OStim).
+	if (!HasPlayer && actors.Length >= 2)
+		int npc1ToNpc2Rank = actors[0].GetRelationshipRank(actors[1])
+		int npc2ToNpc1Rank = actors[1].GetRelationshipRank(actors[0])
+		string npcSceneData = actors[0].GetDisplayName() + "^" + actors[1].GetDisplayName() + "^" + tid + "^" + sceneID + "^" + npc1ToNpc2Rank + "^" + npc2ToNpc1Rank
+		RequestNpcSceneTurn(actors, npcSceneData, "SexLabNpcSceneStart", tid)
+		Debug.Trace("[CHIM-NSFW] SexLab NPC-only scene start tid=" + tid + " requested ext_nsfw_npc_scene")
+		return
+	endif
+
+	; SOLO NPC scene (masturbation): keep it OFF the player-scene route (fix 2026-07-01, OStim parity - a solo
+	; scene fires no player-scene event; the server's canonicalization needs >=2 actors anyway).
+	if (!HasPlayer)
+		return
+	endif
+
+	; Matches the ext_nsfw_sexcene wire OStimStart uses: SceneID/tags/SceneID/actors
+	; NO consent bark here (user-confirmed 2026-07-01): the bark path is vestigial/unreliable - live logs show every
+	; bark ever fired was routed to The Narrator and blocked by policy. The tier-3 consent decision is driven by the
+	; AcceptSex/RefuseSex toolset strip on the normal scene turn, not by a fast bark.
+	string sceneData = sceneID + "/" + sceneTags + "/" + sceneID + actorList
+	AIAgentFunctions.requestMessageForActor(sceneData, "ext_nsfw_sexcene", firstNpc.GetDisplayName())
+	Debug.Trace("[CHIM-NSFW] SexLab scene start tid=" + tid + " player=" + HasPlayer)
+EndEvent
+
+Event OnSexLabStageStart(int tid, bool HasPlayer)
+	SexLabFramework SexLab = SexLabUtil.GetAPI()
+	if (!SexLab)
+		return
+	endif
+	sslThreadController controller = SexLab.GetController(tid)
+	if (!controller)
+		return
+	endif
+	Actor[] actors = controller.Positions
+	if (actors.Length < 1)
+		return
+	endif
+
+	; Scene awareness for ALL scenes (incl NPC-to-NPC) - no speech styles, just context
+	string sceneID = controller.Animation.Name
+	string sceneTags = PapyrusUtil.StringJoin(controller.Animation.GetTags(), ",") ; GetTags() is string[]; the bare cast produced "[A, B, C]" which broke server CSV tag parsing (fix 2026-07-01)
+	string stageDesc = controller.Animation.FetchStage(controller.Stage)[0]
+	string actorList = ""
+	; FORWARD order (fix 2026-07-01): the reverse loop stored raw_scene_actor_slots backwards vs Positions,
+	; so the server's slot->name lookup could name the wrong actor on stage updates.
+	int i = 0
+	while (i < actors.Length)
+		actorList = actorList + "/" + actors[i].GetDisplayName()
+		if (actors[i].GetFormID() != 0x14)
+			if (SexLab.isMouthOpen(actors[i]))
+				AIAgentFunctions.setLocked(1, actors[i].GetDisplayName())
+			else
+				AIAgentFunctions.setLocked(0, actors[i].GetDisplayName())
+			endif
+		endif
+		i += 1
+	endWhile
+	; NPC-only stages stay on the NPC-to-NPC route and request one participant response.
+	if (!HasPlayer && actors.Length >= 2)
+		int npc1ToNpc2Rank = actors[0].GetRelationshipRank(actors[1])
+		int npc2ToNpc1Rank = actors[1].GetRelationshipRank(actors[0])
+		string stageSceneID = sceneID + "_stage_" + controller.Stage
+		string npcSceneData = actors[0].GetDisplayName() + "^" + actors[1].GetDisplayName() + "^" + tid + "^" + stageSceneID + "^" + npc1ToNpc2Rank + "^" + npc2ToNpc1Rank
+		RequestNpcSceneTurn(actors, npcSceneData, "SexLabNpcStage", tid)
+		return
+	endif
+
+	; SOLO NPC stage: off the player-scene route (fix 2026-07-01, mirrors the scene-start guard)
+	if (!HasPlayer)
+		return
+	endif
+
+	AIAgentFunctions.logMessage(sceneID + "/" + sceneTags + "/" + stageDesc + actorList, "info_sexscene")
+
+	; Spoken per-stage dialogue (speech styles) ONLY for player scenes
+	Actor[] sorted = SexLab.SortActors(actors, false)
+	i = sorted.Length
+	bool talked = false
+	Actor participantTalk = None
+	while (i > 0)
+		i -= 1
+		if (sorted[i].GetFormID() != 0x14)
+			if (!SexLab.isMouthOpen(sorted[i]))
+				participantTalk = sorted[i]
+				talked = true
+				i = 0
+			endif
+		endif
+	endWhile
+	if (participantTalk != None)
+		string sceneData = sceneID + "/" + sceneTags + "/" + stageDesc + actorList
+		AIAgentFunctions.requestMessageForActor(sceneData, "ext_nsfw_sexcene", participantTalk.GetDisplayName())
+		Debug.Trace("[CHIM-NSFW] SexLab stage routed ext_nsfw_sexcene to " + participantTalk.GetDisplayName())
+	endif
+	if (!talked)
+		; Legacy chatnf_sl narrator fallback disabled. ext_nsfw_sexcene owns model prompting.
+		; AIAgentFunctions.requestMessageForActor("The Narrator: everyone is busy. The Narrator comments on the scene.", "chatnf_sl_nr", "The Narrator")
+	endif
+EndEvent
+
+Event OnSexLabActorOrgasm(Form akActor, int FullEnjoyment, int Orgasms)
+	Actor orgasmer = akActor as Actor
+	if (!orgasmer)
+		return
+	endif
+	SexLabFramework SexLab = SexLabUtil.GetAPI()
+	if (!SexLab)
+		return
+	endif
+	int tid = SexLab.FindActorController(orgasmer)
+	if (tid < 0)
+		return
+	endif
+	sslThreadController controller = SexLab.GetController(tid)
+	if (!controller)
+		return
+	endif
+	Actor[] actors = controller.Positions
+	if (actors.Length < 1)
+		return
+	endif
+
+	string sceneID = controller.Animation.Name
+	; Action-type field for the server (fix 2026-07-01, OStim parity): SexLab has no per-action metadata, but the
+	; animation TAGS csv substring-matches the same server act table (blowjob/anal/handjob/...), reviving the
+	; orgasm-location phrase + act-specific cues in SexLab scenes.
+	string slOrgasmTags = PapyrusUtil.StringJoin(controller.Animation.GetTags(), ",")
+	bool sceneHasPlayer = false
+	int orgasmerIndex = 0
+	string partnerName = ""
+	int k = 0
+	while (k < actors.Length)
+		if (actors[k].GetFormID() == 0x14)
+			sceneHasPlayer = true
+		endif
+		if (actors[k] == orgasmer)
+			orgasmerIndex = k
+		elseif (partnerName == "")
+			partnerName = actors[k].GetDisplayName()
+		endif
+		k += 1
+	endWhile
+
+	if (orgasmer.GetFormID() == 0x14)
+		; Player came - everyone in THIS scene hears it (fan out to every non-player actor)
+		string playerData = "PLAYER_ORGASM/" + sceneID + "/" + orgasmerIndex + "/" + partnerName + "/" + slOrgasmTags ; [3]=partner [4]=action (fix 2026-07-01: was the player's own name at [3] and no action field)
+		int m = 0
+		while (m < actors.Length)
+			if (actors[m].GetFormID() != 0x14)
+				AIAgentFunctions.requestMessageForActor(playerData, "ext_nsfw_orgasm", actors[m].GetDisplayName())
+			endif
+			m += 1
+		endWhile
+	else
+		; NPC came - tell THAT NPC. Player scene -> ext_nsfw_orgasm; NPC-to-NPC -> ext_nsfw_npc_orgasm
+		string orgasmData = orgasmer.GetDisplayName() + "/" + sceneID + "/" + orgasmerIndex
+		if (partnerName != "")
+			orgasmData = orgasmData + "/" + partnerName + "/" + slOrgasmTags ; [4]=action (fix 2026-07-01, OStim parity)
+		endif
+		if (sceneHasPlayer)
+			AIAgentFunctions.requestMessageForActor(orgasmData, "ext_nsfw_orgasm", orgasmer.GetDisplayName())
+		else
+			AIAgentFunctions.requestMessageForActor(orgasmer.GetDisplayName() + "^" + partnerName + "^" + sceneID + "^" + slOrgasmTags, "ext_nsfw_npc_orgasm", orgasmer.GetDisplayName())
+		endif
+	endif
+EndEvent
+
+Event OnSexLabAnimEnd(int tid, bool HasPlayer)
+	SexLabFramework SexLab = SexLabUtil.GetAPI()
+	if (!SexLab)
+		return
+	endif
+	sslThreadController controller = SexLab.GetController(tid)
+	string score = ""
+	if (controller)
+		Actor[] actors = controller.Positions
+		int i = actors.Length
+		while (i > 0)
+			i -= 1
+			score = score + "/" + actors[i].GetDisplayName() + "@" + SexLab.GetEnjoyment(tid, actors[i])
+			if (actors[i].GetFormID() != 0x14)
+				AIAgentFunctions.setAnimationBusy(0, actors[i].GetDisplayName())
+				AIAgentFunctions.setLocked(0, actors[i].GetDisplayName())
+			endif
+		endWhile
+	endif
+
+	; Insurance: if SexLab's controller was already gone, fall back to the stashed roster so teardown still fires.
+	if score == ""
+		score = BuildScoringFromStash(tid)
+	endif
+
+	AIAgentFunctions.logMessage("# END OF SEX SCENE", "infoaction")
+	AIAgentFunctions.requestMessage(score, "chatnf_sl_end")
+	ClearStashedNpcSceneActors(tid)
+	AIAgentFunctions.logMessage("", "force_current_task")
+EndEvent
+
+
+; SEXLAB RELATED (legacy reference - superseded by the active block above)
 
 ;/
 function StartIntimateSceneWithPlayer(Actor npc, int level=0,string tags)
@@ -3651,7 +4834,8 @@ Event OnStageStart(int tid, bool HasPlayer)
 			Actor participant=sortedActorList[i];
 			if participant.GetDisplayName()!=Game.GetPlayer().GetDisplayName()
 				if (!SexLab.isMouthOpen(participant))
-					AIAgentFunctions.requestMessageForActor("","chatnf_sl",participant.GetDisplayName())
+					; Legacy chatnf_sl auto-talk disabled. ext_nsfw_sexcene owns model prompting.
+					; AIAgentFunctions.requestMessageForActor("","chatnf_sl",participant.GetDisplayName())
 					participantTalk=true;
 					i=0
 				else
@@ -3662,7 +4846,8 @@ Event OnStageStart(int tid, bool HasPlayer)
         endwhile
 		
 		if (!participantTalk)
-			AIAgentFunctions.requestMessageForActor("The Narrator: seems everyone is **busy**. Narrator is hot too and comments about the scene","chatnf_sl_nr","The Narrator")
+			; Legacy chatnf_sl narrator fallback disabled. ext_nsfw_sexcene owns model prompting.
+			; AIAgentFunctions.requestMessageForActor("The Narrator: seems everyone is **busy**. Narrator is hot too and comments about the scene","chatnf_sl_nr","The Narrator")
 		endIf
 		
 EndEvent
@@ -3703,7 +4888,8 @@ Event PostSexScene(int tid, bool HasPlayer)
 			Actor participant=sortedActorList[i];
 			if participant.GetDisplayName()!=Game.GetPlayer().GetDisplayName()
 				if (!SexLab.isMouthOpen(participant))
-					AIAgentFunctions.requestMessageForActor("The Narrator: "+participant.GetDisplayName()+" had an orgasm!","chatnf_sl_climax",participant.GetDisplayName())
+					; Legacy chatnf_sl climax chatter disabled. ext_nsfw_orgasm owns orgasm prompting.
+					; AIAgentFunctions.requestMessageForActor("The Narrator: "+participant.GetDisplayName()+" had an orgasm!","chatnf_sl_climax",participant.GetDisplayName())
 				endif
 			endif
         endwhile
@@ -3773,46 +4959,5 @@ Event EndSexScene(int tid, bool HasPlayer)
 	
 EndEvent
 
-
-; ============================================
-; VR ITEM AWARENESS (HIGGS)
-; ============================================================================
-; [CHIM-CORE] VR ITEM AWARENESS - READY FOR MIGRATION
-; ============================================================================
-; This entire section can be moved to core AIAgent/CHIM.
-; No NSFW content - just tracks what items player is holding.
-;
-; FOR RANGAROO/TYLER:
-; 1. Create new AIAgentVR.psc (or add to existing AIAgent quest)
-; 2. Copy: InitVRItemAwareness(), GetVRHandsDescription()
-; 3. Copy: vrLeftHandItem, vrRightHandItem properties
-; 4. In OnHIGGSObjectGrabbed/Dropped, copy the item tracking logic
-;    (the non-actor path that sets vrLeftHandItem/vrRightHandItem)
-; 5. Copy SendVRItemEvent() function
-; 6. PHP side: vr_items.php is already clean, just move it
-; ============================================================================
-
-; [CHIM-CORE] Initialize VR item awareness
-Function InitVRItemAwareness()
-	if !hasHIGGS
-		return
-	endif
-	; HIGGS grab/drop events for non-actor objects are already registered
-	; We just need to handle them differently based on whether it's an actor or item
-	Debug.Trace("[CHIM-VR] VR Item awareness enabled (borrowing NSFW quest)")
-EndFunction
-
-; Utility: Get what player is currently holding
-string Function GetVRHandsDescription()
-	if vrLeftHandItem != "" && vrRightHandItem != ""
-		return "holding " + vrLeftHandItem + " in left hand and " + vrRightHandItem + " in right hand"
-	elseif vrLeftHandItem != ""
-		return "holding " + vrLeftHandItem + " in left hand"
-	elseif vrRightHandItem != ""
-		return "holding " + vrRightHandItem + " in right hand"
-	else
-		return "hands empty"
-	endif
-EndFunction
 
 /;

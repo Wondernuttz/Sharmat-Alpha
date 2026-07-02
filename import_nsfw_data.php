@@ -32,8 +32,8 @@ $errors = 0;
 
 foreach ($NSFW_IMPORT_DATA as $id => $value) {
     try {
-        $escapedId = pg_escape_string($id);
-        $escapedValue = pg_escape_string($value);
+        $escapedId = $db->escape($id);
+        $escapedValue = $db->escape($value);
 
         // Check if exists
         $existing = $db->fetchOne("SELECT id FROM conf_opts WHERE id = '$escapedId'");

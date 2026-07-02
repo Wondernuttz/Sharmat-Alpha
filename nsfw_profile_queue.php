@@ -55,6 +55,12 @@ function _nsfwQueueProfileGeneration($npcName, $gameContext = []) {
         return false;
     }
 
+    static $schemaChecked = false;
+    if (!$schemaChecked) {
+        _nsfwCreateQueueTable();
+        $schemaChecked = true;
+    }
+
     // Get current playthrough profile ID for Paradox isolation
     $profileId = _nsfwGetCurrentProfileId();
 
@@ -93,6 +99,7 @@ function _nsfwQueueProfileGeneration($npcName, $gameContext = []) {
         );
 
         error_log("[NSFW-QUEUE] Queued profile generation for: {$npcName} (profile: {$profileId})");
+        _nsfwEnsureProfileWorkerRunning(true);
         return true;
 
     } catch (Exception $e) {
@@ -106,6 +113,7 @@ function _nsfwQueueProfileGeneration($npcName, $gameContext = []) {
                      VALUES ('{$escapedName}', {$profileId}, '{$escapedJson}', NOW())
                      ON CONFLICT (npc_name, profile_id) DO UPDATE SET queue_data = '{$escapedJson}', created_at = NOW(), retry_count = 0"
                 );
+                _nsfwEnsureProfileWorkerRunning(true);
                 return true;
             } catch (Exception $e2) {
                 error_log("[NSFW-QUEUE] Failed to queue after table creation: " . $e2->getMessage());
@@ -117,6 +125,47 @@ function _nsfwQueueProfileGeneration($npcName, $gameContext = []) {
     }
 }
 
+// Auto-start the background profile worker daemon (mirrors relationship system: proc_open detach, pgrep/PID guard).
+// Gated on AUTO_GENERATE_NSFW_PROFILES, the same flag prerequest.php uses to enqueue. No cron/sudo needed.
+function _nsfwEnsureProfileWorkerRunning($force = false) {
+    static $checked = false;
+    if ($checked && !$force) return;
+    $checked = true;
+
+    if (!isset($GLOBALS['db']) || !$GLOBALS['db']) return;
+
+    $settingsRow = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_settings'");
+    $settings = ($settingsRow && !empty($settingsRow['value'])) ? (json_decode($settingsRow['value'], true) ?: []) : [];
+    if (empty($settings['AUTO_GENERATE_NSFW_PROFILES'])) return; // auto-generation off
+
+    $enginePath = $GLOBALS['ENGINE_PATH'] ?? (realpath(__DIR__ . '/../../') . '/');
+    $pidFile = $enginePath . 'log/nsfw_profile_worker.pid';
+    $logPath = $enginePath . 'log/nsfw_profile_worker.log';
+    $workerPath = __DIR__ . '/background_profile_worker.php';
+
+    // Fast path: live PID file
+    if (file_exists($pidFile)) {
+        $pid = trim(@file_get_contents($pidFile));
+        if (!empty($pid) && file_exists("/proc/{$pid}")) return; // already running
+        @unlink($pidFile); // stale
+    }
+
+    // Confirm via pgrep in case the PID file was missing
+    $pidCheck = shell_exec("pgrep -a php 2>/dev/null | grep 'background_profile_worker.php.*--daemon' | awk '{print \$1}' | head -1");
+    if (!empty(trim((string)$pidCheck))) {
+        @file_put_contents($pidFile, trim(explode("\n", (string)$pidCheck)[0]));
+        return;
+    }
+
+    // Not running - spawn detached via proc_open (survives Apache request end)
+    if (!file_exists($logPath)) { @touch($logPath); }
+    $logTarget = (file_exists($logPath) && is_writable($logPath)) ? $logPath : '/dev/null';
+    $cmd = "/usr/bin/php " . escapeshellarg($workerPath) . " --daemon";
+    $descriptors = [0 => ['file', '/dev/null', 'r'], 1 => ['file', $logTarget, 'a'], 2 => ['file', $logTarget, 'a']];
+    $proc = proc_open($cmd, $descriptors, $pipes);
+    if (is_resource($proc)) { proc_close($proc); }
+}
+
 /**
  * Process pending NSFW profile generations
  * Called from context.php to generate 1-2 profiles per request cycle
@@ -126,6 +175,12 @@ function _nsfwQueueProfileGeneration($npcName, $gameContext = []) {
  * @return array Results of processing
  */
 function _nsfwProcessQueue($limit = NSFW_QUEUE_BATCH_SIZE) {
+    // Queue processing disabled inside semaphore — LLM calls for profile generation
+    // can take 30-60+ seconds and hold the MAIN semaphore, blocking all NPC dialogue.
+    // Queue items are still created via INSERT (which auto-creates the table on first use).
+    // TODO: Move queue processing to a background worker outside the semaphore.
+    return ['processed' => 0, 'error' => 'disabled_semaphore_protection'];
+
     if (!isset($GLOBALS['db']) || !$GLOBALS['db']) {
         return ['processed' => 0, 'error' => 'no database'];
     }
@@ -321,6 +376,7 @@ function _nsfwGenerateProfileWithContext($npcName, $gameContext = []) {
         // Load speak styles from JSONB (single source of truth)
         $styleRow = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_speak_styles'");
         $speakStylesWithDesc = "";
+        $allStyles = [];
         if ($styleRow && !empty($styleRow['value'])) {
             $allStyles = json_decode($styleRow['value'], true) ?: [];
             foreach ($allStyles as $name => $styleData) {
@@ -369,19 +425,11 @@ function _nsfwGenerateProfileWithContext($npcName, $gameContext = []) {
             return ['success' => false, 'error' => 'No LLM connector available'];
         }
 
-        // Use LLM connector
-        require_once $GLOBALS['ENGINE_PATH'] . "lib/core/llm_connector.class.php";
-        $connector = new LLMConnector();
-        $connector->Load($connectorName);
-
-        $messages = [
-            ['role' => 'user', 'content' => $prompt]
-        ];
-
-        $response = $connector->sendMessages($messages);
-
+        // Use shared LLM completion (proven curl path; config_manager.php already required above)
+        $llmErr = null;
+        $response = nsfwLlmComplete($prompt, $connectorName, $llmErr);
         if (empty($response)) {
-            return ['success' => false, 'error' => 'Empty LLM response'];
+            return ['success' => false, 'error' => $llmErr ?: 'Empty LLM response'];
         }
 
         // Parse JSON response
@@ -396,6 +444,11 @@ function _nsfwGenerateProfileWithContext($npcName, $gameContext = []) {
             return ['success' => false, 'error' => 'Invalid JSON response from LLM'];
         }
 
+        $parsed['speak_style'] = nsfwNormalizeGeneratedSpeakStyle($parsed['speak_style'] ?? 'auto', $allStyles, 'auto');
+        if (!empty($parsed['is_slave'])) {
+            $parsed['slave_speak_style'] = nsfwNormalizeGeneratedSpeakStyle($parsed['slave_speak_style'] ?? $parsed['speak_style'], $allStyles, $parsed['speak_style']);
+        }
+
         // Save the profile to nsfw_npc_data table (NOT core_npc_master.extended_data)
         require_once __DIR__ . '/nsfw_data.php';
         $extData = NsfwNpcData::get($npcName);
@@ -403,9 +456,9 @@ function _nsfwGenerateProfileWithContext($npcName, $gameContext = []) {
         // Update NSFW data with generated profile
         $extData['sex_prompt'] = $parsed['sex_prompt'];
         $extData['sex_speech_style'] = $parsed['speak_style'] ?? 'auto';
-        $extData['profanity_level'] = $parsed['profanity_level'] ?? 3;
-        $extData['kinks'] = $parsed['kinks'] ?? [];
-        $extData['secret_kinks'] = $parsed['secret_kinks'] ?? [];
+        $extData['nsfw_profanity_level'] = $parsed['profanity_level'] ?? 3;
+        $extData['nsfw_kinks'] = $parsed['kinks'] ?? [];
+        $extData['nsfw_secret_kinks'] = $parsed['secret_kinks'] ?? [];
         $extData['is_prostitute'] = $parsed['is_prostitute'] ?? false;
         $extData['prostitute_type'] = $parsed['prostitute_type'] ?? null;
         $extData['is_slave'] = $parsed['is_slave'] ?? false;
@@ -449,7 +502,11 @@ function _nsfwCreateQueueTable() {
             CREATE INDEX IF NOT EXISTS idx_nsfw_queue_profile
             ON nsfw_profile_queue(profile_id, retry_count, created_at)
         ");
-        error_log("[NSFW-QUEUE] Created nsfw_profile_queue table with Paradox isolation");
+        $GLOBALS['db']->query("
+            CREATE UNIQUE INDEX IF NOT EXISTS nsfw_profile_queue_npc_profile_uidx
+            ON nsfw_profile_queue(npc_name, profile_id)
+        ");
+        error_log("[NSFW-QUEUE] Ensured nsfw_profile_queue table with Paradox isolation");
     } catch (Exception $e) {
         error_log("[NSFW-QUEUE] Failed to create queue table: " . $e->getMessage());
     }

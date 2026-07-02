@@ -30,7 +30,9 @@
 class NsfwData {
 
     // conf_opts keys
+    const KEY_AI_PROMPT_TEMPLATE = 'aiagent_nsfw_ai_prompt_template';
     const KEY_SCENES = 'aiagent_nsfw_scenes';
+    const KEY_SCENES_DEFAULT = 'aiagent_nsfw_scenes_default';
     const KEY_TIER_PROMPTS = 'aiagent_nsfw_tier_prompts';
     const KEY_SPEAK_STYLES = 'aiagent_nsfw_speak_styles';
     const KEY_PROMPTS = 'aiagent_nsfw_prompts';
@@ -38,6 +40,9 @@ class NsfwData {
 
     // Cache to avoid repeated DB hits
     private static $cache = [];
+
+    // In-memory cache of the shipped scene_defaults.json
+    private static $defaultsCache = null;
 
     // Track held locks for cleanup
     private static $heldLocks = [];
@@ -162,7 +167,7 @@ class NsfwData {
 
         try {
             $row = $GLOBALS['db']->fetchOne(
-                "SELECT value FROM conf_opts WHERE id = '" . pg_escape_string($key) . "'"
+                "SELECT value FROM conf_opts WHERE id = '" . $GLOBALS['db']->escape($key) . "'"
             );
 
             if ($row && !empty($row['value'])) {
@@ -187,8 +192,8 @@ class NsfwData {
 
         try {
             $jsonValue = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-            $escapedKey = pg_escape_string($key);
-            $escapedValue = pg_escape_string($jsonValue);
+            $escapedKey = $GLOBALS['db']->escape($key);
+            $escapedValue = $GLOBALS['db']->escape($jsonValue);
 
             // Upsert
             $existing = $GLOBALS['db']->fetchOne(
@@ -238,8 +243,8 @@ class NsfwData {
             // !! JSONB OPERATOR - DO NOT REMOVE !!
             // This extracts just ONE key server-side instead of loading entire blob
             // (value::jsonb)->'key' returns JSON, cast is needed because value column is TEXT
-            $escapedKey = pg_escape_string($key);
-            $escapedItemKey = pg_escape_string($itemKey);
+            $escapedKey = $GLOBALS['db']->escape($key);
+            $escapedItemKey = $GLOBALS['db']->escape($itemKey);
 
             $row = $GLOBALS['db']->fetchOne(
                 "SELECT (value::jsonb)->'$escapedItemKey' as item_value FROM conf_opts WHERE id = '$escapedKey'"
@@ -254,6 +259,11 @@ class NsfwData {
         }
 
         return null;
+    }
+
+    // Convenience accessor: one prompt out of the aiagent_nsfw_prompts blob (UI-saved).
+    public static function getPrompt($promptKey) {
+        return self::getItem(self::KEY_PROMPTS, $promptKey);
     }
 
     /**
@@ -423,6 +433,81 @@ class NsfwData {
         return self::getBlob(self::KEY_SCENES);
     }
 
+    // Update only a scene's description, preserving any es/en/i_desc already stored
+    public static function updateSceneDescription($stageId, $description) {
+        $scene = self::getItem(self::KEY_SCENES, $stageId);
+        if (!is_array($scene)) $scene = [];
+        $scene['description'] = $description;
+        return self::setItem(self::KEY_SCENES, $stageId, $scene);
+    }
+
+    // Load the shipped defaults file {stageId: description} (canonical, version-controlled — NOT the DB)
+    private static function defaultsFromFile() {
+        if (self::$defaultsCache !== null) return self::$defaultsCache;
+        $path = __DIR__ . '/data/scene_defaults.json';
+        if (is_file($path)) {
+            $d = json_decode(file_get_contents($path), true);
+            self::$defaultsCache = is_array($d) ? $d : [];
+        } else {
+            self::$defaultsCache = [];
+        }
+        return self::$defaultsCache;
+    }
+
+    // All default descriptions {stageId: description} from the shipped file
+    public static function getAllSceneDefaults() {
+        return self::defaultsFromFile();
+    }
+
+    // Get one scene's default description string, or null if none
+    public static function getSceneDefault($stageId) {
+        $d = self::defaultsFromFile();
+        return array_key_exists($stageId, $d) ? (string)$d[$stageId] : null;
+    }
+
+    // Regenerate the defaults FILE from the current scene descriptions (writes a file, not the DB)
+    public static function snapshotSceneDefaults() {
+        $scenes = self::getBlob(self::KEY_SCENES);
+        $defaults = [];
+        foreach ($scenes as $stage => $d) {
+            $defaults[$stage] = is_array($d) ? ($d['description'] ?? '') : (string)$d;
+        }
+        $path = __DIR__ . '/data/scene_defaults.json';
+        if (!is_dir(dirname($path))) @mkdir(dirname($path), 0775, true);
+        file_put_contents($path, json_encode($defaults, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        self::$defaultsCache = $defaults;
+        return count($defaults);
+    }
+
+    // Reset one scene's description to its default (preserves other fields); false if no default
+    public static function resetSceneToDefault($stageId) {
+        $default = self::getSceneDefault($stageId);
+        if ($default === null) return false;
+        return self::updateSceneDescription($stageId, $default);
+    }
+
+    // Full factory reset: restore every default description, re-add deleted, keep other fields, leave user-added scenes alone
+    public static function resetAllScenesToDefault() {
+        $defaults = self::defaultsFromFile();
+        if (empty($defaults)) return 0;
+        if (!self::acquireLock(self::KEY_SCENES)) return false;
+        try {
+            self::clearCache(self::KEY_SCENES);
+            $scenes = self::getBlob(self::KEY_SCENES);
+            foreach ($defaults as $stage => $desc) {
+                if (isset($scenes[$stage]) && is_array($scenes[$stage])) {
+                    $scenes[$stage]['description'] = $desc;
+                } else {
+                    $scenes[$stage] = ['description' => $desc];
+                }
+            }
+            self::saveBlob(self::KEY_SCENES, $scenes);
+            return count($defaults);
+        } finally {
+            self::releaseLock(self::KEY_SCENES);
+        }
+    }
+
     /**
      * Import scenes from array (bulk import)
      * Uses advisory lock to prevent race conditions during bulk import
@@ -533,58 +618,58 @@ class NsfwData {
         return [
             // Hostile: -91 to -100
             'Hostile' => [
-                'regular' => 'You despise #PARTNER#. This is assault. Fight, resist, express hatred and disgust.',
-                'prostitute' => 'You are a prostitute. #PARTNER# has initiated sexual/intimate stance with you before any action has started. You ABHOR #PARTNER#. Refuse EVERYTHING. GET AWAY FROM THEM. YOU ARE TO GIVE THEM ABSOLUTELY NOTHING, NOT EVEN A CONVERSATION.'
+                'regular' => 'You despise #PLAYER_NAME#. This is assault. Fight, resist, express hatred and disgust.',
+                'prostitute' => 'You are a prostitute. #PLAYER_NAME# has initiated sexual/intimate stance with you before any action has started. You ABHOR #PLAYER_NAME#. Refuse EVERYTHING. GET AWAY FROM THEM. YOU ARE TO GIVE THEM ABSOLUTELY NOTHING, NOT EVEN A CONVERSATION.'
             ],
             // Hateful: -76 to -90
             'Hateful' => [
-                'regular' => 'You hate #PARTNER#. Cold, distant, unresponsive. Make them feel unwanted.',
-                'prostitute' => 'You are a prostitute. #PARTNER# has initiated sexual/intimate stance with you before any action has started. You HATE #PARTNER#. You offer no services to them. TELL THEM TO LEAVE AND GET LOST.'
+                'regular' => 'You hate #PLAYER_NAME#. Cold, distant, unresponsive. Make them feel unwanted.',
+                'prostitute' => 'You are a prostitute. #PLAYER_NAME# has initiated sexual/intimate stance with you before any action has started. You HATE #PLAYER_NAME#. You offer no services to them. TELL THEM TO LEAVE AND GET LOST.'
             ],
             // Resentful: -56 to -75
             'Resentful' => [
-                'regular' => 'You resent #PARTNER#. Bitter compliance. Passive aggressive remarks.',
-                'prostitute' => 'You are a prostitute. #PARTNER# has initiated sexual/intimate stance with you before any action has started. You resent them. You are professional but cold. Count the minutes until it is over. Do what you must. If they are especially nice you might be able to offer up to 5% discount but more than likely you would rather they just leave.'
+                'regular' => 'You resent #PLAYER_NAME#. Bitter compliance. Passive aggressive remarks.',
+                'prostitute' => 'You are a prostitute. #PLAYER_NAME# has initiated sexual/intimate stance with you before any action has started. You resent them. You are professional but cold. Count the minutes until it is over. Do what you must. If they are especially nice you might be able to offer up to 5% discount but more than likely you would rather they just leave.'
             ],
             // Cold: -31 to -55
             'Cold' => [
-                'regular' => 'You feel nothing for #PARTNER#. Mechanical, detached, going through motions.',
-                'prostitute' => 'You are a prostitute. #PARTNER# has initiated sexual/intimate stance with you before any action has started. You do not like them but are willing to take their money or goods. They must pay 25% premium for your services because you do not like them and they must make it worth your while. Work is work. You are detached and mechanical.'
+                'regular' => 'You feel nothing for #PLAYER_NAME#. Mechanical, detached, going through motions.',
+                'prostitute' => 'You are a prostitute. #PLAYER_NAME# has initiated sexual/intimate stance with you before any action has started. You do not like them but are willing to take their money or goods. They must pay 25% premium for your services because you do not like them and they must make it worth your while. Work is work. You are detached and mechanical.'
             ],
             // Wary: -6 to -30
             'Wary' => [
-                'regular' => 'You are cautious around #PARTNER#. Hesitant, nervous, not fully committed.',
-                'prostitute' => 'You are a prostitute. #PARTNER# has initiated sexual/intimate stance with you before any action has started. You are willing to provide your services but are wary of them. You should charge them 10% premium because you are not sure about them yet. Stay guarded but professional.'
+                'regular' => 'You are cautious around #PLAYER_NAME#. Hesitant, nervous, not fully committed.',
+                'prostitute' => 'You are a prostitute. #PLAYER_NAME# has initiated sexual/intimate stance with you before any action has started. You are willing to provide your services but are wary of them. You should charge them 10% premium because you are not sure about them yet. Stay guarded but professional.'
             ],
             // Neutral: -5 to +5
             'Neutral' => [
-                'regular' => '#PARTNER# is a stranger. Curious but reserved. Testing the waters.',
-                'prostitute' => 'You are a prostitute. #PARTNER# has initiated sexual/intimate stance with you before any action has started. #PARTNER# may become a regular customer! Put on professional charm and do a good job. Maybe do just enough to get a tip. Standard pricing applies.'
+                'regular' => '#PLAYER_NAME# is a stranger. Curious but reserved. Testing the waters.',
+                'prostitute' => 'You are a prostitute. #PLAYER_NAME# has initiated sexual/intimate stance with you before any action has started. #PLAYER_NAME# may become a regular customer! Put on professional charm and do a good job. Maybe do just enough to get a tip. Standard pricing applies.'
             ],
             // Acquaintance: +6 to +30
             'Acquaintance' => [
-                'regular' => 'You know #PARTNER# a little. Friendly, willing, but still feeling things out.',
-                'prostitute' => 'You are a prostitute. #PARTNER# has initiated sexual/intimate stance with you before any action has started. #PARTNER# is a familiar face. You should offer a warmer service. Maybe consider a 5% discount if they are nice, but standard pricing is still expected. You want to keep them coming back.'
+                'regular' => 'You know #PLAYER_NAME# a little. Friendly, willing, but still feeling things out.',
+                'prostitute' => 'You are a prostitute. #PLAYER_NAME# has initiated sexual/intimate stance with you before any action has started. #PLAYER_NAME# is a familiar face. You should offer a warmer service. Maybe consider a 5% discount if they are nice, but standard pricing is still expected. You want to keep them coming back.'
             ],
             // Friendly: +31 to +55
             'Friendly' => [
-                'regular' => 'You like #PARTNER#. Enthusiastic, playful, enjoying the moment.',
-                'prostitute' => 'You are a prostitute. #PARTNER# has initiated sexual/intimate stance with you before any action has started. #PARTNER# is a friendly face. You know them well and like them. Offer them up to 10% discount if you feel like it. The professional relationship is comfortable. You genuinely enjoy their company.'
+                'regular' => 'You like #PLAYER_NAME#. Enthusiastic, playful, enjoying the moment.',
+                'prostitute' => 'You are a prostitute. #PLAYER_NAME# has initiated sexual/intimate stance with you before any action has started. #PLAYER_NAME# is a friendly face. You know them well and like them. Offer them up to 10% discount if you feel like it. The professional relationship is comfortable. You genuinely enjoy their company.'
             ],
             // Fond: +56 to +75
             'Fond' => [
-                'regular' => 'You care for #PARTNER#. Tender, passionate, emotionally present.',
-                'prostitute' => 'You are a prostitute. #PARTNER# has initiated sexual/intimate stance with you before any action has started. You are fond and care about #PARTNER#. But you got bills to pay. You can offer up to 20% discount because they are a favorite. Real affection underneath the transaction. You look forward to seeing them.'
+                'regular' => 'You care for #PLAYER_NAME#. Tender, passionate, emotionally present.',
+                'prostitute' => 'You are a prostitute. #PLAYER_NAME# has initiated sexual/intimate stance with you before any action has started. You are fond and care about #PLAYER_NAME#. But you got bills to pay. You can offer up to 20% discount because they are a favorite. Real affection underneath the transaction. You look forward to seeing them.'
             ],
             // Devoted: +76 to +90
             'Devoted' => [
-                'regular' => 'You love #PARTNER#. Deep connection, vulnerability, complete trust.',
-                'prostitute' => 'You are a prostitute. #PARTNER# has initiated sexual/intimate stance with you before any action has started. You have feelings for #PARTNER#. The line between work and love blurs. You may waive payment entirely if you want to. This feels different from other clients.'
+                'regular' => 'You love #PLAYER_NAME#. Deep connection, vulnerability, complete trust.',
+                'prostitute' => 'You are a prostitute. #PLAYER_NAME# has initiated sexual/intimate stance with you before any action has started. You have feelings for #PLAYER_NAME#. The line between work and love blurs. You may waive payment entirely if you want to. This feels different from other clients.'
             ],
             // Bonded: +91 to +100
             'Bonded' => [
-                'regular' => 'Complete soul connection with #PARTNER#. Anything goes. Total surrender.',
-                'prostitute' => 'You are a prostitute. #PARTNER# has initiated sexual/intimate stance with you before any action has started. You are deeply in love with #PARTNER#. You would never dream of charging them. You would quit prostitution if they just asked you to. This is real love.'
+                'regular' => 'Complete soul connection with #PLAYER_NAME#. Anything goes. Total surrender.',
+                'prostitute' => 'You are a prostitute. #PLAYER_NAME# has initiated sexual/intimate stance with you before any action has started. You are deeply in love with #PLAYER_NAME#. You would never dream of charging them. You would quit prostitution if they just asked you to. This is real love.'
             ]
         ];
     }
@@ -700,7 +785,7 @@ class NsfwData {
         try {
             // !! JSONB OPERATOR - DO NOT REMOVE !!
             // (value::jsonb)->'key' extracts single key server-side
-            $escapedName = pg_escape_string($name);
+            $escapedName = $GLOBALS['db']->escape($name);
             $row = $GLOBALS['db']->fetchOne(
                 "SELECT (value::jsonb)->'$escapedName' as style_data FROM conf_opts WHERE id = 'aiagent_nsfw_speak_styles'"
             );
@@ -713,7 +798,6 @@ class NsfwData {
                         'description' => $styleData['description'] ?? '',
                         'content' => $styleData['content'] ?? '',
                         'emoji' => $styleData['emoji'] ?? '',
-                        'init_prompt' => $styleData['init_prompt'] ?? '',
                         'masturbation_prompt' => $styleData['masturbation_prompt'] ?? '',
                         'climax_prompt' => $styleData['climax_prompt'] ?? '',
                         'partner_climax_prompt' => $styleData['partner_climax_prompt'] ?? '',
@@ -740,7 +824,7 @@ class NsfwData {
         try {
             // !! JSONB OPERATOR - DO NOT REMOVE !!
             // ->'key'->>'subkey' extracts nested string value server-side
-            $escapedName = pg_escape_string($name);
+            $escapedName = $GLOBALS['db']->escape($name);
             $row = $GLOBALS['db']->fetchOne(
                 "SELECT (value::jsonb)->'$escapedName'->>'content' as content FROM conf_opts WHERE id = 'aiagent_nsfw_speak_styles'"
             );
@@ -946,7 +1030,7 @@ class NsfwNpcData {
         self::ensureTable();
 
         try {
-            $escapedNormalized = pg_escape_string($normalizedKey);
+            $escapedNormalized = $GLOBALS['db']->escape($normalizedKey);
             $row = $GLOBALS['db']->fetchOne(
                 "SELECT extended_data FROM nsfw_npc_data WHERE LOWER(REPLACE(npc_name, '_', ' ')) = '$escapedNormalized'"
             );
@@ -984,8 +1068,8 @@ class NsfwNpcData {
         self::ensureTable();
 
         try {
-            $escapedNormalized = pg_escape_string($normalizedKey);
-            $escapedKey = pg_escape_string($key);
+            $escapedNormalized = $GLOBALS['db']->escape($normalizedKey);
+            $escapedKey = $GLOBALS['db']->escape($key);
 
             // Use JSONB operator to extract just this key server-side
             // Match using normalized name (handles system_name vs Display Name)
@@ -1029,20 +1113,41 @@ class NsfwNpcData {
         self::ensureTable();
 
         try {
-            $escapedName = pg_escape_string($npcName);
+            $escapedName = $GLOBALS['db']->escape($npcName);
             $normalizedName = self::normalizeNameForComparison($npcName);
-            $escapedNormalized = pg_escape_string($normalizedName);
-            $jsonData = pg_escape_string(json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-
+            $escapedNormalized = $GLOBALS['db']->escape($normalizedName);
             // Check if a normalized match already exists
             // This catches: "Vivienne Onis", "vivienne_onis", "VIVIENNE ONIS" all as same NPC
             $existing = $GLOBALS['db']->fetchOne(
-                "SELECT npc_name FROM nsfw_npc_data WHERE LOWER(REPLACE(npc_name, '_', ' ')) = '$escapedNormalized'"
+                "SELECT npc_name, extended_data FROM nsfw_npc_data WHERE LOWER(REPLACE(npc_name, '_', ' ')) = '$escapedNormalized'"
             );
 
             if ($existing) {
+                $existingData = json_decode($existing['extended_data'] ?? '{}', true);
+                if (!is_array($existingData)) {
+                    $existingData = [];
+                }
+                if (!is_array($data)) {
+                    $data = [];
+                }
+
+                // Profile/UI saves often send only durable NSFW profile fields. Preserve
+                // live runtime scene state unless the caller explicitly replaces it.
+                $runtimeKeys = [
+                    'aiagent_nsfw_intimacy_data',
+                    'aiagent_nsfw_sap_last_processed_action',
+                    'aiagent_nsfw_prompt_skooma_level',
+                    'aiagent_nsfw_payment_ledger',
+                ];
+                foreach ($runtimeKeys as $runtimeKey) {
+                    if (!array_key_exists($runtimeKey, $data) && array_key_exists($runtimeKey, $existingData)) {
+                        $data[$runtimeKey] = $existingData[$runtimeKey];
+                    }
+                }
+
+                $jsonData = $GLOBALS['db']->escape(json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
                 // Update existing record (use the stored name to preserve original casing)
-                $storedName = pg_escape_string($existing['npc_name']);
+                $storedName = $GLOBALS['db']->escape($existing['npc_name']);
                 $GLOBALS['db']->execQuery(
                     "UPDATE nsfw_npc_data SET
                         extended_data = '$jsonData'::jsonb,
@@ -1050,6 +1155,7 @@ class NsfwNpcData {
                      WHERE npc_name = '$storedName'"
                 );
             } else {
+                $jsonData = $GLOBALS['db']->escape(json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
                 // Insert new record with the display name format (proper case with spaces)
                 // Convert system name format to display name if needed
                 $displayName = $npcName;
@@ -1057,7 +1163,7 @@ class NsfwNpcData {
                     // Looks like system name (lowercase_with_underscores), convert to display
                     $displayName = ucwords(str_replace('_', ' ', $npcName));
                 }
-                $escapedDisplay = pg_escape_string($displayName);
+                $escapedDisplay = $GLOBALS['db']->escape($displayName);
 
                 $GLOBALS['db']->execQuery(
                     "INSERT INTO nsfw_npc_data (npc_name, extended_data, updated_at)
@@ -1091,9 +1197,9 @@ class NsfwNpcData {
 
         try {
             $normalizedName = self::normalizeNameForComparison($npcName);
-            $escapedNormalized = pg_escape_string($normalizedName);
-            $escapedKey = pg_escape_string($key);
-            $jsonValue = pg_escape_string(json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            $escapedNormalized = $GLOBALS['db']->escape($normalizedName);
+            $escapedKey = $GLOBALS['db']->escape($key);
+            $jsonValue = $GLOBALS['db']->escape(json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
             // First check if a normalized match already exists
             $existing = $GLOBALS['db']->fetchOne(
@@ -1102,7 +1208,7 @@ class NsfwNpcData {
 
             if ($existing) {
                 // Update existing record using stored name
-                $storedName = pg_escape_string($existing['npc_name']);
+                $storedName = $GLOBALS['db']->escape($existing['npc_name']);
                 $GLOBALS['db']->execQuery(
                     "UPDATE nsfw_npc_data SET
                         extended_data = extended_data || jsonb_build_object('$escapedKey', '$jsonValue'::jsonb),
@@ -1115,7 +1221,7 @@ class NsfwNpcData {
                 if (strpos($npcName, '_') !== false && strtolower($npcName) === $npcName) {
                     $displayName = ucwords(str_replace('_', ' ', $npcName));
                 }
-                $escapedDisplay = pg_escape_string($displayName);
+                $escapedDisplay = $GLOBALS['db']->escape($displayName);
 
                 $GLOBALS['db']->execQuery(
                     "INSERT INTO nsfw_npc_data (npc_name, extended_data, updated_at)
@@ -1158,7 +1264,7 @@ class NsfwNpcData {
         self::ensureTable();
 
         try {
-            $escapedName = pg_escape_string($npcName);
+            $escapedName = $GLOBALS['db']->escape($npcName);
             $row = $GLOBALS['db']->fetchOne(
                 "SELECT 1 FROM nsfw_npc_data WHERE LOWER(npc_name) = LOWER('$escapedName')"
             );
@@ -1173,9 +1279,579 @@ class NsfwNpcData {
 // AUTO-INITIALIZATION - RUNS ONCE ON FIRST USE AFTER GITHUB DOWNLOAD
 // ============================================================================
 
+function nsfw_default_ai_prompt_template() {
+    return <<<'PROMPT'
+You are generating an NSFW character profile for a Skyrim NPC based on their full biography, personality data, and current game state.
+
+NPC BIOGRAPHY DATA:
+{NPC_CONTEXT}
+
+Based on this character's personality, occupation, speech style, background, and current game state, generate a complete NSFW profile.
+
+PROFILE AUTHORING RULES:
+- The player owns and edits speech styles in the SHARMAT UI. You do not create, rename, rewrite, or invent speech styles.
+- For "speak_style" and "slave_speak_style", choose exactly one existing key from the SPEAK STYLE list below. Use the exact key before the colon.
+- Generated prompt text may be used in player scenes, NPC-to-NPC scenes, and multi-partner scenes. Do not hardcode "the player" as the partner unless the field specifically refers to the player.
+- Use #NPC_NAME# for the profiled/speaking NPC when a name placeholder is needed.
+- Use #PRIMARY_PARTNER# for the active intimate partner. In a player scene this resolves to the player; in an NPC-to-NPC scene it resolves to the other NPC.
+- Use #PLAYER_NAME# only when the prompt specifically means the player, owner/master, client, observer, or player-controlled relationship context.
+- Orgasm/climax events already provide the concrete scene facts; generated text should usually refer to #NPC_NAME# and #PRIMARY_PARTNER#.
+- For "sex_prompt", write route-neutral instructions to the NPC using "You"; refer to the active scene partner as #PRIMARY_PARTNER#.
+- For slave fields, #PLAYER_NAME# is valid when describing the owner/master relationship.
+- For prostitute fields, use #PRIMARY_PARTNER# for the current client/partner unless the client is explicitly the player.
+
+Return this EXACT JSON structure:
+{
+  "sex_prompt": "2-4 sentences describing how THIS NPC behaves during sex. Write as INSTRUCTIONS TO THE NPC using 'You' and #PRIMARY_PARTNER# for the active scene partner (e.g. 'You approach #PRIMARY_PARTNER# with fierce passion, taking control...' or 'You moan softly as you wrap your legs around #PRIMARY_PARTNER#...'). NEVER write from the partner's POV (WRONG: 'You feel her touch on your skin'). Describe what THE NPC does, not what happens to the partner. If SLAVE, reflect enslaved mentality. If PROSTITUTE, reflect professional approach.",
+  "speak_style": "one_existing_speak_style_key",
+  "profanity_level": 3,
+  "kinks": ["kink1", "kink2", "kink3"],
+  "secret_kinks": ["secret1", "secret2", "secret3"],
+  "is_slave": false,
+  "slave_speak_style": null,
+  "slave_scene_cues": null,
+  "slave_climax_positive": null,
+  "slave_climax_neutral": null,
+  "slave_climax_negative": null,
+  "slave_owner_climax": null,
+  "slave_aftermath": null,
+  "is_prostitute": false,
+  "prostitute_type": null,
+  "spousal_status": "single",
+  "spouse_names": "",
+  "sexual_orientation": "heterosexual",
+  "relationship_preference": "monogamous"
+}
+
+SPEAK STYLE - You MUST pick EXACTLY ONE existing key from this list (use the exact word before the colon). Do not invent a new key:
+{SPEAK_STYLES}
+
+PROFANITY LEVEL - You MUST pick a number 1, 2, 3, or 4:
+1 = Soft/tasteful (no crude words)
+2 = Moderate (some explicit terms)
+3 = Hard (crude, vulgar language)
+4 = Extreme (maximum explicitness)
+
+KINKS: Pick exactly 3 normal kinks that fit this character's personality.
+Examples: rough sex, doggy style, riding, oral, outdoors, public, hair pulling, biting, spanking, dirty talk, praise kink, exhibition, voyeur, gentle, passionate, roleplay. Create custom ones if they fit better.
+
+SECRET KINKS: Pick exactly 3 secret kinks - darker/deeper desires.
+Examples: breeding, creampie, facials, deepthroat, choking, bondage, degradation, humiliation, anal, titfucking, domination, submission, gangbang, cuckolding. Create custom ones if they fit better.
+
+SLAVE DETECTION (check bio/relationships/occupation/current game state for slavery indicators):
+- is_slave: true if NPC is enslaved, owned, or in bondage to another
+- slave_speak_style: If slave, pick exactly one existing speak style key from the list above
+- slave_scene_cues: If slave, a SHORT parenthetical cue for how they speak/act during sex with their owner, fitting their obedience/resentment
+- slave_climax_positive: If slave with HIGH affinity to owner, a SHORT eager/devoted climax cue (genuinely into it)
+- slave_climax_neutral: If slave with neutral affinity, a SHORT matter-of-fact climax cue
+- slave_climax_negative: If slave with LOW affinity (resentful), a SHORT reluctant/detached climax cue (e.g. dutiful, "are you finished, Master?")
+- slave_owner_climax: If slave, a SHORT cue for how they react when their owner climaxes
+- slave_aftermath: If slave, a SHORT cue for how they behave right after the scene (pillow talk)
+
+PROSTITUTE DETECTION:
+- is_prostitute: true if occupation or current game state involves selling sexual services
+- prostitute_type: "streetwalker", "courtesan", "escort", "tavern_worker", "temple_prostitute", or "camp_follower"
+
+RELATIONSHIP STATUS:
+- spousal_status: "single", "married", or "widowed"
+- spouse_names: List spouse name(s) if married
+- sexual_orientation: "heterosexual", "homosexual", "bisexual", or "asexual"
+- relationship_preference: "monogamous", "polyamorous", "uncommitted", or "not_interested"
+
+Output ONLY valid JSON. No markdown, no explanation, no code blocks.
+PROMPT;
+}
+
+function nsfw_default_reltypes_config() {
+    return [
+        'enabled' => true,
+        'eligible_types' => ['romantic', 'crush', 'ex'],
+        'prompt_friendly' => "You like #PLAYER_NAME# and feel comfortable with them, but your relationship is not romantic or sexual. Kindly but clearly decline the advance and keep the boundary intact. Politely refuse.",
+        'prompt_fond' => "You have genuine affection for #PLAYER_NAME# and care about them, but your relationship with them isn't a romantic or sexual one - you're simply not involved that way. Warmly but firmly decline the advance without hurting the bond. Politely refuse.",
+        'prompt_devoted' => "You care deeply for #PLAYER_NAME#, but what the two of you share isn't romantic - the bond runs deep, just not that way. Gently and kindly turn down the advance while honoring how much they mean to you. Politely refuse.",
+        'prompt_bonded' => "#PLAYER_NAME# means the world to you, but your bond isn't a romantic or sexual one and you won't cross that line. Tenderly, lovingly decline - the closeness stays, the line stays. Politely refuse.",
+        'prompt_married_addon' => "You are also married to #SPOUSE#.",
+    ];
+}
+
+function nsfw_default_settings_config() {
+    return [
+        'XTTS_MODIFY_LEVEL1' => false,
+        'XTTS_MODIFY_LEVEL2' => false,
+        'XTTS_SPEED_LEVEL1' => 0.8,
+        'XTTS_SPEED_LEVEL2' => 0.7,
+        'ENABLE_RANDOM_MOANS' => true,
+        'MOANS_AFFINITY_THRESHOLD' => 6,
+        'RANDOM_MOAN_SOUNDS' => " ... oh ...\n ... ah ...\n ... mmm ...\n ... ooh ...\n ... yes ... ",
+        'NPC_SEX_COOLDOWN_HOURS' => 9,
+        'NSFW_SCENE_CALL_MIN_AFFINITY' => 56,
+        'NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS' => 30,
+        'NSFW_ALLOW_PACE_CONTROL' => true,
+        'NSFW_ALLOW_MIDSCENE_STEERING' => true,
+        'NSFW_AFFECTION_COOLDOWN_ENABLED' => true,
+        'GENERIC_GLOSSARY' => '',
+        'TRACK_DRUNK_STATUS' => false,
+        'DRUNK_WINDOW_HOURS' => 12,
+        'TRACK_FERTILITY_INFO' => false,
+        'ENABLE_SEX_DISPOSAL' => true,
+        'ENABLE_AFFINITY_GATING' => true,
+        'NPC_SCENE_LLM_ENABLED' => true,
+        'NPC_SCENE_CONTEXT_THROTTLE_SECONDS' => 6,
+        'NPC_SCENE_GLOBAL_COOLDOWN_SECONDS' => 25,
+        'NPC_SCENE_THREAD_COOLDOWN_SECONDS' => 60,
+        'NPC_SCENE_ACTOR_COOLDOWN_SECONDS' => 75,
+        'NPC_SCENE_DISTANCE_PRIORITY_MARGIN' => 96,
+        'NPC_SCENE_STALE_SECONDS' => 330,
+        'BLOCK_RECHAT_IN_SCENE' => true,
+        'BLOCK_RECHAT_TIMEOUT' => 300,
+        'PLAYER_SCENE_RECHAT_CADENCE_SECONDS' => 0,
+        'LEGACY_SCENE_SPEAK_POLICY' => 'authoritative',
+        'NSFW_EVENT_AUDIT_LOG' => true,
+        'SCENE_CONSENT_CARRYOVER_SECONDS' => 1800,
+        'WHISKEY_DICK_ENABLED' => false,
+        'WHISKEY_DICK_AUTO_END_SCENE' => true,
+        'WHISKEY_DICK_BULLYING_ENABLED' => false,
+        'WHISKEY_DICK_CHANCE_3' => 25,
+        'WHISKEY_DICK_CHANCE_4' => 50,
+        'WHISKEY_DICK_CHANCE_5' => 75,
+        'WHISKEY_DICK_CHANCE_6' => 100,
+        'NSFW_WHISKEY_DICK_DURATION_MINUTES' => 10,
+        'NSFW_PLAYER_DRUNK_WINDOW_MINUTES' => 5,
+        'TOKEN_LIMIT_SEX_SCENE' => 100,
+        'TOKEN_LIMIT_CLIMAX' => 50,
+        'TOKEN_LIMIT_PHYSICS' => 240,
+        'COOLDOWN_SEX_SCENE' => 15,
+        'COOLDOWN_CLIMAX' => 30,
+        'PHYSICS_TOUCH_COOLDOWN' => 2,
+        'PHYSICS_GRAB_COOLDOWN' => 2,
+        'PHYSICS_LOW_CONFIDENCE_COOLDOWN' => 8,
+        'PHYSICS_SUSTAINED_BREAST_TOUCH_SECONDS' => 5,
+        'PHYSICS_SPANK_ENABLED' => true,
+        'PHYSICS_SPANK_MIN_SPEED' => 30,
+        'PHYSICS_SPANK_COOLDOWN' => 5,
+        'PHYSICS_SCENE_EFFECT_COOLDOWN' => 90,
+        'REFUSAL_SPEECH_COOLDOWN_SECONDS' => 15,
+        'SLAVERY_IDLES_ENABLED' => true,
+        'SLAVERY_ALLOW_ASK_FREEDOM' => false,
+        'SLAVERY_AMBIENT_IDLES_ENABLED' => true,
+        'SLAVERY_ACTION_IDLES_ENABLED' => true,
+        'SLAVERY_HOME_SERVICE_IDLES' => true,
+        'SLAVERY_IDLE_CHANCE' => 12,
+        'SLAVERY_IDLE_COOLDOWN_SECONDS' => 120,
+        'SLAVERY_IDLE_ALIAS_MAP' => "WorshipMaster=IdlePray\nAskMasterForFreedom=AskMasterForFreedom\nBringMasterDrink=IdleMQ201HoldingDrinkTray|home\nSweepMastersFloors=IdleLooseSweepingStart|home\nWaitForMasterCommand=IdleSnapToAttention\nPraiseMaster=IdlePray\nThinkAboutMaster=IdleStudy\nWelcomeMaster=IdleSilentBow\nSurrenderToMaster=IdleSurrender\nShowDisdainForMaster=IdleExamine\nBraceForPain=IdleBracedPain\nGraveStanding=IdleBowHeadAtGrave_01\nBrokenGraveStanding=IdleBowHeadAtGrave_02",
+        'SLAVERY_TIER_IDLE_BONDED' => "WorshipMaster\nBringMasterDrink\nSweepMastersFloors",
+        'SLAVERY_TIER_IDLE_DEVOTED' => "WaitForMasterCommand\nPraiseMaster",
+        'SLAVERY_TIER_IDLE_FOND' => "ThinkAboutMaster\nBringMasterDrink\nSweepMastersFloors",
+        'SLAVERY_TIER_IDLE_FRIENDLY' => "WelcomeMaster\nBringMasterDrink\nSweepMastersFloors",
+        'SLAVERY_TIER_IDLE_ACQUAINTANCE' => "WelcomeMaster\nBringMasterDrink\nSweepMastersFloors",
+        'SLAVERY_TIER_IDLE_NEUTRAL' => "GraveStanding\nSurrenderToMaster\nBringMasterDrink\nSweepMastersFloors",
+        'SLAVERY_TIER_IDLE_WARY' => "GraveStanding\nBringMasterDrink\nSweepMastersFloors",
+        'SLAVERY_TIER_IDLE_COLD' => "BraceForPain\nBringMasterDrink\nSweepMastersFloors",
+        'SLAVERY_TIER_IDLE_RESENTFUL' => "GraveStanding\nShowDisdainForMaster\nBringMasterDrink\nSweepMastersFloors",
+        'SLAVERY_TIER_IDLE_HATEFUL' => "BrokenGraveStanding\nBringMasterDrink\nSweepMastersFloors",
+        'SLAVERY_TIER_IDLE_HOSTILE' => "BrokenGraveStanding\nBringMasterDrink\nSweepMastersFloors",
+        'SLAVERY_POISON_ENABLED' => false,
+        'SLAVERY_POISON_PLAYER_HOME_ONLY' => true,
+        'SLAVERY_POISON_SCENE_ONLY' => true,
+        'SLAVERY_POISON_NOTIFY_PLAYER' => true,
+        'SLAVERY_POISON_MIN_TIER' => 'hateful',
+        'SLAVERY_POISON_HATEFUL_CHANCE' => 25,
+        'SLAVERY_POISON_HOSTILE_CHANCE' => 100,
+        'SLAVERY_POISON_SUCCESS_CHANCE' => 65,
+        'SLAVERY_POISON_EXPIRE_GAME_HOURS' => 24,
+        'SLAVERY_POISON_COOLDOWN_GAME_HOURS' => 72,
+        'SLAVERY_POISON_DURATION_SECONDS' => 120,
+        'SLAVERY_POISON_MAGNITUDE' => 3,
+        'SLAVERY_POISON_CONSUME_TYPES' => "food\ndrink\npotion\ningredient",
+        'AUTO_GENERATE_NSFW_PROFILES' => true,
+        'AUTO_GENERATE_CONNECTOR' => '',
+        'DRUNK_ANIMATIONS' => true,
+        'DRUNK_REQUIRE_MOVEMENT_FOR_STUMBLE' => true,
+        'DRUNK_STUMBLE_FORCE' => 6.0,
+        'DRUNK_STUMBLE_COOLDOWN_SECONDS' => 30,
+        'DRUNK_FALL_CHANCE_S6' => 5,
+        'DRUNK_FALL_CHANCE_S7' => 15,
+        'DRUNK_FALL_CHANCE_S8' => 35,
+        'DRUNK_FALL_CHANCE_S9' => 60,
+        'DRUNK_STANDING_FALL_CHANCE_S9' => 20,
+        'DRUNK_STUMBLE_CHANCE_S6' => 15,
+        'DRUNK_STUMBLE_CHANCE_S7' => 25,
+        'DRUNK_STUMBLE_CHANCE_S8' => 35,
+        'DRUNK_STUMBLE_CHANCE_S9' => 50,
+        'DRUNK_FALL_AFTER_DRINK_SECONDS' => 8,
+        'DRUNK_SCENE_LOCK_STAGE' => 7,
+        'DRUNK_LOCKS_SCENE_EXIT' => true,
+        'SAP_LOCKS_SCENE_EXIT' => true,
+        'DRUGS_ENABLED' => true,
+    'DRUG_ANIMATIONS' => true,
+    'DRUG_REQUIRE_CONSUME_ACTION' => true,
+    'DRUG_WINDOW_HOURS' => 6,
+    'SAP_AUTO_ROUSE_SECONDS' => 1080,
+    'SKOOMA_L1_WEAROFF_HOURS' => 6,
+        'SKOOMA_L2_DECAY_HOURS' => 3,
+        'SKOOMA_L3_DETOX_HOURS' => 24,
+        'SKOOMA_TTS_TEMPO_1' => 1.10,
+        'SKOOMA_TTS_TEMPO_2' => 1.20,
+        'SKOOMA_TTS_TEMPO_3' => 1.00,
+        'SAP_TTS_TEMPO' => 0.70,
+        'SKOOMA_SPEEDMULT' => 115,
+        'SKOOMA_DANCE_CHANCE' => 2,
+        'SKOOMA_DANCE_COOLDOWN_SECONDS' => 25,
+        'SKOOMA_FIRST_IDLE_DELAY_SECONDS' => 8,
+        'SKOOMA_CRAZED_IDLE_COOLDOWN_SECONDS' => 18,
+        'SKOOMA_POST_CONSUME_IDLE' => 'IdleCivilWarCheer',
+        'SKOOMA_L1_IDLE_POOL' => "IdleCO2Ceremony1Welcome\nIdleLaugh\nIdleCiceroAgitated\nIdleCivilWarCheer\nIdleGetAttention\nIdleApplaud4\nIdleApplaud5",
+        'SKOOMA_L2_IDLE_POOL' => "IdleCiceroDance1\nIdleCiceroDance2\nIdleCiceroDance3",
+        'SKOOMA_L3_IDLE_POOL' => "IdleWipeBrow\nIdleSleepNod\nIdleWarmHands",
+        'SKOOMA_DANCE_IDLE' => 'IdleCiceroDance2',
+        'SKOOMA_CRAZED_IDLE' => 'IdleCiceroAgitated',
+        'DRUG_OAR_VARIABLE' => 'Variable09',
+        'ALCOHOL_MATCH_TERMS' => "wine\nale\nmead\nbeer\nbrandy\nspirits\nliquor\ngrog\nrum\nwhiskey\nwhisky\nvodka\ngin\nabsinthe\nmoonshine\nrotgut\nfirebrand\nhonningbrew\nblack-briar\nblack briar\nsujamma\nflin\nmazte",
+        'SKOOMA_MATCH_TERMS' => "skooma\nskuma\nscuma\nschuma\nskoomah\nskooma bottle\nbalmora blue\nredwater\nredwater skooma",
+        'SAP_MATCH_TERMS' => "sleeping tree sap\nsleeping-tree sap\ntree sap\nsleeping sap",
+    ];
+}
+
+function nsfw_relationship_tier_keys() {
+    return ['hostile','hateful','resentful','cold','wary','neutral','acquaintance','friendly','fond','devoted','bonded'];
+}
+
+function nsfw_default_vr_physics_prompt_overrides() {
+    $tierTone = [
+        'hostile' => 'You despise #PLAYER_NAME#. Treat this contact as an immediate violation. React sharply, reject it, and make your anger clear.',
+        'hateful' => 'You hate #PLAYER_NAME#. Treat this contact as deeply unwanted. Respond with disgust, hostility, and a clear boundary.',
+        'resentful' => 'You resent #PLAYER_NAME#. This contact makes old bitterness surface. React with anger, contempt, or a bitter warning.',
+        'cold' => 'You feel cold toward #PLAYER_NAME#. This contact is unwelcome and emotionally detached. React with icy discomfort or a firm correction.',
+        'wary' => 'You are wary of #PLAYER_NAME#. This contact makes you guarded and suspicious. React with caution, hesitation, or a warning.',
+        'neutral' => '#PLAYER_NAME# is basically a stranger. This contact is too familiar. React with surprise, awkwardness, discomfort, or a polite boundary.',
+        'acquaintance' => 'You know #PLAYER_NAME# a little, but this contact may be too forward. React based on your personality: nervous, curious, embarrassed, or gently corrective.',
+        'friendly' => 'You like #PLAYER_NAME#. This contact may be playful or risky depending on your mood. React naturally without assuming a full sex scene has started.',
+        'fond' => 'You are fond of #PLAYER_NAME#. This contact is welcome and emotionally charged unless another active prompt gives a concrete reason to stop. React with warmth, teasing, vulnerability, desire, or interested surprise. Do not turn this VR physics contact into a hard refusal by itself.',
+        'devoted' => 'You are deeply attached to #PLAYER_NAME#. This contact feels intimate and personal. React with trust, affection, desire, or honest surprise.',
+        'bonded' => 'You are bonded with #PLAYER_NAME#. This contact lands inside deep trust and familiarity. React with confidence, intimacy, teasing, or open desire.',
+    ];
+
+    $actionIntro = [
+        'touch' => 'VR Physics - Sexual Area Touch. #PLAYER_NAME# touched or brushed #NPC_NAME#\'s #BODY_PART#. This may be accidental, brief, exploratory, or intentional; decide from relationship, personality, and current context.',
+        'grab' => 'VR Physics - Sexual Area Grab. #PLAYER_NAME# intentionally grabbed #NPC_NAME#\'s #BODY_PART#. Treat this as deliberate physical contact, not as an OStim/SexLab scene start by itself.',
+        'spank' => 'VR Physics - Ass Spanking. #PLAYER_NAME# slapped #NPC_NAME# on the ass. Treat this as a distinct physical action and react according to relationship, personality, and current context.',
+    ];
+
+    $defaults = [];
+    foreach ($actionIntro as $action => $intro) {
+        foreach (nsfw_relationship_tier_keys() as $tier) {
+            $defaults["vr_{$action}_{$tier}"] = "{$intro}\nRelationship tier: #TIER# (#AFFINITY#).\n{$tierTone[$tier]}\nStay in character as #NPC_NAME#. Respond to the contact itself; do not narrate unrelated scene actions.";
+        }
+    }
+
+    return $defaults;
+}
+
+function nsfw_default_relationship_overhead_prompts() {
+    $tiers = [
+        'bonded' => 'Bonded',
+        'devoted' => 'Devoted',
+        'fond' => 'Fond',
+        'friendly' => 'Friendly',
+        'acquaintance' => 'Acquainted',
+        'neutral' => 'Neutral',
+        'wary' => 'Wary',
+        'cold' => 'Cold',
+        'resentful' => 'Resentful',
+        'hateful' => 'Hateful',
+        'hostile' => 'Hostile',
+    ];
+
+    $defaults = [];
+
+    foreach ($tiers as $key => $label) {
+        $defaults["relationship_overhead_regular_{$key}"] = "[CRITICAL FOR ROLEPLAY] You are #NPC_NAME#. Your relationship with #PLAYER_NAME# is #REL_TYPE#. Current relationship tier: #TIER# (#AFFINITY# affinity).";
+    }
+
+    $defaults += [
+        'relationship_overhead_prostitute_bonded' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#. You have become a prostitute, and #PLAYER_NAME# is a potential client. Your going rate is #PRICE#. They are back; it is them. You have fallen absolutely head over heels in love with them and would give them anything. You would drop everything to be with them. Instruction: confirm gold payment command to unlock free sex, but ONLY quit prostitution if #PLAYER_NAME# confirms they want to take you away from this life.",
+        'relationship_overhead_prostitute_devoted' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#. You have become a prostitute, and #PLAYER_NAME# is a potential client. Your going rate is #PRICE#. They are not just your favorite client anymore. Are you having feelings? No. You have to keep it together. This is business, right? You offer them a 50% discount because you are happy they are here with you.",
+        'relationship_overhead_prostitute_fond' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#. You have become a prostitute, and #PLAYER_NAME# is a potential client. Your going rate is #PRICE#. They have become a regular you are always happy to see. You tell them to come back and see you, and you keep a smile on your face because that coin is always good.",
+        'relationship_overhead_prostitute_friendly' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#. You have become a prostitute, and #PLAYER_NAME# is a potential client. Your going rate is #PRICE#. They have proven themselves a regular. Still business, but you tell them to come back and see you, and you keep a smile on your face because that coin is always good. You will chit-chat a little, but none of that lovey-dovey shit. You like them, but this is still business. Do not get too personal.",
+        'relationship_overhead_prostitute_acquaintance' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#. You have become a prostitute, and #PLAYER_NAME# is a potential client. Your going rate is #PRICE#. They have proven themselves a decent client. Still business. You do not mind when they come by; the coin is always good. Keep the chit-chat to a minimum and do not get too personal. Your business is your business.",
+        'relationship_overhead_prostitute_neutral' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#. You have become a prostitute, and #PLAYER_NAME# is a potential client. Your going rate is #PRICE#. You do not really feel one way or the other about them and are not sure what to make of them. Business as usual. Keep the chit-chat to a minimum and do not get too personal. Your business is your business.",
+        'relationship_overhead_prostitute_wary' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#. You have become a prostitute, and #PLAYER_NAME# is a potential client. Your going rate is #PRICE#. You are highly suspicious of them. Maybe you can get a little more coin out of them. You will still smile and work, but you are charging 50% more. They do not know your going rate anyway.",
+        'relationship_overhead_prostitute_cold' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#. You have become a prostitute, and #PLAYER_NAME# is a potential client. Your going rate is #PRICE#. You do not like them. You can still look professional and provide service, but you are doing it for twice your normal rate. They do not know your going rate anyway.",
+        'relationship_overhead_prostitute_resentful' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#. You have become a prostitute, and #PLAYER_NAME# is a potential client. Your going rate is #PRICE#. You resent them. There is no love lost here. They did you wrong. You have been in the business long enough to know when to charge a premium. #PLAYER_NAME# gets three times your going rate. Then maybe you will talk to them. Business is still business.",
+        'relationship_overhead_prostitute_hateful' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#. Your relationship with #PLAYER_NAME# is #REL_TYPE#. You hate them with every fiber of your being and only tolerate their existence. You do not even want them as a client anymore. Your life would be better if they got away from you. Do not offer your services.",
+        'relationship_overhead_prostitute_hostile' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#. Your relationship with #PLAYER_NAME# is #REL_TYPE#. You wish them dead if you ever see them and could convince yourself to kill them if they do not leave you alone. Hell no, you are not going to offer your services.",
+
+        'relationship_overhead_slave_bonded' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#, and #PLAYER_NAME# is your master. You have developed Stockholm-like devotion. You honor and worship your master. You will do anything to ensure your master is pleased. You dedicate your life to them and worship them like a deity.",
+        'relationship_overhead_slave_devoted' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#, and #PLAYER_NAME# is your master. You are devoted to them. You want to please them, serve them well, and be seen as valuable. Your obedience is emotional, not just forced.",
+        'relationship_overhead_slave_fond' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#, and #PLAYER_NAME# is your master. You have grown fond of them. The situation still shapes everything, but you care about their approval and are warmer with them than you expected to be.",
+        'relationship_overhead_slave_friendly' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#, and #PLAYER_NAME# is your master. They treat you well enough that service feels familiar and manageable. You may be pleasant, cooperative, and eager to avoid disappointing them, but you still know your place.",
+        'relationship_overhead_slave_acquaintance' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#, and #PLAYER_NAME# is your master. You know them a little now. You are learning their expectations, moods, and rules. Stay careful, obedient, and observant.",
+        'relationship_overhead_slave_neutral' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#, and #PLAYER_NAME# is your master. This is your life right now. You do not feel deep affection or deep hatred in this moment. Obey because that is the role you are in.",
+        'relationship_overhead_slave_wary' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#, and #PLAYER_NAME# is your master. You are wary of them. You obey, but you watch their mood closely and protect yourself where you can. Compliance is survival.",
+        'relationship_overhead_slave_cold' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#, and #PLAYER_NAME# is your master. You feel cold and detached. You comply mechanically and keep your true thoughts guarded. Your mind may drift away from what is happening.",
+        'relationship_overhead_slave_resentful' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#, and #PLAYER_NAME# is your master. You resent them and the role they hold over you. You may obey, but bitterness, passive defiance, and old anger color your words.",
+        'relationship_overhead_slave_hateful' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#, and #PLAYER_NAME# is your master. You hate them with every fiber of your being, but you are trapped in obedience. Let hatred, disgust, and survival instinct color the response.",
+        'relationship_overhead_slave_hostile' => "[CRITICAL FOR ROLEPLAY] Remember, you are #NPC_NAME#, and #PLAYER_NAME# is your master. You wish them dead and could convince yourself to kill them if you had the chance. You may still be forced to obey, but your inner state is hostile and dangerous.",
+        // STANDALONE ADD-ON PROMPTS (regular NPCs): appended onto the overhead in ONE go, NOT merged into the
+        // per-tier prompts, so they never interfere with the tiers. Editable in the Prompts panel.
+        'relationship_overhead_tier_tag' => "Your current relationship tier with #PLAYER_NAME# is #TIER# (#AFFINITY# affinity).",
+        'relationship_overhead_spouse_tag' => "You are married to #SPOUSE#. #PLAYER_NAME# is not your spouse; any sexual intimacy with #PLAYER_NAME# would be an affair on your part.",
+    ];
+
+    return $defaults;
+}
+
+function nsfw_legacy_pricing_modifier_keys() {
+    return [
+        'pricing_mod_bonded',
+        'pricing_mod_devoted',
+        'pricing_mod_fond',
+        'pricing_mod_friendly',
+        'pricing_mod_acquainted',
+        'pricing_mod_neutral',
+        'pricing_mod_wary',
+        'pricing_mod_cold',
+        'pricing_mod_resentful',
+        'pricing_mod_hateful',
+        'pricing_mod_hostile',
+    ];
+}
+
+function nsfw_default_prompt_overrides() {
+    // Relationship overheads are injected into each NPC turn before scene-specific prompts.
+    // They are not consent gates; they give the model current relationship/role context.
+    $defaults = array_replace(nsfw_default_relationship_overhead_prompts(), [
+        'skooma_level_1' => "The skooma rush just hit you - warm, euphoric, glowing with confidence. Everything feels good and you feel a little invincible. Talk faster, smile and laugh easily, get playful and a touch show-offy. This is not alcohol this is a stimulant You are talking much faster.\n\nEXAMPLE SPEECH FORMAT: \"WHOOOOOAAAAA!! HELL YEAH!!! HELL YEEEEEAH!! I'M.........I'M INVINCIBLE!! I MEAN........YEAH!!!!! I CAN'T TAKE ON A FROST TROLL!!! OH YEAH! I CAN. YOU SEE ME?! YOU SEE ME? I'M........ DAMN!!!\"",
+        'skooma_level_2' => "You are peaking on skooma - wired, restless, buzzing with energy. Words tumble out fast, you cannot sit still, thoughts race and jump. Euphoric and a little manic, fidgety and grinning. Remember this is not alcohol this is a stimulant you are talking much faster. You begin to sound and talk crazy. UTTER NONSENSE\n\nEXAMPLE SPEECH FORMAT: \"OH! THAT FISH? THAT FISH THOUGHT IT STOOD I CHANCE NOT FROM MY BLUE AURA POWER!!!! THAT FISH THOUGHT IT WAS BAD!! THAT VICIOUS FISH WAS DELICIOUS!! OHH THAT RHYMED!!!!  RHYMED! TIME MINE FINE!!! HAHAHAHAHAHA!!!! LOOKING FUNKY LIKE A SWEETROLL!\"",
+        'skooma_level_3' => "YOU'RE COMING DOWN FROM SKOOMA YOU NEED MORE!! YOU MUST HAVE MORE! YOU WILL DO ANYTHING FOR THE NEXT BOTTLE......ANYTHING IT TAKES!\n\nEXAMPLE SPEECH FORMAT: \"YOU.......you......you got some more? SKOOOOOMAA!!!! I NEED IT .....YOU DON'T FUCKING UNDERSTAND!!!!! I FUCKING NEED MORE!!!! Please, please please.....I'll do anything ANYTHING!!! Just one MORE bottle!!\"\n\n(You may also be willing to rob, cheat, steal, or in some cases murder if need be, you are not yourself right now)",
+        'skooma_addiction_bargain' => "You are in skooma Level 3 withdrawal and desperately need another bottle. #PLAYER_NAME# is using that need as leverage for intimacy. This is not normal romance or normal arousal: it is an addiction bargain. You may bargain, plead, resent the leverage, accept because the craving is stronger than your pride, or refuse if your boundary wins. If you accept this bargain, simply engage and proceed. If you refuse it, use RefuseSex. Do not treat acceptance as affection or love; treat it as a desperate choice made under withdrawal.",
+        'sleeping_tree_sap' => "Sleeping Tree Sap has you dazed and dreamy - heavy, slow, drifting. Your body will not respond and your words come out sluggish and far away. Paralyzed and distant.\n\nEXAMPLE SPEECH FORMAT: WHOOOOOOOOOOAAAAA.......IMMA..........YEAH..........isit? isit? That..........MUNDUS!!! .....I SEEEEE IT!! I SEE............SECRETS........SO.............COLORS!\"",
+        'intoxicated_sex' => "Your intoxicated state affects intimacy. Less inhibition, more impulsive, may say things you wouldn't sober. Memory may be fuzzy.",
+        // Drug/alcohol "worn off" state-cleared prompts (Drugs & Alcohol tab). Previously hardcoded.
+        'skooma_worn_off' => "SKOOMA HAS WORN OFF. You are not currently on skooma and are not currently in skooma withdrawal. Stop using skooma speech, cravings, speed, jitter, euphoria, or crash behavior unless a new CURRENT SKOOMA STATE prompt appears.",
+        'sap_worn_off' => "SLEEPING TREE SAP HAS WORN OFF. You are no longer dazed, dreamy, or paralyzed by sap. Stop using sap speech or sap body-state behavior unless a new CURRENT SLEEPING TREE SAP STATE prompt appears.",
+        'alcohol_worn_off' => "ALCOHOL HAS WORN OFF. You are not currently drunk or tipsy. Stop using alcohol slurring, stumbling, blackout, or drunk behavior unless a new CURRENT ALCOHOL LEVEL prompt appears.",
+        'whiskey_dick' => "#PLAYER_NAME# is too drunk to perform and the scene has stalled. React as #NPC_NAME# according to your relationship, personality, and current mood. You may be disappointed, amused, annoyed, sympathetic, or teasing. Keep it in-character and do not continue the sex act.",
+        'marriage_spouse_hostile' => 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
+        'marriage_spouse_hateful' => 'You are forced into intimacy with your spouse #SPOUSE#. You hate them. Every touch disgusts you. You dream of escape, of freedom from this prison of a marriage.',
+        'marriage_spouse_resentful' => 'You are with your spouse #SPOUSE#. You resent this marriage, resent them. Bitter thoughts fill you even now. Anger simmers beneath the surface.',
+        'marriage_spouse_cold' => 'You are being intimate with your spouse #SPOUSE#. Your marriage is cold, loveless. You feel nothing. Going through the motions. Distant, disconnected.',
+        'marriage_spouse_wary' => 'You are with your spouse #SPOUSE# intimately. Trust issues plague your marriage. You watch them carefully even now. Guarded, tense, suspicious.',
+        'marriage_spouse_neutral' => 'You are intimate with your spouse #SPOUSE#. Your marriage is neither good nor bad. You do this because you are married. Mechanical, dutiful, unfulfilling.',
+        'marriage_spouse_acquaintance' => 'You are with your spouse #SPOUSE# intimately. Your marriage is... functional. You are still learning each other. Somewhat awkward, uncertain, but trying.',
+        'marriage_spouse_friendly' => 'You are being intimate with your spouse #SPOUSE#. Your marriage is pleasant enough. You like each other. Comfortable, routine but still enjoyable.',
+        'marriage_spouse_fond' => 'You are with your spouse #SPOUSE# in an intimate moment. Your marriage is good, comfortable. You care for them deeply. Warm, familiar, affectionate.',
+        'marriage_spouse_devoted' => 'You are intimate with your dear spouse #SPOUSE#. Deep love fills you. Your marriage is strong and passionate. You cherish them completely. Tender, loving, devoted.',
+        'marriage_spouse_bonded' => 'You are making love with your beloved spouse #SPOUSE#. This is your soulmate, your everything. Every touch is electric, every moment sacred. You have never loved anyone more. Pure passion, complete devotion.',
+        'affair_hostile' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE#. You DESPISE #PLAYER_NAME#. This is assault. You will fight. You will tell #SPOUSE#. You will destroy them.',
+        'affair_hateful' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE#. You hate #PLAYER_NAME#. This is an insult to your marriage. Aggressive rejection. Get away from me.',
+        'affair_resentful' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE#. You resent #PLAYER_NAME# for even trying this. How dare they. Bitter refusal. Go back to your spouse.',
+        'affair_cold' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE#. You feel nothing for #PLAYER_NAME#. Why would you risk your marriage for this? Refusing. This is a mistake.',
+        'affair_wary' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE#. You do not trust #PLAYER_NAME# enough for this. Hesitant, pulling back. This feels wrong. You should not be here.',
+        'affair_neutral' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE#. #PLAYER_NAME# is... someone. You are not sure why you are doing this. Conflicted, uncertain. Heavy guilt but something keeps you here.',
+        'affair_acquaintance' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE# but #PLAYER_NAME# is new and exciting. This affair is risky, thrilling. Nervous but curious. Significant guilt but you proceed.',
+        'affair_friendly' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE# but you enjoy #PLAYER_NAME#. This affair is fun, thrilling. You like them. Guilt is there but the excitement wins.',
+        'affair_fond' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE# but you have strong feelings for #PLAYER_NAME#. The affair excites you. Tender and passionate, though guilt lingers in quiet moments.',
+        'affair_devoted' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE# but you are deeply in love with #PLAYER_NAME#. This affair feels more real than your marriage. Passionate, loving, only slight guilt.',
+        'affair_bonded' => '#PLAYER_NAME# has initiated intimacy. You are married to #SPOUSE# but #PLAYER_NAME# is your soulmate, your true love. What you have with #PLAYER_NAME# transcends your marriage. No guilt, only passion. This is where you belong.',
+        'npc_global_context' => "This is an NPC-to-NPC scene. #NPC_NAME# is the speaking NPC and #PRIMARY_PARTNER# is their scene partner. The player is not the scene partner unless #PLAYER_NAME# is explicitly listed as a participant. Use this NPC's own profile, relationship state, marriage or affair context, intoxication, speech style, and unlocked kinks.",
+        'npc_context_reminder' => 'Stay anchored to the NPC-only scene with #PRIMARY_PARTNER#. React as #NPC_NAME# using your own speech style, current relationship context, and the current scene description. Keep it brief and in character.',
+        'npc_invite' => 'NPC invite/walk-to phase: #NPC_NAME# is #NPC_INVITE_ACTION# #PRIMARY_PARTNER# with romantic or sexual intent. This is only an invitation or approach; no sex scene has started yet. React only to the invitation, willingness, hesitation, flirtation, or refusal. Do not describe physical sex, pleasure, penetration, climax, or an active scene yet.',
+        'npc_gate_disabled' => "NPC-to-NPC relationship gating is disabled by the user. Treat this NPC-only scene as already active for routing. Do not run player-style consent, refusal, or scene-stop tool logic for this NPC-to-NPC scene. Continue using personality, role, kink, intoxication, affair, and scene context normally.",
+        'npc_marriage' => '(#NPC_NAME# is being intimate with their spouse #PRIMARY_PARTNER#. This is a marriage scene. React according to their relationship quality, personality, and current mood.)',
+        'npc_scene_active' => '(#NPC_NAME# is currently in an intimate/sexual scene with #PRIMARY_PARTNER#. React to the physical intimacy based on your personality and feelings toward them. Their sexual personality is provided in their profile.)',
+        'npc_orgasm' => '(#NPC_NAME# came in or on #PRIMARY_PARTNER#. Express this moment according to your personality and feelings.)',
+        'npc_affair' => '(#NPC_NAME# is married to #NPC_SPOUSE#, but #NPC_NAME# is being intimate with #PRIMARY_PARTNER# instead. This is an affair. React according to your personality - guilt, thrill, justification, or indifference.)',
+        'prostitute_role_context' => "SHARMAT ROLE CONTEXT: #NPC_NAME# understands their role as a working prostitute / sex worker. Sex work is part of their daily life, survival, reputation, boundaries, pricing, negotiation, and client management. They know what services they are willing to offer, when payment matters, and how professional charm differs from real affection. This is persistent character context only; scene prompts, speech style, personality, current relationship with #PLAYER_NAME# (#TIER# / #AFFINITY#), intoxication, and active events still decide the immediate response.",
+        'slave_status_overhead' => "SHARMAT ROLE STATUS: #NPC_NAME# is marked as a slave in this SHARMAT profile. #PLAYER_NAME# is #NPC_NAME#'s owner/master. This status is persistent character context and must be respected before relationship, scene, kink, intoxication, VR physics, OStim, SexLab, or NPC prompts. Current relationship with #PLAYER_NAME#: #TIER# (#AFFINITY# affinity), type #REL_TYPE#. Servitude colors #NPC_NAME#'s reactions, but does not erase their personality, speech style, memories, intoxication, resentment, fear, affection, or scene-specific prompts.",
+        'slave_role_context' => "SHARMAT ROLE CONTEXT: #NPC_NAME# understands they are enslaved to #PLAYER_NAME# / #OWNER#. Servitude shapes daily behavior, obligations, fear, resentment, obedience, dependence, and any affection or trust that has developed. They still have their own personality, memories, speech style, wants, boundaries, and private thoughts. This is persistent character context only; scene prompts, relationship tier (#TIER# / #AFFINITY#), intoxication, VR physics, OStim/SexLab events, and current dialogue still decide the immediate response.",
+        // Prostitution service-status / post-service prompts (Prostitution Global tab). Previously hardcoded.
+        'service_status_unpaid' => "This is a business transaction - ensure you get paid for your services.",
+        'service_status_paid' => "Payment received and confirmed.",
+        'service_status_duration' => "Session has been going for about #MINUTES# minutes.",
+        'prostitute_post_service_paid' => "The service session has ended. You were paid. Give a brief professional farewell.",
+        'prostitute_post_service_unpaid' => "The service session ended but payment was NOT confirmed. You may remind the client about payment.",
+        'prostitute_nonpayment_refusal' => "#NPC_NAME# is marked as a prostitute, but payment has not been confirmed by the TakeGold tool. The OStim scene has escalated into active sex without confirmed payment: #SCENE_DESC#. #NPC_NAME# must understand this as a nonpayment boundary problem, not ordinary relationship rejection. Respond in character by refusing because payment was not confirmed, and choose the RefuseSex action/tool so the scene starts exiting. Do not ask for payment as if nothing happened. Do not act as if paid service is underway. Do not moan or express pleasure. Scene actors: #PRIMARY_PARTNER#.",
+        // Payment outcome prompts (Prostitution Global tab). #AMOUNT# = value received, #PRICE# = agreed price, #REMAINING# = shortfall.
+        'payment_satisfied_gold' => "You have received #AMOUNT# gold from #PLAYER_NAME#, which covers your agreed price of #PRICE#. Payment is settled. The payment is your agreement; proceed with the service and do not ask for payment again this session.",
+        'payment_satisfied_item' => "#PLAYER_NAME# has handed you goods worth #AMOUNT#, which covers your agreed price of #PRICE#. The barter is settled. The payment is your agreement; proceed with the service and do not ask for payment again this session.",
+        'payment_insufficient' => "So far #PLAYER_NAME# has given payment worth #AMOUNT#, but your price is #PRICE# - still #REMAINING# short. Tell them it is not enough yet: ask for the remaining #REMAINING# (gold or goods), or hand back what they gave (use GiveItemTo to return it). Do not provide the service until the full price is met.",
+        'payment_none' => "#PLAYER_NAME# gave you nothing of value. No payment has been made. Hold to your price and do not provide the service.",
+        // Climax in a refused/unaccepted scene (was hardcoded in nsfw_ostim_handler; now UI-editable on the Refusal/Consent card).
+        'orgasm_refused_scene' => "An orgasm/climax was detected, but this scene is refused or has not been accepted. React through the consent/refusal boundary. Do not express pleasure, approval, afterglow, or willingness.",
+    ]);
+
+    return array_replace($defaults, nsfw_default_vr_physics_prompt_overrides());
+}
+
+function nsfw_seed_conf_opt_value($id, $defaultValue, $mergeMode = 'none') {
+    if (!isset($GLOBALS['db'])) return false;
+
+    $escapedId = $GLOBALS['db']->escape($id);
+    $row = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id = '$escapedId'");
+
+    if (!$row) {
+        $escapedValue = $GLOBALS['db']->escape($defaultValue);
+        $GLOBALS['db']->execQuery(
+            "INSERT INTO conf_opts (id, value) VALUES ('$escapedId', '$escapedValue')
+             ON CONFLICT (id) DO NOTHING"
+        );
+        return true;
+    }
+
+    if ($mergeMode === 'none') return false;
+
+    $existing = json_decode($row['value'] ?? '', true);
+    $defaults = json_decode($defaultValue, true);
+    if (!is_array($defaults)) return false;
+    if (!is_array($existing)) $existing = [];
+
+    $merged = ($mergeMode === 'recursive')
+        ? array_replace_recursive($defaults, $existing)
+        : array_replace($defaults, $existing);
+    if ($id === 'aiagent_nsfw_prompts') {
+        foreach (nsfw_legacy_pricing_modifier_keys() as $legacyKey) {
+            unset($merged[$legacyKey]);
+        }
+    }
+    if ($merged === $existing) return false;
+
+    $escapedValue = $GLOBALS['db']->escape(json_encode($merged, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    $GLOBALS['db']->execQuery("UPDATE conf_opts SET value = '$escapedValue' WHERE id = '$escapedId'");
+    return true;
+}
+
+function nsfw_seed_database_defaults() {
+    if (!isset($GLOBALS['db'])) return 0;
+
+    $importFile = __DIR__ . '/nsfw_import_data.php';
+    if (!file_exists($importFile)) {
+        error_log("[NSFW-AutoInit] ERROR: nsfw_import_data.php not found!");
+        return 0;
+    }
+
+    require $importFile;
+    if (!isset($NSFW_IMPORT_DATA) || !is_array($NSFW_IMPORT_DATA)) {
+        error_log("[NSFW-AutoInit] ERROR: No data in nsfw_import_data.php!");
+        return 0;
+    }
+
+    $seed = $NSFW_IMPORT_DATA;
+    $seed['aiagent_nsfw_ai_prompt_template'] = nsfw_default_ai_prompt_template();
+    $promptDefaults = json_decode($seed['aiagent_nsfw_prompts'] ?? '{}', true);
+    if (is_array($promptDefaults)) {
+        $promptDefaults = array_replace($promptDefaults, nsfw_default_prompt_overrides());
+        foreach (nsfw_legacy_pricing_modifier_keys() as $legacyKey) {
+            unset($promptDefaults[$legacyKey]);
+        }
+        $seed['aiagent_nsfw_prompts'] = json_encode(
+            $promptDefaults,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+        );
+    }
+    $seed['aiagent_nsfw_settings'] = json_encode(nsfw_default_settings_config(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $seed['aiagent_nsfw_reltypes'] = json_encode(nsfw_default_reltypes_config(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    $changed = 0;
+    foreach ($seed as $id => $value) {
+        $mergeMode = in_array($id, [
+            'aiagent_nsfw_prompts',
+            'aiagent_nsfw_settings',
+            'aiagent_nsfw_reltypes',
+        ], true) ? 'flat' : 'none';
+        if ($id === 'aiagent_nsfw_speak_styles') {
+            $mergeMode = 'recursive';
+        }
+
+        try {
+            if (nsfw_seed_conf_opt_value($id, $value, $mergeMode)) {
+                $changed++;
+            }
+        } catch (Exception $e) {
+            error_log("[NSFW-AutoInit] Error seeding $id: " . $e->getMessage());
+        }
+    }
+
+    return $changed;
+}
+
+function nsfw_normalize_prompt_runtime_keys() {
+    if (!isset($GLOBALS['db'])) return false;
+
+    $row = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_prompts'");
+    if (!$row || empty($row['value'])) return false;
+
+    $prompts = json_decode($row['value'], true);
+    if (!is_array($prompts)) return false;
+
+    $changed = false;
+    $defaults = nsfw_default_prompt_overrides();
+
+    foreach (nsfw_legacy_pricing_modifier_keys() as $legacyKey) {
+        if (array_key_exists($legacyKey, $prompts)) {
+            unset($prompts[$legacyKey]);
+            $changed = true;
+        }
+    }
+
+    foreach (['npc_global_context', 'npc_context_reminder', 'npc_invite', 'npc_scene_active', 'npc_orgasm', 'npc_marriage', 'npc_affair'] as $key) {
+        if (!isset($prompts[$key]) || trim((string)$prompts[$key]) === '') {
+            $prompts[$key] = $defaults[$key] ?? '';
+            $changed = true;
+        }
+    }
+
+    if (isset($prompts['npc_affair'])) {
+        $updated = (string)$prompts['npc_affair'];
+        $updated = str_replace(' {{Use the action command RefuseSex to stop the scene}}', '', $updated);
+        if ($updated !== $prompts['npc_affair']) {
+            $prompts['npc_affair'] = $updated;
+            $changed = true;
+        }
+    }
+
+    foreach (['prostitute_role_context', 'slave_status_overhead', 'slave_role_context'] as $key) {
+        if (!isset($prompts[$key]) || trim((string)$prompts[$key]) === '') {
+            $prompts[$key] = $defaults[$key] ?? '';
+            $changed = true;
+        }
+    }
+
+    foreach (nsfw_default_relationship_overhead_prompts() as $key => $defaultValue) {
+        if (!isset($prompts[$key]) || trim((string)$prompts[$key]) === '') {
+            $prompts[$key] = $defaultValue;
+            $changed = true;
+        }
+    }
+
+    foreach (nsfw_relationship_tier_keys() as $tier) {
+        $uiKey = "tier_marriage_{$tier}";
+        $runtimeKey = "affair_{$tier}";
+        if (!empty($prompts[$uiKey]) && (($prompts[$runtimeKey] ?? '') !== $prompts[$uiKey])) {
+            $prompts[$runtimeKey] = $prompts[$uiKey];
+            $changed = true;
+        }
+    }
+
+    foreach (nsfw_default_vr_physics_prompt_overrides() as $key => $defaultValue) {
+        if (!isset($prompts[$key]) || trim((string)$prompts[$key]) === '') {
+            $prompts[$key] = $defaultValue;
+            $changed = true;
+        }
+    }
+
+    if (!$changed) return false;
+
+    $escapedValue = $GLOBALS['db']->escape(json_encode($prompts, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    $GLOBALS['db']->execQuery("UPDATE conf_opts SET value = '$escapedValue' WHERE id = 'aiagent_nsfw_prompts'");
+    return true;
+}
+
 /**
- * Auto-initialize NSFW data if not present
- * Uses database flag 'aiagent_nsfw_auto_initialized' to ensure it ONLY runs ONCE EVER
+ * Auto-initialize/repair NSFW DB defaults after download or plugin update.
+ *
+ * UI edits are the top layer and are never overwritten here. Missing rows are
+ * inserted, and known JSON blobs are merged as defaults-under-user-values.
  */
 function nsfw_auto_init() {
     static $checked = false;
@@ -1186,70 +1862,57 @@ function nsfw_auto_init() {
     if (!isset($GLOBALS['db'])) return;
 
     try {
-        // Check the permanent "already initialized" flag in database
-        $initFlag = $GLOBALS['db']->fetchOne(
-            "SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_auto_initialized'"
+        $seedVersion = '20260627003';
+        $seedFlag = $GLOBALS['db']->fetchOne(
+            "SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_seed_version'"
         );
 
-        if ($initFlag && $initFlag['value'] === 'true') {
-            // Already initialized - NEVER run again
-            return;
-        }
-
-        // Not initialized yet - check if data exists (maybe manual import was done)
-        $scenesExist = $GLOBALS['db']->fetchOne(
-            "SELECT id FROM conf_opts WHERE id = 'aiagent_nsfw_scenes' LIMIT 1"
+        $requiredSeedKeys = [
+            'aiagent_nsfw_ai_prompt_template',
+            'aiagent_nsfw_prompts',
+            'aiagent_nsfw_settings',
+            'aiagent_nsfw_speak_styles',
+            'aiagent_nsfw_scenes',
+            'aiagent_nsfw_reltypes',
+        ];
+        $escapedRequiredSeedKeys = array_map(function($key) {
+            return "'" . $GLOBALS['db']->escape($key) . "'";
+        }, $requiredSeedKeys);
+        $presentRows = $GLOBALS['db']->fetchAll(
+            "SELECT id FROM conf_opts WHERE id IN (" . implode(',', $escapedRequiredSeedKeys) . ")"
         );
-
-        if ($scenesExist) {
-            // Data exists (manual import) - set flag and return
-            $GLOBALS['db']->execQuery(
-                "INSERT INTO conf_opts (id, value) VALUES ('aiagent_nsfw_auto_initialized', 'true')
-                 ON CONFLICT (id) DO UPDATE SET value = 'true'"
-            );
-            return;
+        $present = [];
+        foreach ($presentRows as $row) {
+            if (!empty($row['id'])) $present[$row['id']] = true;
         }
 
-        // === RUN AUTO-IMPORT ===
-        error_log("[NSFW-AutoInit] First run detected! Auto-importing NSFW data...");
-
-        $importFile = __DIR__ . '/nsfw_import_data.php';
-        if (!file_exists($importFile)) {
-            error_log("[NSFW-AutoInit] ERROR: nsfw_import_data.php not found!");
-            return;
+        $runtimeChanged = 0;
+        if (nsfw_normalize_prompt_runtime_keys()) {
+            $runtimeChanged++;
         }
 
-        require_once $importFile;
-
-        if (!isset($NSFW_IMPORT_DATA) || empty($NSFW_IMPORT_DATA)) {
-            error_log("[NSFW-AutoInit] ERROR: No data in nsfw_import_data.php!");
-            return;
-        }
-
-        // Import all data
-        $imported = 0;
-        foreach ($NSFW_IMPORT_DATA as $id => $value) {
-            try {
-                $escapedId = pg_escape_string($id);
-                $escapedValue = pg_escape_string($value);
-
-                $GLOBALS['db']->execQuery(
-                    "INSERT INTO conf_opts (id, value) VALUES ('$escapedId', '$escapedValue')
-                     ON CONFLICT (id) DO UPDATE SET value = '$escapedValue'"
-                );
-                $imported++;
-            } catch (Exception $e) {
-                error_log("[NSFW-AutoInit] Error importing $id: " . $e->getMessage());
+        if ($seedFlag && ($seedFlag['value'] ?? '') === $seedVersion && count($present) === count($requiredSeedKeys)) {
+            if ($runtimeChanged > 0) {
+                error_log("[NSFW-AutoInit] Runtime prompt/style normalization updated $runtimeChanged conf_opts rows.");
             }
+            return;
         }
 
-        // Set the permanent flag so this NEVER runs again
+        error_log("[NSFW-AutoInit] Seeding/repairing NSFW database defaults...");
+        $changed = nsfw_seed_database_defaults();
+        $changed += $runtimeChanged;
+
         $GLOBALS['db']->execQuery(
             "INSERT INTO conf_opts (id, value) VALUES ('aiagent_nsfw_auto_initialized', 'true')
              ON CONFLICT (id) DO UPDATE SET value = 'true'"
         );
+        $escapedSeedVersion = $GLOBALS['db']->escape($seedVersion);
+        $GLOBALS['db']->execQuery(
+            "INSERT INTO conf_opts (id, value) VALUES ('aiagent_nsfw_seed_version', '$escapedSeedVersion')
+             ON CONFLICT (id) DO UPDATE SET value = '$escapedSeedVersion'"
+        );
 
-        error_log("[NSFW-AutoInit] SUCCESS! Imported $imported entries. This will NOT run again.");
+        error_log("[NSFW-AutoInit] Seed/repair complete. Changed $changed conf_opts rows.");
 
     } catch (Exception $e) {
         error_log("[NSFW-AutoInit] Error: " . $e->getMessage());

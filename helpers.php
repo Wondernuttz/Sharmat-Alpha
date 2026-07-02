@@ -22,8 +22,37 @@ function isSexDisposalEnabled() {
     } catch (Exception $e) {
         error_log("[AIAGENTNSFW] Error checking ENABLE_SEX_DISPOSAL: " . $e->getMessage());
     }
-    $cached = true;  // Default to enabled
+    $cached = false;  // Match the UI/default config: arousal gating is opt-in.
     return $cached;
+}
+
+// REMOVED (user directive 2026-06-29): the NPC-to-NPC affinity gate is gone. It no longer gated refusal / accept /
+// end (those were removed); its only remaining effect was deciding whether relationship tier-prompts fired for
+// NPC-to-NPC scenes - which was vestigial. This stub now permanently returns false, so every existing call site
+// keeps the former default (NPC-to-NPC scenes always use the direct speech-style route). The UI checkbox and config
+// wiring for NPC_AFFINITY_GATING_ENABLED were removed. Do NOT re-add the toggle.
+function isNpcAffinityGatingEnabled() {
+    return false;
+}
+
+// GLOBAL PLAYER SCENE-CALL COOLDOWN (user directive 2026-06-29): one shared gate, across ALL NPCs, on how often an
+// NPC may CALL / initiate a NEW sex scene toward the player - so several NPCs can't bombard the player with
+// scene-calls back to back. Driven off the existing player-scene activity markers (no extra state): a scene that is
+// currently active, or that ended within NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS, holds back new calls. Returns true
+// while the gate is active. Setting 0 = off. Affection + Accept/Refuse are never gated by this.
+function aiagentNsfwPlayerSceneCallCooldownActive() {
+    $cooldown = (int)_getNsfwSetting('NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS', 30);
+    if ($cooldown <= 0) { return false; }
+    $now = time();
+    $activeFile = sys_get_temp_dir() . "/nsfw_player_scene_active.txt";
+    $endedFile  = sys_get_temp_dir() . "/nsfw_player_scene_ended.txt";
+    $activeTs = is_file($activeFile) ? (int)(@file_get_contents($activeFile) ?: 0) : 0;
+    $endedTs  = is_file($endedFile)  ? (int)(@file_get_contents($endedFile)  ?: 0) : 0;
+    // Scene currently active (not superseded by a later end) -> block competing new calls.
+    if ($activeTs > 0 && $activeTs >= $endedTs) { return true; }
+    // Scene ended within the cooldown window -> still gated.
+    if ($endedTs > 0 && ($now - $endedTs) < $cooldown) { return true; }
+    return false;
 }
 
 // Helper function to check if fertility tracking is enabled

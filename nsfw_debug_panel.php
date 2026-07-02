@@ -5,6 +5,7 @@
  */
 
 $enginePath = __DIR__ . DIRECTORY_SEPARATOR . ".." . DIRECTORY_SEPARATOR . ".." . DIRECTORY_SEPARATOR;
+require_once($enginePath . "conf" . DIRECTORY_SEPARATOR . "conf.sample.php");
 require_once($enginePath . "conf" . DIRECTORY_SEPARATOR . "conf.php");
 require_once($enginePath . "lib" . DIRECTORY_SEPARATOR . "{$GLOBALS["DBDRIVER"]}.class.php");
 
@@ -13,6 +14,7 @@ $GLOBALS["db"] = $db;
 
 $embed = isset($_GET['embed']) && $_GET['embed'] == '1';
 $nsfwLogFile = $enginePath . "log/nsfw_debug.log";
+$physicsLogFile = $enginePath . "log/sharmat_vr_physics.log";
 
 // Handle AJAX requests
 if (isset($_GET['action'])) {
@@ -46,25 +48,36 @@ if (isset($_GET['action'])) {
             $apacheLog = '/var/log/apache2/error.log';
             if (file_exists($apacheLog) && is_readable($apacheLog)) {
                 // Get last ~20MB for more history (sex scenes may be hours apart)
+                // The apache error log can be HUGE (this one is >400MB, never rotated). The old code slurped a
+                // 20MB window into a PHP array EVERY refresh -> blew memory_limit/time, the AJAX died, and the
+                // panel showed an error with NO logs. Pre-filter the AIAGENT*NSFW lines with shell tail+grep so
+                // PHP only ever handles the small matched set. Fall back to a line-streamed FILTERED read (only
+                // matching lines kept, so memory stays bounded) if shell_exec is unavailable.
                 $lines = [];
-                $fp = fopen($apacheLog, 'r');
-                if ($fp) {
-                    $fileSize = filesize($apacheLog);
-                    $seekPos = max(0, $fileSize - 20000000); // 20MB window
-                    if ($seekPos > 0) {
-                        fseek($fp, $seekPos, SEEK_SET);
-                        fgets($fp); // Skip partial line
-                    }
-                    while (!feof($fp)) {
-                        $line = fgets($fp);
-                        if ($line !== false) {
-                            $lines[] = $line;
+                $cmd = "tail -c 60000000 " . escapeshellarg($apacheLog) . " | grep -aE '\\[AIAGENT[_-]?NSFW' | tail -n 500";
+                $raw = function_exists('shell_exec') ? @shell_exec($cmd) : null;
+                if ($raw !== null && trim($raw) !== '') {
+                    $lines = explode("\n", rtrim($raw, "\n"));
+                } else {
+                    $fp = @fopen($apacheLog, 'r');
+                    if ($fp) {
+                        $fileSize = filesize($apacheLog);
+                        $seekPos = max(0, $fileSize - 20000000); // 20MB window
+                        if ($seekPos > 0) {
+                            fseek($fp, $seekPos, SEEK_SET);
+                            fgets($fp); // Skip partial line
                         }
+                        while (!feof($fp)) {
+                            $line = fgets($fp);
+                            if ($line !== false && strpos($line, 'AIAGENT') !== false) {
+                                $lines[] = $line; // keep ONLY nsfw lines -> bounded memory
+                            }
+                        }
+                        fclose($fp);
                     }
-                    fclose($fp);
                 }
 
-                // Filter for NSFW plugin lines and reverse (newest first)
+                // newest first
                 $lines = array_reverse($lines);
                 $count = 0;
 
@@ -179,6 +192,36 @@ if (isset($_GET['action'])) {
             echo json_encode(['success' => true, 'entries' => $entries]);
             break;
 
+        case 'getPhysicsLog':
+            $entries = [];
+            if (file_exists($physicsLogFile) && is_readable($physicsLogFile)) {
+                $lines = file($physicsLogFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+                $lines = array_reverse(array_slice($lines, -300));
+                foreach ($lines as $line) {
+                    $entry = json_decode($line, true);
+                    if (!is_array($entry)) {
+                        continue;
+                    }
+                    $entries[] = [
+                        'time' => $entry['ts'] ?? '',
+                        'status' => strtoupper((string)($entry['status'] ?? 'event')),
+                        'action' => strtoupper((string)($entry['action'] ?? 'unknown')),
+                        'actor' => $entry['actor'] ?? '',
+                        'bodyPart' => $entry['bodyPart'] ?? '',
+                        'rawBodyPart' => $entry['rawBodyPart'] ?? '',
+                        'sexualArea' => !empty($entry['sexualArea']),
+                        'blocked' => !empty($entry['blocked']),
+                        'reason' => $entry['reason'] ?? '',
+                        'message' => $entry['message'] ?? '',
+                        'speed' => $entry['speed'] ?? null,
+                        'heldItem' => $entry['heldItem'] ?? null,
+                        'duration' => $entry['duration'] ?? null,
+                    ];
+                }
+            }
+            echo json_encode(['success' => true, 'entries' => $entries]);
+            break;
+
         case 'getStatus':
             $statuses = [];
             $statusFiles = glob(sys_get_temp_dir() . "/nsfw_intimacy_*.json");
@@ -209,6 +252,11 @@ if (isset($_GET['action'])) {
 
         case 'clearPromptLog':
             @file_put_contents($nsfwLogFile, '');
+            echo json_encode(['success' => true]);
+            break;
+
+        case 'clearPhysicsLog':
+            @file_put_contents($physicsLogFile, '');
             echo json_encode(['success' => true]);
             break;
     }
