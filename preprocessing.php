@@ -1144,7 +1144,7 @@ if (isset($GLOBALS["gameRequest"])) {
             if ($sceneIsActive) {
                 // During an active PLAYER sex scene, FULLY block ambient rechat/narration. A re-chat mid-sex gets NO
                 // scene cue applied, so the partner emits an out-of-place conversational/greeting line ("It's so
-                // delightful to see you here, Bannon...") right in the middle of the act (user report 2026-07-01).
+                // delightful to see you here...") right in the middle of the act.
                 // Actual scene dialogue (chatnf_sl / ext_nsfw_sexcene) and player-initiated dialogue (inputtext) are
                 // NOT rechat, so they still flow. Witnesses during NPC-only scenes keep the throttle below.
                 $playerSceneActiveTime = (int)(@file_get_contents(sys_get_temp_dir() . "/nsfw_player_scene_active.txt") ?: 0);
