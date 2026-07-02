@@ -696,7 +696,7 @@ if ($npcPromptPartnerName !== "") {
         $GLOBALS["AIAGENTNSFW_FORCE_SCENE_LISTENER"] = $partnerName;
         $GLOBALS["AIAGENTNSFW_FORCE_RECHAT_TARGET"] = $partnerName;
         // ACTUALLY CONSUME the forced listener (user directive 2026-06-29): these globals were set but never used, so
-        // in an NPC-to-NPC scene the speaker addressed the PLAYER by name ("...Bannon..."). Pin the response 'listener'
+        // in an NPC-to-NPC scene the speaker addressed the PLAYER by name. Pin the response 'listener'
         // to the real scene partner via the JSON-template hook (runs after json_response rebuilds the template), so
         // she addresses her NPC partner, not the player.
         if (!isset($GLOBALS["HOOKS"]) || !is_array($GLOBALS["HOOKS"])) { $GLOBALS["HOOKS"] = []; }
