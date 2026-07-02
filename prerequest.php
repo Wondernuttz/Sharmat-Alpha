@@ -696,7 +696,7 @@ if ($npcPromptPartnerName !== "") {
         $GLOBALS["AIAGENTNSFW_FORCE_SCENE_LISTENER"] = $partnerName;
         $GLOBALS["AIAGENTNSFW_FORCE_RECHAT_TARGET"] = $partnerName;
         // ACTUALLY CONSUME the forced listener (user directive 2026-06-29): these globals were set but never used, so
-        // in an NPC-to-NPC scene the speaker addressed the PLAYER by name. Pin the response 'listener'
+        // in an NPC-to-NPC scene the speaker addressed the PLAYER by name ("...Bannon..."). Pin the response 'listener'
         // to the real scene partner via the JSON-template hook (runs after json_response rebuilds the template), so
         // she addresses her NPC partner, not the player.
         if (!isset($GLOBALS["HOOKS"]) || !is_array($GLOBALS["HOOKS"])) { $GLOBALS["HOOKS"] = []; }
@@ -1854,7 +1854,22 @@ if ($scenePhase === "affection") {
             if (function_exists('aiagentNsfwRelTypeSexEligible') && !aiagentNsfwRelTypeSexEligible($actorName)) {
                 // REL-TYPE DECLINE (fix 2026-07-01i): she cannot consent (AcceptSex is stripped) - do not offer
                 // the choice. Direct a clear refusal so the model calls RefuseSex instead of complying reluctantly.
-                $declineDirective = trim((string)NsfwData::getPrompt('reltype_decline_prompt'));
+                // PER-TIER DECLINE (user directive 2026-07-02): the rel-types UI carries tier-specific
+                // decline prompts (prompt_friendly/fond/devoted/bonded) so a Bonded-but-platonic NPC
+                // declines in a voice that honors the bond. Pick by current affinity tier; tiers without
+                // a UI prompt fall through to the generic key, then the code default.
+                $declineDirective = '';
+                try {
+                    $rtRow = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
+                    $rtCfg = ($rtRow && !empty($rtRow['value'])) ? (json_decode($rtRow['value'], true) ?: []) : [];
+                    $rtAff  = function_exists('getNpcAffinity') ? (int)getNpcAffinity($actorName) : 0;
+                    $rtTier = function_exists('getAffinityTierName') ? strtolower(trim((string)getAffinityTierName($rtAff))) : '';
+                    if ($rtTier !== '' && !empty($rtCfg['prompt_' . $rtTier])) {
+                        $declineDirective = trim((string)$rtCfg['prompt_' . $rtTier]);
+                        error_log("[AIAGENTNSFW] REL-TYPE DECLINE: using per-tier prompt 'prompt_{$rtTier}' for {$actorName} (aff {$rtAff})");
+                    }
+                } catch (Exception $e) {}
+                if ($declineDirective === '') { $declineDirective = trim((string)NsfwData::getPrompt('reltype_decline_prompt')); }
                 if ($declineDirective === '') {
                     $declineDirective = "Your relationship does not allow this - you do NOT want this scene. Call RefuseSex NOW and decline clearly and firmly in your own voice, in keeping with how you feel about them. Do not comply reluctantly. Do not describe sex. Do not use a sex speech style. Do not continue the scene.";
                 }

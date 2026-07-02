@@ -1721,7 +1721,17 @@ function aiagentNsfwRelTypeSexEligible($npcName) {
         return true;
     }
     $result = ($relType !== '' && in_array($relType, $eligible, true));
-    error_log("[AIAGENTNSFW] rel-type eligibility {$npcName}: type='{$relType}' eligible=[" . implode(',', $eligible) . "] => " . ($result ? 'ELIGIBLE (sex allowed)' : 'NOT eligible (should refuse)'));
+    // AFFINITY FLOOR (user directive 2026-07-02): the ability to EVER consent requires BOTH the eligible
+    // rel type AND at least the scene-call affinity floor (default Fond). Below the floor an eligible
+    // type is treated exactly like an ineligible one - tools stripped, decline directive, no consent.
+    $affNote = '';
+    if ($result) {
+        $affFloor = (int)(function_exists('_getNsfwSetting') ? _getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56) : 56);
+        $affVal = (int)($rel['aff'] ?? 0);
+        $affNote = " aff={$affVal}/floor={$affFloor}";
+        if ($affVal < $affFloor) { $result = false; }
+    }
+    error_log("[AIAGENTNSFW] rel-type eligibility {$npcName}: type='{$relType}'{$affNote} eligible=[" . implode(',', $eligible) . "] => " . ($result ? 'ELIGIBLE (sex allowed)' : 'NOT eligible (should refuse)'));
     return $result;
 }
 
