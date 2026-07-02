@@ -399,6 +399,14 @@ if (getGlobalPrompt("dd_awareness") === '1' && getGlobalPrompt("dd_gag_muffle") 
         $_gagWorn = NsfwNpcData::get($_gagName)["aiagent_nsfw_devices"] ?? '';
         if (strpos(",{$_gagWorn},", ",gag,") !== false) {
             $GLOBALS["PROMPTS"]["chatnf_sl"]["cue"] = $GLOBALS["PROMPTS"]["chatnf_sl_nr"]["cue"];
+            // Scene-event turns own live scene dialogue - swap them too, and drop the deferred speak-style
+            // cue override so the explicit style can't ride over the muffle (fix 2026-07-02, audit #4).
+            foreach (["ext_nsfw_sexcene", "chatnf_sl_moan"] as $_gagEvt) {
+                if (!empty($GLOBALS["PROMPTS"][$_gagEvt]["cue"])) {
+                    $GLOBALS["PROMPTS"][$_gagEvt]["cue"] = $GLOBALS["PROMPTS"]["chatnf_sl_nr"]["cue"];
+                }
+            }
+            unset($GLOBALS["AIAGENTNSFW_SCENE_CUE_OVERRIDE"]);
         }
     }
 }
@@ -577,7 +585,7 @@ $_physicsBlocked = _getNsfwPromptSetting('physics_blocked', $_physicsBlockedDefa
 $_physicsBlocked = str_replace('#NPC_NAME#', $GLOBALS["HERIKA_NAME"] ?? "", $_physicsBlocked);
 
 // IMPORTANT: player_request uses $gameRequest[3] to PRESERVE the physics event message
-// (e.g., "<SEXUAL_GROPE>PlayerName groped NpcName's Breasts</SEXUAL_GROPE>")
+// (e.g., "<SEXUAL_GROPE>Bannon groped Eris's Breasts</SEXUAL_GROPE>")
 // set by processInfoPhysics() - do NOT overwrite with empty string!
 $_physicsCue = _wrapNsfwXml('vr_physics_instruction', trim($_physicsEventInstruction . "\n" . $_physicsDirectReaction)) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
 $_physicsPlayerReq = $GLOBALS["gameRequest"][3] ?? "";

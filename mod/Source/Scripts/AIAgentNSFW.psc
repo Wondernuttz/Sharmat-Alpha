@@ -882,6 +882,13 @@ function DoRegister()
 	RegisterForModEvent("DDI_DeviceEquipped", "OnDDDeviceChanged")
 	RegisterForModEvent("DDI_DeviceRemoved", "OnDDDeviceChanged")
 
+	; DD BASELINE SYNC (fix 2026-07-02, SexLab audit #3): the equip/remove events only cover changes made
+	; AFTER this registration - devices already worn at load (or after a server DB reset) stayed invisible
+	; until the next change. Push the player's current device state now; NPCs refresh on their next change.
+	if (hasDeviousDevices)
+		SendDeviceState(Game.GetPlayer())
+	endif
+
 	UnRegisterForModEvent("FertilityModeImpregnate")
 	RegisterForModEvent("FertilityModeImpregnate", "FertilityImpregnated")
 	
@@ -2725,6 +2732,11 @@ Event CommandManager(String npcname,String  command, String parameter)
 				OThread.SetSpeed(paceThr, newSpeed) ; OStim clamps to the scene's max
 				Debug.Trace("[CHIM-NSFW] "+command+": "+npc.GetDisplayName()+" pace "+curSpeed+" -> "+newSpeed+" (thread "+paceThr+")")
 			endif
+		else
+			; SEXLAB (fix 2026-07-02, SexLab audit #2): SexLab has no pace API - report it back so the
+			; model learns instead of "changing pace" into the void.
+			AIAgentFunctions.logMessageForActor("command@" + command + "@unsupported@pace control is not available in this scene", "funcret", npcname)
+			Debug.Trace("[CHIM-NSFW] "+command+": no OStim thread for "+npc.GetDisplayName()+" - pace unsupported (SexLab), funcret sent")
 		endif
 		return
 	endif
@@ -2843,8 +2855,26 @@ Event CommandManager(String npcname,String  command, String parameter)
 			
 			;String newScene=OLibrary.GetRandomScene(actorsInvolved)
 			OThread.WarpTo(thrId2,actionScene2,true)
-			
-			Debug.Trace("[CHIM-NSFW] <"+actionScene2+"> <"+sanitizedTag+">, Actors:"+actorsInvolved.length);			
+
+			Debug.Trace("[CHIM-NSFW] <"+actionScene2+"> <"+sanitizedTag+">, Actors:"+actorsInvolved.length);
+		else
+			; SEXLAB (fix 2026-07-02, SexLab audit #1): ExtCmdSexCommand was OStim-only, yet the server offers
+			; SexAction mid-scene on BOTH engines - the model "changed position" and nothing happened. SexLab has
+			; no in-thread warp, so ShiftSexLabScene restarts the same actors on animations matching the act;
+			; on an unknown/unmatched act it leaves the current scene running.
+			SexLabFramework slfShift = SexLabUtil.GetAPI()
+			if (slfShift)
+				int slShiftTid = slfShift.FindActorController(npc)
+				if (slShiftTid < 0)
+					slShiftTid = slfShift.FindActorController(Game.GetPlayer())
+				endif
+				if (slShiftTid >= 0)
+					bool slShifted = AIAgentNSFWSceneEngine.ShiftSexLabScene(slfShift, slShiftTid, parameter)
+					Debug.Trace("[CHIM-NSFW] ExtCmdSexCommand (SexLab): act=" + parameter + " thread=" + slShiftTid + " shifted=" + slShifted)
+				else
+					Debug.Trace("[CHIM-NSFW] ExtCmdSexCommand: " + npc.GetDisplayName() + " is in neither an OStim nor a SexLab scene")
+				endif
+			endif
 		endif
 	endif
 
