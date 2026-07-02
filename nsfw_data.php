@@ -1724,6 +1724,14 @@ function nsfw_seed_conf_opt_value($id, $defaultValue, $mergeMode = 'none') {
 function nsfw_seed_database_defaults() {
     if (!isset($GLOBALS['db'])) return 0;
 
+    // Register Sharmat's character-fact source for the relationship model (generic core hook:
+    // conf_opts 'chim_character_facts_sources'). Idempotent; data-driven so the worker daemon sees it.
+    try {
+        $factsReg = base64_decode('W3sidGFibGUiOiJuc2Z3X25wY19kYXRhIiwibmFtZV9jb2x1bW4iOiJucGNfbmFtZSIsImZhY3RzIjp7InNleHVhbCBvcmllbnRhdGlvbiI6ImV4dGVuZGVkX2RhdGEtPj4nc2V4dWFsX29yaWVudGF0aW9uJyIsInNwb3VzYWwgc3RhdHVzIjoiZXh0ZW5kZWRfZGF0YS0+PidzcG91c2FsX3N0YXR1cyciLCJzcG91c2UiOiJleHRlbmRlZF9kYXRhLT4+J3Nwb3VzZV9uYW1lcyciLCJyZWxhdGlvbnNoaXAgcHJlZmVyZW5jZSI6ImV4dGVuZGVkX2RhdGEtPj4ncmVsYXRpb25zaGlwX3ByZWZlcmVuY2UnIn0sInNraXBfdmFsdWVzIjp7InNwb3VzYWwgc3RhdHVzIjpbInNpbmdsZSJdfX1d');
+        $GLOBALS['db']->query("INSERT INTO conf_opts (id, value) VALUES ('chim_character_facts_sources', '" . str_replace("'", "''", $factsReg) . "')
+            ON CONFLICT (id) DO NOTHING");
+    } catch (Exception $e) { /* non-fatal */ }
+
     $importFile = __DIR__ . '/nsfw_import_data.php';
     if (!file_exists($importFile)) {
         error_log("[NSFW-AutoInit] ERROR: nsfw_import_data.php not found!");
