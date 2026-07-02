@@ -585,7 +585,7 @@ $_physicsBlocked = _getNsfwPromptSetting('physics_blocked', $_physicsBlockedDefa
 $_physicsBlocked = str_replace('#NPC_NAME#', $GLOBALS["HERIKA_NAME"] ?? "", $_physicsBlocked);
 
 // IMPORTANT: player_request uses $gameRequest[3] to PRESERVE the physics event message
-// (e.g., "<SEXUAL_GROPE>Bannon groped Eris's Breasts</SEXUAL_GROPE>")
+// (e.g., "<SEXUAL_GROPE>PlayerName groped NpcName's Breasts</SEXUAL_GROPE>")
 // set by processInfoPhysics() - do NOT overwrite with empty string!
 $_physicsCue = _wrapNsfwXml('vr_physics_instruction', trim($_physicsEventInstruction . "\n" . $_physicsDirectReaction)) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
 $_physicsPlayerReq = $GLOBALS["gameRequest"][3] ?? "";
