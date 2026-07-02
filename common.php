@@ -1726,9 +1726,22 @@ function aiagentNsfwRelTypeSexEligible($npcName) {
     // type is treated exactly like an ineligible one - tools stripped, decline directive, no consent.
     $affNote = '';
     if ($result) {
-        $affFloor = (int)(function_exists('_getNsfwSetting') ? _getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56) : 56);
+        // TIER LADDER (user directive 2026-07-02): below FRIENDLY nobody can consent. A married NPC whose
+        // spouse is not the player cannot consent below DEVOTED - the affair decision only exists at
+        // Devoted+. (Model-driven consent additionally keeps the Fond scene-call floor in the consent formula.)
+        $affFloor = 31; $affWhy = 'friendly';
+        try {
+            require_once __DIR__ . "/nsfw_data.php";
+            $eligNsfw = NsfwNpcData::get($npcName);
+            $eligSpouse = trim((string)($eligNsfw['spouse_names'] ?? ''));
+            $eligStatus = strtolower(trim((string)($eligNsfw['spousal_status'] ?? '')));
+            $eligPlayer = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
+            $eligMarried = ($eligSpouse !== '') || in_array($eligStatus, ['married', 'betrothed'], true);
+            $eligToPlayer = ($eligSpouse !== '' && $eligPlayer !== '' && stripos($eligSpouse, $eligPlayer) !== false);
+            if ($eligMarried && !$eligToPlayer) { $affFloor = 76; $affWhy = 'devoted (married - affair rules)'; }
+        } catch (Throwable $t) { /* profile unavailable - base Friendly floor applies */ }
         $affVal = (int)($rel['aff'] ?? 0);
-        $affNote = " aff={$affVal}/floor={$affFloor}";
+        $affNote = " aff={$affVal}/floor={$affFloor}({$affWhy})";
         if ($affVal < $affFloor) { $result = false; }
     }
     error_log("[AIAGENTNSFW] rel-type eligibility {$npcName}: type='{$relType}'{$affNote} eligible=[" . implode(',', $eligible) . "] => " . ($result ? 'ELIGIBLE (sex allowed)' : 'NOT eligible (should refuse)'));
