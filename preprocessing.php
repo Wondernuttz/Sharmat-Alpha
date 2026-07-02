@@ -1144,7 +1144,7 @@ if (isset($GLOBALS["gameRequest"])) {
             if ($sceneIsActive) {
                 // During an active PLAYER sex scene, FULLY block ambient rechat/narration. A re-chat mid-sex gets NO
                 // scene cue applied, so the partner emits an out-of-place conversational/greeting line ("It's so
-                // delightful to see you here...") right in the middle of the act.
+                // delightful to see you here, Bannon...") right in the middle of the act (user report 2026-07-01).
                 // Actual scene dialogue (chatnf_sl / ext_nsfw_sexcene) and player-initiated dialogue (inputtext) are
                 // NOT rechat, so they still flow. Witnesses during NPC-only scenes keep the throttle below.
                 $playerSceneActiveTime = (int)(@file_get_contents(sys_get_temp_dir() . "/nsfw_player_scene_active.txt") ?: 0);
@@ -1339,7 +1339,23 @@ if (isset($GLOBALS["gameRequest"])) {
             // responsive - ass contact is speed-based (spanks), so it keeps the normal short touch cadence and its own
             // key instead of the long in-scene debounce. Spank events ($isSpank) are already a separate path.
             if ($isTouch && !empty($touchInScene)) {
-                if ($cooldownBodyPart === 'butt') {
+                // CONSENT-PENDING PARTICIPANT (fix 2026-07-02g): scene dialogue routing stays on the PRIMARY
+                // partner, so an undecided group participant's only voice is her touch reactions - the long
+                // scene debounce silenced them and she could never refuse. Touching her is exactly the moment
+                // her consent decision must fire, so she keeps the short cooldown until she decides.
+                $touchConsentPending = false;
+                if (function_exists('getIntimacyForActor') && (string)$currentActor !== '') {
+                    $tIx = getIntimacyForActor($currentActor);
+                    $touchConsentPending = empty($tIx['is_npc_scene'])
+                        && (int)($tIx['intensity_tier'] ?? 0) >= 3
+                        && empty($tIx['accepted_sex'])
+                        && empty($tIx['refusal_expressed'])
+                        && empty($tIx['npc_is_slave']) && empty($tIx['npc_is_prostitute']);
+                }
+                if ($touchConsentPending) {
+                    $cooldownSeconds = max(1, (int) _getNsfwSetting('PHYSICS_TOUCH_COOLDOWN', 2));
+                    error_log("[NSFW Physics] IN-SCENE touch on CONSENT-PENDING participant {$currentActor} - scene debounce bypassed so her consent decision can fire");
+                } elseif ($cooldownBodyPart === 'butt') {
                     $cooldownSeconds = max(1, (int) _getNsfwSetting('PHYSICS_TOUCH_COOLDOWN', 2));
                     error_log("[NSFW Physics] IN-SCENE touch on ASS kept responsive ({$cooldownSeconds}s, own key) - speed-based");
                 } else {
