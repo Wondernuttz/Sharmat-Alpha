@@ -1270,10 +1270,12 @@ SQL;
             }
 
             // Marriage & relationship fields
-            $extendedData['spousal_status'] = $_POST['spousal_status'] ?? 'single';
-            $extendedData['spouse_names'] = $_POST['spouse_names'] ?? '';
-            $extendedData['sexual_orientation'] = $_POST['sexual_orientation'] ?? 'straight';
-            $extendedData['relationship_preference'] = $_POST['relationship_preference'] ?? 'monogamous';
+            // FLAG-WIPE GUARD (fix 2026-07-02d): dialog always posts these; programmatic saves omit them and
+            // must PRESERVE the stored values (they feed the relationship model - fix 2026-07-02c).
+            $extendedData['spousal_status'] = $_POST['spousal_status'] ?? ($extendedData['spousal_status'] ?? 'single');
+            $extendedData['spouse_names'] = $_POST['spouse_names'] ?? ($extendedData['spouse_names'] ?? '');
+            $extendedData['sexual_orientation'] = $_POST['sexual_orientation'] ?? ($extendedData['sexual_orientation'] ?? 'straight');
+            $extendedData['relationship_preference'] = $_POST['relationship_preference'] ?? ($extendedData['relationship_preference'] ?? 'monogamous');
 
             // Store pricing data if prostitute
             if ($extendedData['is_prostitute'] && isset($_POST['pricing'])) {
@@ -1727,10 +1729,11 @@ SQL;
                         $extData['prostitute_pricing']['prostitute_type'] = $extData['prostitute_type'];
                     }
 
-                    $extData['spousal_status'] = $generatedData['spousal_status'] ?? 'single';
-                    $extData['spouse_names'] = $generatedData['spouse_names'] ?? '';
-                    $extData['sexual_orientation'] = $generatedData['sexual_orientation'] ?? '';
-                    $extData['relationship_preference'] = $generatedData['relationship_preference'] ?? '';
+                    // FLAG-WIPE GUARD (fix 2026-07-02d): generation may SET these, never blank an existing value
+                    $extData['spousal_status'] = !empty($generatedData['spousal_status']) ? $generatedData['spousal_status'] : ($extData['spousal_status'] ?? 'single');
+                    $extData['spouse_names'] = !empty($generatedData['spouse_names']) ? $generatedData['spouse_names'] : ($extData['spouse_names'] ?? '');
+                    $extData['sexual_orientation'] = !empty($generatedData['sexual_orientation']) ? $generatedData['sexual_orientation'] : ($extData['sexual_orientation'] ?? ''); // wipe guard (fix 2026-07-02d)
+                    $extData['relationship_preference'] = !empty($generatedData['relationship_preference']) ? $generatedData['relationship_preference'] : ($extData['relationship_preference'] ?? ''); // wipe guard (fix 2026-07-02d)
                     $extData['nsfw_source'] = 'ai'; // Mark as AI-generated so it won't be regenerated
                     $extData['nsfw_generated_at'] = time();
 
