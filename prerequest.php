@@ -1870,6 +1870,7 @@ if ($scenePhase === "affection") {
                     }
                 } catch (Exception $e) {}
                 if ($declineDirective === '') { $declineDirective = trim((string)NsfwData::getPrompt('reltype_decline_prompt')); }
+                $GLOBALS['AIAGENTNSFW_RELTYPE_DECLINE_ACTOR'] = $actorName; // postrequest adjudicates the refusal server-side (fix 2026-07-02h)
                 if ($declineDirective === '') {
                     $declineDirective = "Your relationship does not allow this - you do NOT want this scene. Call RefuseSex NOW and decline clearly and firmly in your own voice, in keeping with how you feel about them. Do not comply reluctantly. Do not describe sex. Do not use a sex speech style. Do not continue the scene.";
                 }

@@ -285,6 +285,32 @@ if (!function_exists('aiagentNsfwReconcileRuntimeAfterRollbackGlobal')) {
     }
 }
 
+// SERVER-ADJUDICATED REFUSAL (fix 2026-07-02h): if this turn carried the rel-type decline directive, the
+// NPC cannot consent - enforce the refusal state the RefuseSex tool call would have set (models on light
+// tiers never invoke the tool; 1325 offers / 0 calls in the log). Exit-lock and NPC-scene lanes respected.
+if (!empty($GLOBALS['AIAGENTNSFW_RELTYPE_DECLINE_ACTOR']) && function_exists('getIntimacyForActor')) {
+    try {
+        $declActor = (string)$GLOBALS['AIAGENTNSFW_RELTYPE_DECLINE_ACTOR'];
+        $declIx = getIntimacyForActor($declActor);
+        if (is_array($declIx) && empty($declIx['is_npc_scene']) && empty($declIx['accepted_sex'])
+            && empty($declIx['refusal_expressed']) && empty($declIx['npc_is_slave']) && empty($declIx['npc_is_prostitute'])) {
+            $declIx['scene_phase'] = 'rejected';
+            $declIx['refusal_expressed'] = true;
+            $declIx['refused_until_scene_end'] = true;
+            updateIntimacyForActor($declActor, $declIx);
+            error_log("[AIAGENTNSFW] SERVER-ADJUDICATED REFUSAL for {$declActor} (decline directive turn - tool call not required)");
+            $declSceneRunning = !empty($declIx['sex_started']) || (int)($declIx['level'] ?? 0) >= 1;
+            if ($declSceneRunning && function_exists('aiagentNsfwQueuePlayerSceneStop')) {
+                if (aiagentNsfwQueuePlayerSceneStop($declActor, 'ExtCmdStopScene')) {
+                    error_log("[AIAGENTNSFW] SERVER-ADJUDICATED REFUSAL: hard scene stop queued for {$declActor}");
+                }
+            }
+        }
+    } catch (Throwable $e) {
+        error_log('[AIAGENTNSFW] Server-adjudicated refusal failed: ' . $e->getMessage());
+    }
+}
+
 try {
     aiagentNsfwReconcileRuntimeAfterRollbackGlobal();
     aiagentNsfwProcessSapConsumeTimers();
