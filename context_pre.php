@@ -88,6 +88,7 @@ if (!empty($GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY']) && isset($GLOBALS['HERIK
                 . "do not always wait to be asked.";
         }
         $GLOBALS['HERIKA_PERS'] .= "\n\n<intimacy_autonomy>\n" . $__nudge . "\n</intimacy_autonomy>";
+        error_log("[AIAGENTNSFW] INITIATION NUDGE injected for {$actorName} (Fond+/eligible, normal turn)");
     }
 }
 
