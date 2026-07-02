@@ -1,41 +1,40 @@
 Scriptname AIAgentVRItems extends Quest
-{
-	==========================================================================
-	    *** FUTURE: MOVE THIS SCRIPT TO CORE AIAGENT MOD ***
-	==========================================================================
-
-	VR ITEM AWARENESS FOR CHIM/HERIKA
-
-	This script should be integrated into the main AIAgent/CHIM mod,
-	NOT the NSFW extension. It provides general VR immersion that ALL
-	users would benefit from, not just NSFW users.
-
-	Currently housed in the NSFW ext for VR development.
-	When ready for release, this should move to:
-	  - AIAgent.esp (main mod)
-	  - Or a dedicated AIAgentVR.esp for VR-specific features
-
-	==========================================================================
-	WHAT IT DOES:
-	  - Detects when player picks up items in VR using HIGGS
-	  - Detects when player drops/puts down items
-	  - Sends events to backend so NPCs can "see" what player is holding
-	  - Example: Pick up wine bottle -> NPC sees you holding wine
-
-	DEPENDENCIES:
-	  - HIGGS VR (required for VR grab detection)
-	  - AIAgentFunctions (core CHIM Papyrus functions)
-
-	BACKEND PROMPTS NEEDED:
-	  - ext_vr_item_pickup  (when player picks up item)
-	  - ext_vr_item_drop    (when player puts down item)
-
-	XML TAG FORMAT:
-	  <VR_ITEM>Player picked up Wine Bottle with their right hand</VR_ITEM>
-
-	Author: CHIM Team
-	==========================================================================
-}
+;   ==========================================================================
+;	    *** FUTURE: MOVE THIS SCRIPT TO CORE AIAGENT MOD ***
+;	==========================================================================
+;
+;	VR ITEM AWARENESS FOR CHIM/HERIKA
+;
+;	This script should be integrated into the main AIAgent/CHIM mod,
+;	NOT the NSFW extension. It provides general VR immersion that ALL
+;	users would benefit from, not just NSFW users.
+;
+;	Currently housed in the NSFW ext for VR development.
+;	When ready for release, this should move to:
+;	  - AIAgent.esp (main mod)
+;	  - Or a dedicated AIAgentVR.esp for VR-specific features
+;
+;	==========================================================================
+;	WHAT IT DOES:
+;	  - Detects when player picks up items in VR using HIGGS
+;	  - Detects when player drops/puts down items
+;	  - Sends events to backend so NPCs can "see" what player is holding
+;	  - Example: Pick up wine bottle -> NPC sees you holding wine
+;
+;	DEPENDENCIES:
+;	  - HIGGS VR (required for VR grab detection)
+;	  - AIAgentFunctions (core CHIM Papyrus functions)
+;
+;	BACKEND PROMPTS NEEDED:
+;	  - ext_vr_item_pickup  (when player picks up item)
+;	  - ext_vr_item_drop    (when player puts down item)
+;
+;	XML TAG FORMAT:
+;	  <VR_ITEM>Player picked up Wine Bottle with their right hand</VR_ITEM>
+;
+;	Author: CHIM Team
+;	==========================================================================
+;
 import Utility
 
 ; Configuration
@@ -60,7 +59,7 @@ float lastReportedTime = 0.0
 ; INITIALIZATION
 ; ============================================
 Event OnInit()
-	Debug.Trace("[CHIM-VR] AIAgentVR OnInit - first install")
+	Debug.Trace("[CHIM-VR] AIAgentVR initializing")
 	playerRef = Game.GetPlayer()
 	RegisterVREvents()
 EndEvent
