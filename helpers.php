@@ -48,11 +48,22 @@ function aiagentNsfwPlayerSceneCallCooldownActive() {
     $endedFile  = sys_get_temp_dir() . "/nsfw_player_scene_ended.txt";
     $activeTs = is_file($activeFile) ? (int)(@file_get_contents($activeFile) ?: 0) : 0;
     $endedTs  = is_file($endedFile)  ? (int)(@file_get_contents($endedFile)  ?: 0) : 0;
-    // Scene currently active (not superseded by a later end) -> block competing new calls.
-    if ($activeTs > 0 && $activeTs >= $endedTs) { return true; }
-    // Scene ended within the cooldown window -> still gated.
-    if ($endedTs > 0 && ($now - $endedTs) < $cooldown) { return true; }
-    return false;
+    $cdGated = ($activeTs > 0 && $activeTs >= $endedTs)              // scene currently active
+        || ($endedTs > 0 && ($now - $endedTs) < $cooldown);           // or ended within the cooldown
+    if ($cdGated) {
+        // TIER<=2 EXEMPTION (OStim audit fix 3): affection blips (hug/kiss/holdhands) arm these markers,
+        // and this gate then stripped MakeLove et al for the blip + cooldown - the affection tools locked
+        // out escalation at the exact romantic moments. An affection-tier state never blacks out escalation.
+        $cdActor = trim((string)($GLOBALS['HERIKA_NAME'] ?? ''));
+        if ($cdActor !== '' && function_exists('getIntimacyForActor')) {
+            $cdIx = getIntimacyForActor($cdActor);
+            if ((int)($cdIx['intensity_tier'] ?? 3) <= 2 && empty($cdIx['refusal_expressed'])
+                && empty($cdIx['refused_until_scene_end'])) {
+                return false;
+            }
+        }
+    }
+    return $cdGated;
 }
 
 // Helper function to check if fertility tracking is enabled

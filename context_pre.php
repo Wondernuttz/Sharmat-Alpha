@@ -72,6 +72,25 @@ if ($actorName !== "" && isset($GLOBALS["HERIKA_PERS"])
 
 if ($actorName === "" || !function_exists('getDrunkStageForActor')) { return; }
 
+// INITIATION NUDGE (OStim audit fix 1, 2026-07-02): the Fond+/eligible autonomy lane granted the sex toolset
+// SILENTLY - no prompt ever told the NPC she may initiate, so models never called the tools spontaneously.
+// Injected into the character block on NORMAL turns only (never mid-scene/decision). UI-overridable.
+if (!empty($GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY']) && isset($GLOBALS['HERIKA_PERS'])) {
+    $__inx = function_exists('getIntimacyForActor') ? getIntimacyForActor($actorName) : [];
+    if ((int)($__inx['level'] ?? 0) < 1 && empty($__inx['sex_started']) && (int)($__inx['intensity_tier'] ?? 0) < 3) {
+        $__nudge = function_exists('getGlobalPrompt') ? trim((string)getGlobalPrompt('intimacy_autonomy_nudge')) : '';
+        if ($__nudge === '') {
+            $__pn = trim((string)($GLOBALS['PLAYER_NAME'] ?? 'your partner'));
+            $__nudge = "Your bond with {$__pn} allows intimacy, and you have your own desires and initiative. "
+                . "When the moment feels right to YOU - privacy, affection, flirtation - you may initiate: "
+                . "start with affection actions (Give_Hug, Kiss, Hold_Hands) or begin intimacy yourself with the "
+                . "scene actions (Make_Love and the others you hold). Initiating is your choice as much as theirs; "
+                . "do not always wait to be asked.";
+        }
+        $GLOBALS['HERIKA_PERS'] .= "\n\n<intimacy_autonomy>\n" . $__nudge . "\n</intimacy_autonomy>";
+    }
+}
+
 if (function_exists('aiagentNsfwReconcileActorRuntimeAfterRollback')) {
     aiagentNsfwReconcileActorRuntimeAfterRollback($actorName, $GLOBALS["gameRequest"][2] ?? null);
 }

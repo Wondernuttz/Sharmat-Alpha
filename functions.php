@@ -2258,6 +2258,9 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             if (!$isSlave && !empty($intimacyStatus["refused_until_scene_end"])) { $_consentedFns = false; }
 
             $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss";
+            if ($_consentedFns && $affinity >= 56 && (!function_exists('aiagentNsfwRelTypeSexEligible') || aiagentNsfwRelTypeSexEligible($relGateNpc ?? ($GLOBALS['HERIKA_NAME'] ?? '')))) {
+                $GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY'] = true; // context_pre injects the initiation nudge (OStim audit fix 1)
+            }
             if ($_consentedFns) {
                 if ($currentArousal >= 5) {
                     $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdRemoveClothes";
