@@ -6990,6 +6990,18 @@ PROMPT;
                         if (data.data.CHILD_PROTECTION_FRAME) elSet('childProtectionFrame', 'value', data.data.CHILD_PROTECTION_FRAME);
                         elSet('enableSexDisposal', 'checked', data.data.ENABLE_SEX_DISPOSAL !== false);  // Default true
                         elSet('enableAffinityGating', 'checked', data.data.ENABLE_AFFINITY_GATING !== false);  // Default true
+                        // Declared before first use: these were mid-handler consts used 100 lines
+                        // earlier, so every settings load died in the temporal dead zone and the UI
+                        // below the scene toggles silently never populated.
+                        const checkedDefault = function(value, fallback) {
+                            if (value === undefined || value === null) return fallback;
+                            return !(value === false || value === 'false' || value === '0' || value === 0);
+                        };
+                        const setSliderValue = function(id, labelId, value, fallback, suffix) {
+                            const resolved = value !== undefined ? value : fallback;
+                            elSet(id, 'value', resolved);
+                            elSet(labelId, 'textContent', resolved + suffix);
+                        };
                         if (document.getElementById('nsfwAllowNpcJoinScenes')) elSet('nsfwAllowNpcJoinScenes', 'checked', checkedDefault(data.data.NSFW_ALLOW_NPC_JOIN_SCENES, true));  // Default true
                         if (document.getElementById('nsfwAllowPaceControl')) elSet('nsfwAllowPaceControl', 'checked', checkedDefault(data.data.NSFW_ALLOW_PACE_CONTROL, true));  // Default true
                         if (document.getElementById('nsfwAllowMidsceneSteering')) elSet('nsfwAllowMidsceneSteering', 'checked', checkedDefault(data.data.NSFW_ALLOW_MIDSCENE_STEERING, true));  // Default true
@@ -7103,15 +7115,6 @@ PROMPT;
                         elSet('physicsSpankCooldown', 'value', physSpankCd);
                         elSet('physicsSpankCooldownValue', 'textContent', physSpankCd + ' sec');
                         // Slavery mechanics
-                        const checkedDefault = function(value, fallback) {
-                            if (value === undefined || value === null) return fallback;
-                            return !(value === false || value === 'false' || value === '0' || value === 0);
-                        };
-                        const setSliderValue = function(id, labelId, value, fallback, suffix) {
-                            const resolved = value !== undefined ? value : fallback;
-                            document.getElementById(id).value = resolved;
-                            document.getElementById(labelId).textContent = resolved + suffix;
-                        };
                         const slaveryIdleAliasMapDefault = "WorshipMaster=IdleWorship\nAskMasterForFreedom=AskMasterForFreedom\nBringMasterDrink=IdleMQ201HoldingDrinkTray|home\nSweepMastersFloors=IdleLooseSweepingStart|home\nWaitForMasterCommand=IdleSnapToAttention\nPraiseMaster=IdlePray\nThinkAboutMaster=IdleStudy\nWelcomeMaster=IdleSilentBow\nSurrenderToMaster=IdleSurrender\nShowDisdainForMaster=IdleExamine\nBraceForPain=IdleBracedPain\nGraveStanding=IdleBowHeadAtGrave_01\nBrokenGraveStanding=IdleBowHeadAtGrave_02";
                         elSet('slaveryIdlesEnabled', 'checked', checkedDefault(data.data.SLAVERY_IDLES_ENABLED, true));
                         if (document.getElementById('slaveryAllowAskFreedom')) elSet('slaveryAllowAskFreedom', 'checked', checkedDefault(data.data.SLAVERY_ALLOW_ASK_FREEDOM, false));
