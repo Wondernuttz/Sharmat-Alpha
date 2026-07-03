@@ -111,8 +111,10 @@ $__lastPromptedSkooma = (int)($__promptState["aiagent_nsfw_prompt_skooma_level"]
 $__lastPromptedSap = (int)($__promptState["aiagent_nsfw_prompt_sap_level"] ?? 0);
 $__finalStateLock = "";
 
-$_sceneActiveTs = (int)(@file_get_contents(sys_get_temp_dir() . "/nsfw_scene_active.txt") ?: 0);
-$_sceneEndedTs  = (int)(@file_get_contents(sys_get_temp_dir() . "/nsfw_scene_ended.txt") ?: 0);
+$_sceneActiveFile = sys_get_temp_dir() . "/nsfw_scene_active.txt";
+$_sceneEndedFile  = sys_get_temp_dir() . "/nsfw_scene_ended.txt";
+$_sceneActiveTs = is_file($_sceneActiveFile) ? (int)(file_get_contents($_sceneActiveFile) ?: 0) : 0;
+$_sceneEndedTs  = is_file($_sceneEndedFile) ? (int)(file_get_contents($_sceneEndedFile) ?: 0) : 0;
 $_inSexScene = in_array($GLOBALS["gameRequest"][0] ?? '', ["chatnf_sl","chatnf_sl_moan","chatnf_sl_climax","chatnf_sl_end","ext_nsfw_action","ext_nsfw_sexcene","ext_nsfw_orgasm","ext_nsfw_npc_orgasm"], true)
     || ($_sceneActiveTs > 0 && (time() - $_sceneActiveTs) < 600 && $_sceneActiveTs >= $_sceneEndedTs);
 

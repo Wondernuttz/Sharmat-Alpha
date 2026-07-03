@@ -355,8 +355,10 @@ if (function_exists('getDrugStageForActor') && _getNsfwSetting("DRUGS_ENABLED", 
 
     if (!isset($_inSexScene)) {
         $_inSexScene = in_array($GLOBALS["gameRequest"][0] ?? '', ["chatnf_sl","chatnf_sl_moan","chatnf_sl_climax","chatnf_sl_end","ext_nsfw_action","ext_nsfw_sexcene","ext_nsfw_orgasm","ext_nsfw_npc_orgasm"]);
-        $_dActiveTs = (int)(@file_get_contents(sys_get_temp_dir() . "/nsfw_scene_active.txt") ?: 0);
-        $_dEndedTs  = (int)(@file_get_contents(sys_get_temp_dir() . "/nsfw_scene_ended.txt") ?: 0);
+        $_dActiveFile = sys_get_temp_dir() . "/nsfw_scene_active.txt";
+        $_dEndedFile  = sys_get_temp_dir() . "/nsfw_scene_ended.txt";
+        $_dActiveTs = is_file($_dActiveFile) ? (int)(file_get_contents($_dActiveFile) ?: 0) : 0;
+        $_dEndedTs  = is_file($_dEndedFile) ? (int)(file_get_contents($_dEndedFile) ?: 0) : 0;
         // PER-NPC (see drunk block above): only suppress if THIS NPC is the active-scene participant (level>=1),
         // so another NPC's sex scene doesn't freeze this drugged NPC's strut/idles for 600s.
         if ($_dActiveTs > 0 && (time() - $_dActiveTs) < 600 && $_dActiveTs >= $_dEndedTs

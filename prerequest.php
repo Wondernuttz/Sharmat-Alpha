@@ -3,6 +3,19 @@
 // This is called after NPC profile is loaded.
 require_once(__DIR__."/common.php");
 
+// A rechat slot that survives the in-scene throttle must never morph into a random narrator
+// interjection (main.php rolls RANDOM_NARATION on rechat turns): the narration prompt is
+// scene-blind and its line derails every participant response after it.
+if (($GLOBALS["gameRequest"][0] ?? '') === 'rechat' && !empty($GLOBALS["RANDOM_NARATION"])) {
+    $_nsfwSceneActiveFile = sys_get_temp_dir() . "/nsfw_scene_active.txt";
+    $_nsfwSceneEndedFile  = sys_get_temp_dir() . "/nsfw_scene_ended.txt";
+    $_nsfwSceneActiveTs = is_file($_nsfwSceneActiveFile) ? (int)(file_get_contents($_nsfwSceneActiveFile) ?: 0) : 0;
+    $_nsfwSceneEndedTs  = is_file($_nsfwSceneEndedFile) ? (int)(file_get_contents($_nsfwSceneEndedFile) ?: 0) : 0;
+    if ($_nsfwSceneActiveTs > 0 && (time() - $_nsfwSceneActiveTs) < 300 && $_nsfwSceneActiveTs >= $_nsfwSceneEndedTs) {
+        $GLOBALS["RANDOM_NARATION"] = false;
+    }
+}
+
 if (!function_exists('aiagentNsfwIsNpcSceneRuntimeEventForPrerequest')) {
 function aiagentNsfwIsNpcSceneRuntimeEventForPrerequest($event)
 {

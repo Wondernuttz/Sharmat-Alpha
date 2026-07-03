@@ -1119,7 +1119,20 @@ if (isset($GLOBALS["gameRequest"])) {
     // Mark scene as active when live scene events survive stale/backlog gates.
     $sceneActiveEvents = ['ext_nsfw_sexcene', 'ext_nsfw_consent_bark', 'info_sexscene', 'chatnf_sl', 'chatnf_sl_nr', 'ext_nsfw_npc_scene', 'ext_nsfw_npc_invite', 'chatnf_npc_sl'];
     if (in_array($currentEvent, $sceneActiveEvents, true)) {
-        @file_put_contents(sys_get_temp_dir() . "/nsfw_scene_active.txt", time());
+        $sceneMarkFile = sys_get_temp_dir() . "/nsfw_scene_active.txt";
+        $prevSceneMarkTs = is_file($sceneMarkFile) ? (int)(file_get_contents($sceneMarkFile) ?: 0) : 0;
+        // Scene START (marker was stale/absent): flush queued, unsent director instructions so
+        // stale pre-scene direction cannot land on a participant once the scene cue takes over.
+        // Instructions issued DURING the scene (deliberate director use) insert later and survive.
+        if (($prevSceneMarkTs <= 0 || (time() - $prevSceneMarkTs) >= 300) && !empty($GLOBALS["db"])) {
+            try {
+                $GLOBALS["db"]->delete("responselog", "sent=0 and actor='rolemaster' and (action like 'rolecommand|Instruction@%' or action like 'rolecommand|Suggestion@%')");
+                error_log("[AIAGENTNSFW] Scene start: flushed queued director instructions");
+            } catch (Exception $e) {
+                error_log("[AIAGENTNSFW] Scene start director flush failed: " . $e->getMessage());
+            }
+        }
+        @file_put_contents($sceneMarkFile, time());
     }
     // Profile generation can run during NPC-only scenes, but should stay out of the way while the player is in-scene.
     $playerSceneActiveEvents = ['ext_nsfw_sexcene', 'ext_nsfw_consent_bark', 'info_sexscene', 'chatnf_sl', 'chatnf_sl_nr', 'chatnf_sl_moan', 'chatnf_sl_climax'];
@@ -1135,8 +1148,10 @@ if (isset($GLOBALS["gameRequest"])) {
     // clogs the main semaphore and delays scene/orgasm processing.
     if (in_array($currentEvent, ['rechat', 'narration'])) {
         if (_getNsfwSetting('BLOCK_RECHAT_IN_SCENE', true)) {
-            $sceneActiveTime = (int)(@file_get_contents(sys_get_temp_dir() . "/nsfw_scene_active.txt") ?: 0);
-            $sceneEndedTime  = (int)(@file_get_contents(sys_get_temp_dir() . "/nsfw_scene_ended.txt") ?: 0);
+            $sceneActiveFile = sys_get_temp_dir() . "/nsfw_scene_active.txt";
+            $sceneEndedFile  = sys_get_temp_dir() . "/nsfw_scene_ended.txt";
+            $sceneActiveTime = is_file($sceneActiveFile) ? (int)(file_get_contents($sceneActiveFile) ?: 0) : 0;
+            $sceneEndedTime  = is_file($sceneEndedFile) ? (int)(file_get_contents($sceneEndedFile) ?: 0) : 0;
             $sceneWindow     = (int)_getNsfwSetting('BLOCK_RECHAT_TIMEOUT', 300);
             // Scene counts as active only while fresh AND not superseded by a scene-end (ended-latch),
             // so a finished scene immediately stops throttling instead of dead-zoning for the window.
@@ -1147,8 +1162,10 @@ if (isset($GLOBALS["gameRequest"])) {
                 // delightful to see you here...") right in the middle of the act.
                 // Actual scene dialogue (chatnf_sl / ext_nsfw_sexcene) and player-initiated dialogue (inputtext) are
                 // NOT rechat, so they still flow. Witnesses during NPC-only scenes keep the throttle below.
-                $playerSceneActiveTime = (int)(@file_get_contents(sys_get_temp_dir() . "/nsfw_player_scene_active.txt") ?: 0);
-                $playerSceneEndedTime  = (int)(@file_get_contents(sys_get_temp_dir() . "/nsfw_player_scene_ended.txt") ?: 0);
+                $playerSceneActiveFile = sys_get_temp_dir() . "/nsfw_player_scene_active.txt";
+                $playerSceneEndedFile  = sys_get_temp_dir() . "/nsfw_player_scene_ended.txt";
+                $playerSceneActiveTime = is_file($playerSceneActiveFile) ? (int)(file_get_contents($playerSceneActiveFile) ?: 0) : 0;
+                $playerSceneEndedTime  = is_file($playerSceneEndedFile) ? (int)(file_get_contents($playerSceneEndedFile) ?: 0) : 0;
                 $playerSceneIsActive   = $playerSceneActiveTime > 0 && (time() - $playerSceneActiveTime) < $sceneWindow && $playerSceneActiveTime >= $playerSceneEndedTime;
                 // PLAYER scenes block by default (the partner greeting you mid-sex is jarring). NPC-to-NPC scenes keep
                 // the throttle by default (the leaked rechat is usually a nearby WITNESS reacting - wanted ambiance -
@@ -1165,7 +1182,27 @@ if (isset($GLOBALS["gameRequest"])) {
                 if ($blockThisScene) {
                     $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
                     error_log("[AIAGENTNSFW] Blocked ambient rechat/narration during active " . ($playerSceneIsActive ? "PLAYER" : "NPC-to-NPC") . " scene (prevents out-of-cue line mid-scene)");
+                } elseif ($currentEvent === 'narration') {
+                    // Narrator interjections are ALWAYS blocked while a scene is active, even on the throttle
+                    // path: a narration slot reads the generic visual prompt, not the scene cue, and its line
+                    // then derails every participant response that follows it.
+                    $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
+                    error_log("[AIAGENTNSFW] Blocked narrator narration during active scene");
                 } else {
+                    // If the rechat is aimed at a scene PARTICIPANT, drop it outright: participant lines must
+                    // come through the scene cadence (chatnf_npc_sl / sex-cue mirror) or they read as a plain
+                    // conversational greeting mid-act. Witness rechats (non-participants) keep flowing below.
+                    $rechatHintName = '';
+                    $rechatPayloadHint = json_decode((string)($GLOBALS["gameRequest"][3] ?? ''), true);
+                    if (is_array($rechatPayloadHint)) {
+                        $rechatHintName = aiagentNsfwNormalizeSceneActorName(
+                            (string)($rechatPayloadHint['rechat_target_hint'] ?? ($rechatPayloadHint['listener_hint'] ?? ''))
+                        );
+                    }
+                    if ($rechatHintName !== '' && isset(aiagentNsfwActiveSceneParticipantMap()[$rechatHintName])) {
+                        $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
+                        error_log("[AIAGENTNSFW] Blocked ambient rechat aimed at scene participant '{$rechatHintName}'");
+                    } else {
                     // THROTTLE instead of block: let one rechat/narration through per global speech cadence so
                     // scene partners AND nearby witnesses can comment without flooding the main semaphore.
                     $cadence = ($playerSceneIsActive && $playerRechatCadence > 0)
@@ -1173,15 +1210,27 @@ if (isset($GLOBALS["gameRequest"])) {
                         : (int)_getNsfwSetting('NPC_SCENE_GLOBAL_COOLDOWN_SECONDS', 25);
                     if ($cadence < 1) { $cadence = 1; }
                     $rechatClock = sys_get_temp_dir() . "/nsfw_rechat_scene_last.txt";
-                    $lastRechat  = (int)(@file_get_contents($rechatClock) ?: 0);
+                    $lastRechat  = is_file($rechatClock) ? (int)(file_get_contents($rechatClock) ?: 0) : 0;
                     if ((time() - $lastRechat) < $cadence) {
                         $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown"; // within cadence -> drop the excess
                     } else {
                         @file_put_contents($rechatClock, time(), LOCK_EX);    // allow this one; reset cadence clock
                     }
+                    }
                 }
             }
         }
+    }
+
+    // THE NARRATOR must not inject ideas mid-scene: the bored flow redirects to the rolemaster,
+    // whose "X should do Y" directive lands as an 'instruction' turn on a participant and yanks
+    // them out of the SexLab/OStim cue. Scene silence IS the normal state (animations play instead
+    // of chat), so a mid-scene bored event is a false positive by definition. Explicit director
+    // commands typed by the player arrive as 'instruction' directly and are NOT touched here.
+    if ($currentEvent === 'bored' && aiagentNsfwIsSceneActiveForPreprocess((int)_getNsfwSetting('BLOCK_RECHAT_TIMEOUT', 300))) {
+        $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
+        $currentEvent = "nsfw_blocked_cooldown";
+        error_log("[AIAGENTNSFW] Blocked bored event during active scene (prevents rolemaster/narrator idea injection)");
     }
 
     // CHIM's generic idle tick can emit "Time passes without anyone in the group talking" while
