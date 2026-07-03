@@ -35,6 +35,20 @@
     $db            = new sql();
     $GLOBALS["db"] = $db;
 
+    // Fresh installs: seed the scene store from the shipped catalog so the Scenes manager and
+    // debug logs are populated out of the box (an empty store read as "not configured").
+    try {
+        if (class_exists('NsfwData') && method_exists('NsfwData', 'resetAllScenesToDefault')) {
+            $sceneStoreCheck = NsfwData::getBlob(NsfwData::KEY_SCENES);
+            if (empty($sceneStoreCheck)) {
+                $seeded = NsfwData::resetAllScenesToDefault();
+                if ($seeded) { error_log("[NSFW Config] Auto-seeded {$seeded} scene descriptions from the shipped catalog"); }
+            }
+        }
+    } catch (Exception $e) {
+        error_log("[NSFW Config] Scene auto-seed skipped: " . $e->getMessage());
+    }
+
     // Handle AJAX requests
     $action = $_GET['action'] ?? null;
 
