@@ -1949,6 +1949,46 @@ function aiagentNsfwSetVampireFlag($actorName, $isVampire) {
 // (per comm.php's day math: 30,000,000 gamets = 72h). The OLD window had a /24 bug making it ~10 game
 // MINUTES (drinks expired in seconds) - the real "never gets drunk" cause. gamets <= now guards
 // save-reload "future" drinks; older drinks age out (the window IS the decay).
+// Chosen affection/intimacy toward the player is stronger romance evidence than dialogue: these
+// actions only fire through the consent/autonomy gates, so acting means meaning it. Flips a
+// non-romantic type to 'crush' at fond+ affinity. Slaves/prostitutes excluded (coerced or
+// transactional), locked relationship cards respected. UI toggle: INSTANT_CRUSH_ON_AFFECTION.
+function aiagentNsfwInstantCrush($actorName, $trigger, $rawTarget = '') {
+    try {
+        if (!_getNsfwSetting('INSTANT_CRUSH_ON_AFFECTION', true)) { return; }
+        $actorName = trim((string)$actorName);
+        if ($actorName === '' || nsfwIsNarratorName($actorName)) { return; }
+        $playerName = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
+        // Target may arrive as the raw funcall payload; a named non-player target means this
+        // affection is aimed at another NPC and says nothing about the player.
+        $target = (string)$rawTarget;
+        if (strpos($target, '@') !== false) { $target = explode('@', $target)[2] ?? ''; }
+        $target = trim($target);
+        if ($target !== '' && strcasecmp($target, 'player') !== 0
+            && ($playerName === '' || stripos($target, $playerName) === false)) { return; }
+
+        require_once __DIR__ . "/nsfw_data.php";
+        $nsfw = NsfwNpcData::get($actorName);
+        if (!empty($nsfw['is_slave']) || !empty($nsfw['is_prostitute'])) { return; }
+
+        if (!class_exists('RelationshipManager')) { require_once $GLOBALS['ENGINE_PATH'] . 'lib/relationship_manager.php'; }
+        $row = RelationshipManager::resolveNpcByName($actorName);
+        if (!$row) { return; }
+        $ext = json_decode($row['extended_data'] ?? '{}', true) ?: [];
+        if (!empty($ext['relationships_locked'])) { return; }
+        $rels = RelationshipManager::normalizeRelationshipMap($ext['relationships'] ?? []);
+        $aff = (int)($rels['Player']['aff'] ?? 0);
+        if ($aff < 56) { return; } // same fond floor as the eval-path romance gate
+        $type = strtolower((string)($rels['Player']['type'] ?? 'neutral'));
+        if (in_array($type, ['romantic', 'crush', 'admirer', 'obsessed', 'infatuated', 'lover'], true)) { return; }
+
+        RelationshipManager::setRelationship($actorName, 'Player', $aff, 'crush');
+        error_log("[AIAGENTNSFW] Instant crush: {$actorName} -> Player via {$trigger} (aff {$aff}, was '{$type}')");
+    } catch (Exception $e) {
+        error_log("[AIAGENTNSFW] Instant crush check failed for {$actorName}: " . $e->getMessage());
+    }
+}
+
 function getDrunkStageForActor($actorName) {
     if (!isset($GLOBALS["db"]) || !$GLOBALS["db"]) return 0;
     $currentGamets = (float)($GLOBALS["gameRequest"][2] ?? 0);

@@ -101,6 +101,14 @@
                     <p class="legend">Minimum relationship affinity before an NPC may, on her own, CALL or initiate an OStim/SexLab sex scene with you. Default 56 = Fond (the romance floor). Raise it to require a deeper bond (76 = Devoted, 91 = Bonded) or lower it to loosen the gate. This governs only the NPC initiating - explicit consent (AcceptSex), slaves, paid prostitutes, and skooma-bargains bypass this floor as before.</p>
                 </div>
 
+                <div class="settings-checkbox-group">
+                    <label for="instantCrushOnAffection">
+                        <input type="checkbox" id="instantCrushOnAffection" name="INSTANT_CRUSH_ON_AFFECTION">
+                        <span>Affection Flips Relationship to Crush</span>
+                    </label>
+                    <p class="legend">When an NPC chooses affection (hug, kiss, hand-holding) or agrees to intimacy with you, their relationship type flips to crush automatically - actions speak louder than words. Requires Fond+ affinity; slaves and prostitutes are excluded; locked relationship cards are never touched. Default: on.</p>
+                </div>
+
                 <div class="settings-slider-group">
                     <span class="slider-title">Player Scene-Call Cooldown (Global)</span>
                     <div class="slider-container">

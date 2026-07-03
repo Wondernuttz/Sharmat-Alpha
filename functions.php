@@ -47,6 +47,7 @@ $GLOBALS["FUNCTIONS"][] =
 $GLOBALS["FUNCSERV"]["ExtCmdHug"]=function() {
     global $gameRequest,$returnFunction,$db,$request;
     aiagentNsfwStampAffection($GLOBALS["HERIKA_NAME"]); // affection anti-spam throttle
+    aiagentNsfwInstantCrush($GLOBALS["HERIKA_NAME"], 'affection', $gameRequest[3] ?? '');
     // Probably we want to execute something, and put return value in $returnFunction[3] and $gameRequest[3];
     // We could overwrite also $request.
  
@@ -104,6 +105,7 @@ $GLOBALS["FUNCTIONS"][] =
 $GLOBALS["FUNCSERV"]["ExtCmdHoldHands"]=function() {
     global $gameRequest,$returnFunction,$db,$request;
     aiagentNsfwStampAffection($GLOBALS["HERIKA_NAME"]); // affection anti-spam throttle
+    aiagentNsfwInstantCrush($GLOBALS["HERIKA_NAME"], 'affection', $gameRequest[3] ?? '');
 
     $functionCallRet = explode("@", $gameRequest[3]);
     $actors[]=npcNameToCodename($GLOBALS["HERIKA_NAME"]);
@@ -778,6 +780,7 @@ $GLOBALS["FUNCTIONS"][] =
 $GLOBALS["FUNCSERV"]["ExtCmdKiss"]=function() {
     global $gameRequest,$returnFunction,$db,$request;
     aiagentNsfwStampAffection($GLOBALS["HERIKA_NAME"]); // affection anti-spam throttle
+    aiagentNsfwInstantCrush($GLOBALS["HERIKA_NAME"], 'affection', $gameRequest[3] ?? '');
     // Probably we want to execute something, and put return value in $returnFunction[3] and $gameRequest[3];
     // We could overwrite also $request.
     error_log("Running ExtCmdKiss FUNCSERV");
@@ -982,6 +985,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdAcceptSex"]=function() {
         updateIntimacyForActor($npcName, $intimacyStatus);
 
         error_log("[AcceptSex] {$npcName} accepted personal sex with {$targetName}. Affinity: {$affinity}, Normal kinks: " . ($intimacyStatus["show_normal_kinks"] ? 'yes' : 'no') . ", Secret kinks: " . ($intimacyStatus["show_secret_kinks"] ? 'yes' : 'no'));
+        aiagentNsfwInstantCrush($npcName, 'AcceptSex', $targetName);
     }
 
     $GLOBALS["AVOID_LLM_CALL"] = false;

@@ -984,6 +984,7 @@ SQL;
                 'RANDOM_MOAN_SOUNDS' => $_POST['RANDOM_MOAN_SOUNDS'] ?? " ... oh ...\n ... ah ...\n ... mmm ...\n ... ooh ...\n ... yes ... ",
                 'NPC_SEX_COOLDOWN_HOURS' => isset($_POST['NPC_SEX_COOLDOWN_HOURS']) ? intval($_POST['NPC_SEX_COOLDOWN_HOURS']) : 9,
                 'NSFW_SCENE_CALL_MIN_AFFINITY' => isset($_POST['NSFW_SCENE_CALL_MIN_AFFINITY']) ? max(0, min(100, intval($_POST['NSFW_SCENE_CALL_MIN_AFFINITY']))) : 56,
+                'INSTANT_CRUSH_ON_AFFECTION' => isset($_POST['INSTANT_CRUSH_ON_AFFECTION']) ? filter_var($_POST['INSTANT_CRUSH_ON_AFFECTION'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS' => isset($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']))) : 30,
                 'GENERIC_GLOSSARY' => $_POST['GENERIC_GLOSSARY'] ?? '',
                 'TRACK_DRUNK_STATUS' => isset($_POST['TRACK_DRUNK_STATUS']) ? filter_var($_POST['TRACK_DRUNK_STATUS'], FILTER_VALIDATE_BOOLEAN) : false,
@@ -6967,6 +6968,8 @@ PROMPT;
                         elSet('trackDrunkStatus', 'checked', data.data.TRACK_DRUNK_STATUS || false);
                         const drunkReqConsumeEl = document.getElementById('drunkRequireConsume');
                         if (drunkReqConsumeEl) drunkReqConsumeEl.checked = data.data.DRUNK_REQUIRE_CONSUME_ACTION !== undefined ? data.data.DRUNK_REQUIRE_CONSUME_ACTION : true;
+                        const instantCrushEl = document.getElementById('instantCrushOnAffection');
+                        if (instantCrushEl) instantCrushEl.checked = data.data.INSTANT_CRUSH_ON_AFFECTION !== undefined ? data.data.INSTANT_CRUSH_ON_AFFECTION : true;
                         const drunkWin = data.data.DRUNK_WINDOW_HOURS !== undefined ? data.data.DRUNK_WINDOW_HOURS : 12;
                         elSet('drunkWindowHours', 'value', drunkWin);
                         elSet('drunkWindowHoursValue', 'textContent', drunkWin + ' game hours');
@@ -7298,6 +7301,7 @@ PROMPT;
             if (document.getElementById('playerSceneCallCooldown')) fdSet('NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS', 'playerSceneCallCooldown', 'value');
             fdSet('TRACK_DRUNK_STATUS', 'trackDrunkStatus', 'checked');
             fdSet('DRUNK_REQUIRE_CONSUME_ACTION', 'drunkRequireConsume', 'checked');
+            fdSet('INSTANT_CRUSH_ON_AFFECTION', 'instantCrushOnAffection', 'checked');
             fdSet('DRUNK_WINDOW_HOURS', 'drunkWindowHours', 'value');
             fdSet('TRACK_FERTILITY_INFO', 'trackFertilityInfo', 'checked');
             fdSet('CHILD_PROTECTION_FRAME', 'childProtectionFrame', 'value');
