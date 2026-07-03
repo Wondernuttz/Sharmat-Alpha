@@ -87,6 +87,7 @@ if (!empty($GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY']) && isset($GLOBALS['HERIK
                 . "scene actions (Make_Love and the others you hold). Initiating is your choice as much as theirs; "
                 . "do not always wait to be asked.";
         }
+        $__nudge = str_replace(['#PLAYER_NAME#', '#NPC_NAME#'], [$GLOBALS['PLAYER_NAME'] ?? 'your partner', $actorName], $__nudge);
         $GLOBALS['HERIKA_PERS'] .= "\n\n<intimacy_autonomy>\n" . $__nudge . "\n</intimacy_autonomy>";
         error_log("[AIAGENTNSFW] INITIATION NUDGE injected for {$actorName} (Fond+/eligible, normal turn)");
     }
@@ -102,6 +103,7 @@ if (!empty($GLOBALS['AIAGENTNSFW_AFFECTION_AUTONOMY']) && isset($GLOBALS['HERIKA
             $__cpn = trim((string)($GLOBALS['PLAYER_NAME'] ?? 'your companion'));
             $__cnudge = "You have grown genuinely fond of {$__cpn}. When a moment feels right to YOU - warmth, gratitude, quiet closeness - you may express affection on your own: a hug, a kiss, holding hands (Give_Hug, Kiss, Hold_Hands). Nothing beyond affection is on the table or expected; let whatever this is grow naturally.";
         }
+        $__cnudge = str_replace(['#PLAYER_NAME#', '#NPC_NAME#'], [$GLOBALS['PLAYER_NAME'] ?? 'your companion', $actorName], $__cnudge);
         $GLOBALS['HERIKA_PERS'] .= "\n\n<affection_autonomy>\n" . $__cnudge . "\n</affection_autonomy>";
         error_log("[AIAGENTNSFW] COURTSHIP NUDGE injected for {$actorName} (Fond+/type not eligible, normal turn)");
     }

@@ -1622,6 +1622,24 @@
                         </div>
                     </div>
 
+
+                    <div class="card" style="margin-bottom: 20px;">
+                        <h3 class="section-header" style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                            <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> Autonomy Nudges
+                        </h3>
+                        <p style="color: #9988BB; font-size: 11px; margin-bottom: 10px;">
+                            Injected on normal turns to tell the NPC what she may initiate on her own. Initiation: Fond+ with an eligible rel type (full intimacy). Courtship: Fond+ with a NON-eligible type (affection only - a chosen affection flips her to crush).
+                        </p>
+                        <div class="form-group">
+                            <label>Initiation Nudge (Fond+, eligible type)</label>
+                            <textarea id="promptIntimacyAutonomyNudge" class="auto-resize" style="min-height: 64px; width: 100%; resize: none; overflow: hidden;">Your bond with #PLAYER_NAME# allows intimacy, and you have your own desires and initiative. When the moment feels right to YOU - privacy, affection, flirtation - you may initiate: start with affection actions (Give_Hug, Kiss, Hold_Hands) or begin intimacy yourself with the scene actions (Make_Love and the others you hold). Initiating is your choice as much as theirs; do not always wait to be asked.</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Courtship Nudge (Fond+, type not eligible)</label>
+                            <textarea id="promptAffectionAutonomyNudge" class="auto-resize" style="min-height: 64px; width: 100%; resize: none; overflow: hidden;">You have grown genuinely fond of #PLAYER_NAME#. When a moment feels right to YOU - warmth, gratitude, quiet closeness - you may express affection on your own: a hug, a kiss, holding hands (Give_Hug, Kiss, Hold_Hands). Nothing beyond affection is on the table or expected; let whatever this is grow naturally.</textarea>
+                        </div>
+                    </div>
+
                     <!-- 2e. Masturbation -->
                     <div class="card" style="margin-bottom: 20px;">
                         <h3 class="section-header" style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">

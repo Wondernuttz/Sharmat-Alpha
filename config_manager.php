@@ -2862,6 +2862,8 @@ PROMPT;
                 'scene_end' => $_POST['scene_end'] ?? '',
                 'scene_context_instruction' => $_POST['scene_context_instruction'] ?? '',
                 'whiskey_dick' => $_POST['whiskey_dick'] ?? '',
+                'intimacy_autonomy_nudge' => $_POST['intimacy_autonomy_nudge'] ?? '',
+                'affection_autonomy_nudge' => $_POST['affection_autonomy_nudge'] ?? '',
 
                 // Section 3: Prostitution
                 'prostitute_role_context' => $_POST['prostitute_role_context'] ?? '',
@@ -3110,6 +3112,8 @@ PROMPT;
             'scene_start' => '(Sex is starting. React with anticipation. You might feel: eager, nervous, excited, playful, seductive, or hesitant. Express ONE emotion. Keep it SHORT.)',
             'chatnf_sl_cues' => "(Focus on intimate scene participants,moans and gasps,SHORT speech, explicit words)\n(Focus on intimate scene description,moans and gasps,SHORT speech, explicit words)\n(explain pleasure,moans and gasps,SHORT speech, explicit words)\n(give a compliment,moans and gasps,SHORT speech, explicit words)\n(moans and gasps,short speech, explicit words)",
             'chatnf_sl_nr_cues' => "(Focus on intimate scene participants)\n(Focus on scene description)\n(explain pleasure)\n(give a compliment)\n(moans and gasps)",
+            'intimacy_autonomy_nudge' => 'Your bond with #PLAYER_NAME# allows intimacy, and you have your own desires and initiative. When the moment feels right to YOU - privacy, affection, flirtation - you may initiate: start with affection actions (Give_Hug, Kiss, Hold_Hands) or begin intimacy yourself with the scene actions (Make_Love and the others you hold). Initiating is your choice as much as theirs; do not always wait to be asked.',
+            'affection_autonomy_nudge' => 'You have grown genuinely fond of #PLAYER_NAME#. When a moment feels right to YOU - warmth, gratitude, quiet closeness - you may express affection on your own: a hug, a kiss, holding hands (Give_Hug, Kiss, Hold_Hands). Nothing beyond affection is on the table or expected; let whatever this is grow naturally.',
             'whiskey_dick' => '#PLAYER_NAME# is too drunk to perform and the scene has stalled. React as #NPC_NAME# according to your relationship, personality, and current mood. You may be disappointed, amused, annoyed, sympathetic, or teasing. Keep it in-character and do not continue the sex act.',
             'masturbation_start' => '#NPC_NAME# moans about being aroused, and starts self masturbation.',
             'climax' => '(#NPC_NAME# is orgasming!!!! CLIMAX!, Focus on intimate scene participants, #NPC_NAME# SHOUTS using moans and groans) VERY SHORT sentence (3 words)',
@@ -10796,6 +10800,8 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     setPromptValue('promptChatnfSl', s.chatnf_sl_cues, 'chatnf_sl_cues');
                     setPromptValue('promptChatnfSlNr', s.chatnf_sl_nr_cues, 'chatnf_sl_nr_cues');
                     setPromptValue('promptWhiskeyDick', s.whiskey_dick, 'whiskey_dick');
+                    setPromptValue('promptIntimacyAutonomyNudge', s.intimacy_autonomy_nudge, 'intimacy_autonomy_nudge');
+                    setPromptValue('promptAffectionAutonomyNudge', s.affection_autonomy_nudge, 'affection_autonomy_nudge');
                     setPromptValue('promptMasturbation', s.masturbation_start, 'masturbation_start');
                     setPromptValue('promptClimax', s.climax, 'climax');
                     setPromptValue('promptChatnfSlEnd', s.chatnf_sl_end_cues, 'chatnf_sl_end_cues');
@@ -11091,6 +11097,8 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('chatnf_sl_cues', getVal('promptChatnfSl'));
         formData.append('chatnf_sl_nr_cues', getVal('promptChatnfSlNr'));
         formData.append('whiskey_dick', getVal('promptWhiskeyDick'));
+        formData.append('intimacy_autonomy_nudge', getVal('promptIntimacyAutonomyNudge'));
+        formData.append('affection_autonomy_nudge', getVal('promptAffectionAutonomyNudge'));
         formData.append('masturbation_start', getVal('promptMasturbation'));
         formData.append('climax', getVal('promptClimax'));
         formData.append('chatnf_sl_end_cues', getVal('promptChatnfSlEnd'));
