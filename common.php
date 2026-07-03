@@ -1958,14 +1958,23 @@ function getDrunkStageForActor($actorName) {
     $minGamets = $currentGamets - ($windowHours / 0.0000024); // game-hours -> gamets
     $actorE = $GLOBALS["db"]->escape($actorName);
     $hardDrugRegex = $GLOBALS["db"]->escape(aiagentNsfwHardDrugRegex());
-    $row = $GLOBALS["db"]->fetchOne(
-        "SELECT count(*) AS c FROM public.actions_issued
+    $rows = $GLOBALS["db"]->fetchAll(
+        "SELECT gamets FROM public.actions_issued
          WHERE actorname = '{$actorE}'
            AND gamets > {$minGamets} AND gamets <= {$currentGamets}
            AND action ~* '^(Consume|Drink|Toast)$'
-           AND fullcall !~* '{$hardDrugRegex}'"
+           AND fullcall !~* '{$hardDrugRegex}'
+         ORDER BY gamets ASC"
     );
-    $count = (int)($row['c'] ?? 0);
+    // Collapse actions within 10 game-minutes into ONE drink: models often chain
+    // Toast+Drink (or double-call) on a single tavern beat, which insta-drunked NPCs.
+    $count = 0;
+    $lastCounted = -INF;
+    $minSpacing = (10.0 / 60.0) / 0.0000024; // 10 game-minutes in gamets
+    foreach ($rows as $r) {
+        $g = (float)$r['gamets'];
+        if (($g - $lastCounted) >= $minSpacing) { $count++; $lastCounted = $g; }
+    }
     if ($count <= 0) return 0;
     if ($count <= 7) return $count; // 1-7 drinks -> stages 1-7 (gradual climb)
     if ($count <= 9) return 8;      // 8-9 -> 8 (wasted)

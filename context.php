@@ -184,10 +184,12 @@ require_once __DIR__ . "/nsfw_data.php";
 $extended_data = NsfwNpcData::get($actorName);
 
 $drunkStage = getDrunkStageForActor($actorName); // 0-10 from Drink/Consume/Toast alcohol actions in a game-time window
-// An LLM-emitted drunk/tipsy mood acts as a floor (declared/manual drunk without tracked drinks)
+// Mood floor only tops up REAL drinking (see context_pre.php) - word-drunk must not self-sustain
 $_lastMood = getLastIssuedMood($actorName, ($GLOBALS["gameRequest"][2] ?? time()));
-if ($_lastMood === "drunk" && $drunkStage < 4) { $drunkStage = 4; }
-elseif ($_lastMood === "tipsy" && $drunkStage < 2) { $drunkStage = 2; }
+if ($drunkStage >= 1) {
+    if ($_lastMood === "drunk" && $drunkStage < 4) { $drunkStage = 4; }
+    elseif ($_lastMood === "tipsy" && $drunkStage < 2) { $drunkStage = 2; }
+}
 
 if ($drunkStage >= 1) {
     error_log("[AIAGENTNSFW] Drunk stage {$drunkStage} for {$actorName}");

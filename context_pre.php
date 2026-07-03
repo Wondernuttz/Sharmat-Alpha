@@ -97,10 +97,14 @@ if (function_exists('aiagentNsfwReconcileActorRuntimeAfterRollback')) {
 }
 
 $drunkStage = getDrunkStageForActor($actorName);
-// LLM-declared mood acts as a floor (manual/declared drunk without tracked drinks)
+// Mood floor only tops up REAL drinking (stage>=1 from tracked Drink/Consume/Toast actions).
+// A drunk mood with zero tracked drinks must not create intoxication: drunk-flavored speech
+// re-arms the mood every line, which made word-drunk permanent (reported permadrunk loop).
 $_lastMood = getLastIssuedMood($actorName, ($GLOBALS["gameRequest"][2] ?? time()));
-if ($_lastMood === "drunk" && $drunkStage < 4) { $drunkStage = 4; }
-elseif ($_lastMood === "tipsy" && $drunkStage < 2) { $drunkStage = 2; }
+if ($drunkStage >= 1) {
+    if ($_lastMood === "drunk" && $drunkStage < 4) { $drunkStage = 4; }
+    elseif ($_lastMood === "tipsy" && $drunkStage < 2) { $drunkStage = 2; }
+}
 $GLOBALS["AIAGENTNSFW_DRUNK_STAGE"] = $drunkStage; // context.php reuses this so both agree
 
 $__promptState = NsfwNpcData::get($actorName);
