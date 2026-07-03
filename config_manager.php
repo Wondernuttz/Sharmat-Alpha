@@ -954,6 +954,7 @@ SQL;
 
             if (empty($failed)) {
                 $GLOBALS['db']->upsertRow('conf_opts', ['id' => 'sharmat_installed_commit', 'value' => $latest], "id='sharmat_installed_commit'");
+                $GLOBALS['db']->upsertRow('conf_opts', ['id' => 'sharmat_installed_at', 'value' => date('Y-m-d H:i')], "id='sharmat_installed_at'");
             }
             echo json_encode([
                 'success' => true,
