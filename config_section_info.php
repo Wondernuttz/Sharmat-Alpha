@@ -11,19 +11,8 @@
             <h3 class="info-subtitle">Updates</h3>
             <div class="info-box">
                 <p style="color: #B8A8C8; margin: 0 0 10px;">Pulls the latest SHARMAT server extension from GitHub. Your settings, prompts, and NPC profiles are kept (they live in the database), local conf files are preserved, and a file backup is taken first. Game-side mod files are not touched - those still come from the mod download.</p>
-                <?php
-                $__shInstTxt = 'manual install (never updated from GitHub)';
-                try {
-                    $__shInst = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id='sharmat_installed_commit'");
-                    if (!empty($__shInst['value'])) {
-                        $__shAt = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id='sharmat_installed_at'");
-                        $__shInstTxt = substr($__shInst['value'], 0, 9) . (!empty($__shAt['value']) ? ' - updated ' . $__shAt['value'] : '');
-                    }
-                } catch (Exception $e) { /* box still renders without version info */ }
-                ?>
-                <p style="color: #B8A8C8; margin: 0 0 10px;">Installed version: <b id="sharmatInstalledVersion" style="color: #FDF5D0;"><?php echo htmlspecialchars($__shInstTxt); ?></b></p>
                 <button type="button" class="btn-primary" onclick="sharmatCheckUpdate()">Check for Updates</button>
-                <button type="button" class="btn-primary" id="sharmatRunUpdateBtn" style="display:none;" onclick="sharmatRunUpdate()">Update Now</button>
+                <button type="button" class="btn-primary" id="sharmatRunUpdateBtn" style="display:none; background: #2A2435; color: #FDF5D0; border: 1px solid #FDF5D0; box-shadow: 0 0 10px rgba(255,200,90,0.45); text-shadow: 0 0 6px rgba(253,245,208,0.6);" onclick="sharmatRunUpdate()">Update Now</button>
                 <div id="sharmatUpdateStatus" style="margin-top: 10px; color: #B8A8C8;"></div>
             </div>
             <script>
@@ -32,14 +21,11 @@
                 st.textContent = 'Checking GitHub...';
                 fetch('?action=sharmatCheckUpdate').then(r => r.json()).then(d => {
                     if (!d.success) { st.textContent = 'Check failed: ' + d.error; return; }
-                    const inst = d.installed ? d.installed : 'unknown (manual install)';
                     if (d.update_available) {
-                        st.innerHTML = 'Installed: <b>' + inst + '</b> &rarr; Latest: <b>' + d.latest + '</b>' +
-                            (d.latest_date ? ' (' + d.latest_date.substring(0, 10) + ')' : '') +
-                            (d.latest_message ? '<br><span style="color:#8f819f;">' + d.latest_message.replace(/</g, '&lt;') + '</span>' : '');
+                        st.textContent = 'Update available.';
                         document.getElementById('sharmatRunUpdateBtn').style.display = 'inline-block';
                     } else {
-                        st.textContent = 'Up to date (' + d.latest + ').';
+                        st.textContent = 'Up to date.';
                     }
                 }).catch(e => { st.textContent = 'Check failed: ' + e.message; });
             }
@@ -49,13 +35,9 @@
                 st.textContent = 'Downloading and applying update...';
                 fetch('?action=sharmatRunUpdate', { method: 'POST' }).then(r => r.json()).then(d => {
                     if (!d.success) { st.textContent = 'Update failed: ' + d.error; return; }
-                    let msg = 'Updated ' + d.files_updated + ' files to ' + d.commit + '.';
-                    if (d.failed_count > 0) { msg += ' ' + d.failed_count + ' files could not be written. ' + (d.hint || ''); }
-                    else {
-                        msg += ' Reload this page to load the new version.';
-                        const vEl = document.getElementById('sharmatInstalledVersion');
-                        if (vEl) vEl.textContent = d.commit + ' - updated just now';
-                    }
+                    let msg;
+                    if (d.failed_count > 0) { msg = 'Update incomplete: ' + d.failed_count + ' files could not be written. ' + (d.hint || ''); }
+                    else { msg = 'Update complete - reload this page.'; }
                     st.textContent = msg;
                     document.getElementById('sharmatRunUpdateBtn').style.display = 'none';
                 }).catch(e => { st.textContent = 'Update failed: ' + e.message; });
