@@ -72,6 +72,12 @@
         handleDeleteNpcNsfwSettings();
     } elseif ($action === 'generateSexPrompt') {
         handleGenerateSexPrompt();
+    } elseif ($action === 'sharmatCheckUpdate') {
+        handleSharmatCheckUpdate();
+    } elseif ($action === 'sharmatRunUpdate') {
+        handleSharmatRunUpdate();
+    } elseif ($action === 'sharmatSaveUpdateToken') {
+        handleSharmatSaveUpdateToken();
     } elseif ($action === 'loadGlobalStyles') {
         handleLoadGlobalStyles();
     } elseif ($action === 'loadGlobalStyle') {
@@ -842,6 +848,141 @@ SQL;
                 'success' => false,
                 'error' => $e->getMessage(),
             ]);
+        }
+        exit;
+    }
+
+    // ---- Self-update from the SHARMAT GitHub repo (server ext files only; game mod files excluded) ----
+    function _sharmatUpdateHttpGet($url, $token = '') {
+        $headers = ['User-Agent: SHARMAT-updater', 'Accept: application/vnd.github+json'];
+        if ($token !== '') { $headers[] = 'Authorization: Bearer ' . $token; }
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_TIMEOUT => 90,
+            CURLOPT_HTTPHEADER => $headers,
+        ]);
+        $body = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        return [$code, $body];
+    }
+
+    function _sharmatUpdateToken() {
+        $row = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id='sharmat_update_token'");
+        return trim((string)($row['value'] ?? ''));
+    }
+
+    function handleSharmatSaveUpdateToken() {
+        $token = trim((string)($_POST['token'] ?? ''));
+        $GLOBALS['db']->upsertRow('conf_opts', ['id' => 'sharmat_update_token', 'value' => $token], "id='sharmat_update_token'");
+        echo json_encode(['success' => true, 'saved' => $token !== '']);
+        exit;
+    }
+
+    function handleSharmatCheckUpdate() {
+        try {
+            list($code, $body) = _sharmatUpdateHttpGet('https://api.github.com/repos/Wondernuttz/Sharmat-Alpha/commits/main', _sharmatUpdateToken());
+            if ($code === 404 || $code === 401 || $code === 403) { throw new Exception("GitHub says {$code} - the repo is private or the access token is missing/invalid. Paste a valid GitHub token below and save it."); }
+            if ($code !== 200) { throw new Exception("GitHub API HTTP {$code}"); }
+            $data = json_decode($body, true);
+            $latest = (string)($data['sha'] ?? '');
+            if ($latest === '') { throw new Exception('No commit in GitHub response'); }
+            $row = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id='sharmat_installed_commit'");
+            $installed = (string)($row['value'] ?? '');
+            echo json_encode([
+                'success' => true,
+                'latest' => substr($latest, 0, 9),
+                'latest_date' => (string)($data['commit']['committer']['date'] ?? ''),
+                'latest_message' => substr((string)($data['commit']['message'] ?? ''), 0, 140),
+                'installed' => $installed !== '' ? substr($installed, 0, 9) : '',
+                'update_available' => ($installed === '' || $installed !== $latest),
+            ]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+        exit;
+    }
+
+    function _sharmatBackupDir($src, $dst, &$failed) {
+        if (!is_dir($dst) && !@mkdir($dst, 0775, true)) { $failed[] = $dst; return; }
+        foreach (scandir($src) as $it) {
+            if ($it === '.' || $it === '..') { continue; }
+            $s = $src . '/' . $it;
+            $d = $dst . '/' . $it;
+            if (is_dir($s)) { _sharmatBackupDir($s, $d, $failed); }
+            elseif (!@copy($s, $d)) { $failed[] = $d; }
+        }
+    }
+
+    function _sharmatUpdateSync($src, $dst, $rel, $skipTop, $preserve, &$copied, &$failed) {
+        foreach (scandir($src) as $it) {
+            if ($it === '.' || $it === '..') { continue; }
+            $relPath = ($rel === '') ? $it : $rel . '/' . $it;
+            if ($rel === '' && in_array($it, $skipTop, true)) { continue; }
+            $s = $src . '/' . $it;
+            $d = $dst . '/' . $it;
+            if (is_dir($s)) {
+                if (!is_dir($d) && !@mkdir($d, 0775, true)) { $failed[] = $relPath; continue; }
+                _sharmatUpdateSync($s, $d, $relPath, $skipTop, $preserve, $copied, $failed);
+            } else {
+                // local conf survives updates; everything else is repo-authoritative
+                if (in_array($relPath, $preserve, true) && file_exists($d)) { continue; }
+                if (@copy($s, $d)) { $copied++; } else { $failed[] = $relPath; }
+            }
+        }
+    }
+
+    function handleSharmatRunUpdate() {
+        @set_time_limit(300);
+        try {
+            $token = _sharmatUpdateToken();
+            list($code, $body) = _sharmatUpdateHttpGet('https://api.github.com/repos/Wondernuttz/Sharmat-Alpha/commits/main', $token);
+            if ($code !== 200) { throw new Exception("GitHub API HTTP {$code}"); }
+            $latest = (string)(json_decode($body, true)['sha'] ?? '');
+            if ($latest === '') { throw new Exception('Could not resolve latest commit'); }
+
+            list($zcode, $zipBody) = _sharmatUpdateHttpGet('https://api.github.com/repos/Wondernuttz/Sharmat-Alpha/zipball/main', $token);
+            if ($zcode !== 200 || strlen($zipBody) < 1000) { throw new Exception("Repo download failed (HTTP {$zcode})"); }
+            $tmpZip = tempnam(sys_get_temp_dir(), 'sharmat_up') . '.zip';
+            file_put_contents($tmpZip, $zipBody);
+            $extractDir = sys_get_temp_dir() . '/sharmat_update_' . getmypid();
+            $za = new ZipArchive();
+            if ($za->open($tmpZip) !== true) { throw new Exception('Could not open downloaded zip'); }
+            $za->extractTo($extractDir);
+            $za->close();
+            @unlink($tmpZip);
+            $roots = glob($extractDir . '/*', GLOB_ONLYDIR);
+            if (empty($roots)) { throw new Exception('Downloaded zip was empty'); }
+            $srcRoot = $roots[0];
+
+            // Backup lives OUTSIDE ext/ - a copy inside ext/ would be double-loaded by the hook scanner
+            $extDir = __DIR__;
+            $backupDir = dirname(dirname(dirname($extDir))) . '/sharmat_backups/aiagent_nsfw_' . date('Ymd_His');
+            $backupFailed = [];
+            _sharmatBackupDir($extDir, $backupDir, $backupFailed);
+
+            $copied = 0;
+            $failed = [];
+            $skipTop = ['mod', '.git', '.github', '.gitignore'];
+            $preserve = ['conf/conf.php', 'cmd/conf/conf.php'];
+            _sharmatUpdateSync($srcRoot, $extDir, '', $skipTop, $preserve, $copied, $failed);
+
+            if (empty($failed)) {
+                $GLOBALS['db']->upsertRow('conf_opts', ['id' => 'sharmat_installed_commit', 'value' => $latest], "id='sharmat_installed_commit'");
+            }
+            echo json_encode([
+                'success' => true,
+                'commit' => substr($latest, 0, 9),
+                'files_updated' => $copied,
+                'failed' => array_slice($failed, 0, 10),
+                'failed_count' => count($failed),
+                'backup' => (empty($backupFailed) ? $backupDir : 'backup incomplete: ' . $backupDir),
+                'hint' => empty($failed) ? '' : 'Some files could not be written. In the Dwemer terminal run: sudo chown -R www-data:www-data /var/www/html/HerikaServer/ext/aiagent_nsfw  then press Update Now again.',
+            ]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
         exit;
     }
@@ -5827,7 +5968,7 @@ PROMPT;
                 })
                 .catch(error => {
                     document.getElementById('scenesLoading').classList.remove('active');
-                    showAlert('sceneErrorAlert', 'Network error: ' + error.message, 'error');
+                    showAlert('sceneErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
                 });
         }
 
@@ -6057,7 +6198,7 @@ PROMPT;
                 }
             })
             .catch(error => {
-                showAlert('sceneErrorAlert', 'Network error: ' + error.message, 'error');
+                showAlert('sceneErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
             });
         }
 
@@ -6105,7 +6246,7 @@ PROMPT;
                 }
             })
             .catch(error => {
-                showAlert('sceneErrorAlert', 'Network error: ' + error.message, 'error');
+                showAlert('sceneErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
             });
         }
 
@@ -6132,7 +6273,7 @@ PROMPT;
                 }
             })
             .catch(error => {
-                showAlert('sceneErrorAlert', 'Network error: ' + error.message, 'error');
+                showAlert('sceneErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
             });
         }
 
@@ -6185,10 +6326,10 @@ PROMPT;
                                 if (data.success) { showAlert('sceneSuccessAlert', data.message, 'success'); loadScenes(); }
                                 else { showAlert('sceneErrorAlert', 'Error: ' + data.error, 'error'); }
                             })
-                            .catch(error => { showAlert('sceneErrorAlert', 'Network error: ' + error.message, 'error'); });
+                            .catch(error => { showAlert('sceneErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error'); });
                     });
                 })
-                .catch(error => { showAlert('sceneErrorAlert', 'Network error: ' + error.message, 'error'); });
+                .catch(error => { showAlert('sceneErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error'); });
         }
 
         // Restore all scenes to their defaults (full factory reset) with a themed warning
@@ -6208,7 +6349,7 @@ PROMPT;
                         if (data.success) { showAlert('sceneSuccessAlert', data.message, 'success'); loadScenes(); }
                         else { showAlert('sceneErrorAlert', 'Error: ' + data.error, 'error'); }
                     })
-                    .catch(error => { showAlert('sceneErrorAlert', 'Network error: ' + error.message, 'error'); });
+                    .catch(error => { showAlert('sceneErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error'); });
             });
         }
 
@@ -6243,7 +6384,7 @@ PROMPT;
             })
             .catch(error => {
                 hideProcessing();
-                showAlert('sceneErrorAlert', 'Network error: ' + error.message, 'error');
+                showAlert('sceneErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
             });
         }
 
@@ -6280,7 +6421,7 @@ PROMPT;
             })
             .catch(error => {
                 hideProcessing();
-                showAlert('sceneErrorAlert', 'Network error: ' + error.message, 'error');
+                showAlert('sceneErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
             });
         }
 
@@ -6347,7 +6488,7 @@ PROMPT;
                     }
                 })
                 .catch(error => {
-                    showAlert('toolsErrorAlert', 'Network error: ' + error.message, 'error');
+                    showAlert('toolsErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
                 });
         }
 
@@ -6394,7 +6535,7 @@ PROMPT;
                 })
                 .catch(error => {
                     console.error('Fetch error:', error);
-                    showAlert('toolsErrorAlert', 'Network error: ' + error.message, 'error');
+                    showAlert('toolsErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
                 });
         }
 
@@ -6590,7 +6731,7 @@ PROMPT;
             })
             .catch(error => {
                 hideProcessing();
-                showAlert('toolsErrorAlert', 'Network error: ' + error.message, 'error');
+                showAlert('toolsErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
             });
         }
 
@@ -6631,7 +6772,7 @@ PROMPT;
             })
             .catch(error => {
                 hideProcessing();
-                showAlert('toolsErrorAlert', 'Network error: ' + error.message, 'error');
+                showAlert('toolsErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
             });
         }
 
@@ -6808,110 +6949,110 @@ PROMPT;
                 .then(response => response.json())
                 .then(data => {
                     if (data.success && data.data) {
-                        document.getElementById('xttsModifyLevel1').checked = data.data.XTTS_MODIFY_LEVEL1 || false;
-                        document.getElementById('xttsModifyLevel2').checked = data.data.XTTS_MODIFY_LEVEL2 || false;
+                        elSet('xttsModifyLevel1', 'checked', data.data.XTTS_MODIFY_LEVEL1 || false);
+                        elSet('xttsModifyLevel2', 'checked', data.data.XTTS_MODIFY_LEVEL2 || false);
                         // Load XTTS speed sliders
                         const speedLevel1 = data.data.XTTS_SPEED_LEVEL1 !== undefined ? data.data.XTTS_SPEED_LEVEL1 : 0.8;
                         const speedLevel2 = data.data.XTTS_SPEED_LEVEL2 !== undefined ? data.data.XTTS_SPEED_LEVEL2 : 0.7;
-                        document.getElementById('xttsSpeedLevel1').value = speedLevel1;
-                        document.getElementById('xttsSpeedLevel1Value').textContent = speedLevel1 + 'x';
-                        document.getElementById('xttsSpeedLevel2').value = speedLevel2;
-                        document.getElementById('xttsSpeedLevel2Value').textContent = speedLevel2 + 'x';
+                        elSet('xttsSpeedLevel1', 'value', speedLevel1);
+                        elSet('xttsSpeedLevel1Value', 'textContent', speedLevel1 + 'x');
+                        elSet('xttsSpeedLevel2', 'value', speedLevel2);
+                        elSet('xttsSpeedLevel2Value', 'textContent', speedLevel2 + 'x');
                         // Load random moans settings
-                        document.getElementById('enableRandomMoans').checked = data.data.ENABLE_RANDOM_MOANS !== false;  // Default true
-                        document.getElementById('moansAffinityThreshold').value = data.data.MOANS_AFFINITY_THRESHOLD !== undefined ? data.data.MOANS_AFFINITY_THRESHOLD : '6';
-                        document.getElementById('randomMoanSounds').value = data.data.RANDOM_MOAN_SOUNDS || ' ... oh ...\n ... ah ...\n ... mmm ...\n ... ooh ...\n ... yes ... ';
+                        elSet('enableRandomMoans', 'checked', data.data.ENABLE_RANDOM_MOANS !== false);  // Default true
+                        elSet('moansAffinityThreshold', 'value', data.data.MOANS_AFFINITY_THRESHOLD !== undefined ? data.data.MOANS_AFFINITY_THRESHOLD : '6');
+                        elSet('randomMoanSounds', 'value', data.data.RANDOM_MOAN_SOUNDS || ' ... oh ...\n ... ah ...\n ... mmm ...\n ... ooh ...\n ... yes ... ');
                         // Load NPC sex cooldown slider
                         const cooldownVal = data.data.NPC_SEX_COOLDOWN_HOURS !== undefined ? data.data.NPC_SEX_COOLDOWN_HOURS : 9;
-                        document.getElementById('npcSexCooldown').value = cooldownVal;
+                        elSet('npcSexCooldown', 'value', cooldownVal);
                         updateCooldownDisplay(cooldownVal);
                         // Load scene-call minimum affinity slider
                         if (document.getElementById('sceneCallMinAffinity')) {
                             const sceneCallAff = data.data.NSFW_SCENE_CALL_MIN_AFFINITY !== undefined ? data.data.NSFW_SCENE_CALL_MIN_AFFINITY : 56;
-                            document.getElementById('sceneCallMinAffinity').value = sceneCallAff;
+                            elSet('sceneCallMinAffinity', 'value', sceneCallAff);
                             const scaV = parseInt(sceneCallAff);
                             const scaT = scaV>=91?'Bonded':(scaV>=76?'Devoted':(scaV>=56?'Fond':(scaV>=31?'Friendly':(scaV>=6?'Acquaintance':'Neutral'))));
-                            document.getElementById('sceneCallMinAffinityValue').textContent = scaV + ' (' + scaT + ')';
+                            elSet('sceneCallMinAffinityValue', 'textContent', scaV + ' (' + scaT + ')');
                         }
                         // Load global player scene-call cooldown slider
                         if (document.getElementById('playerSceneCallCooldown')) {
                             const psCD = data.data.NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS !== undefined ? data.data.NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS : 30;
-                            document.getElementById('playerSceneCallCooldown').value = psCD;
-                            document.getElementById('playerSceneCallCooldownValue').textContent = (parseInt(psCD) === 0 ? 'Off' : psCD + ' sec');
+                            elSet('playerSceneCallCooldown', 'value', psCD);
+                            elSet('playerSceneCallCooldownValue', 'textContent', (parseInt(psCD) === 0 ? 'Off' : psCD + ' sec'));
                         }
-                        document.getElementById('trackDrunkStatus').checked = data.data.TRACK_DRUNK_STATUS || false;
+                        elSet('trackDrunkStatus', 'checked', data.data.TRACK_DRUNK_STATUS || false);
                         const drunkReqConsumeEl = document.getElementById('drunkRequireConsume');
                         if (drunkReqConsumeEl) drunkReqConsumeEl.checked = data.data.DRUNK_REQUIRE_CONSUME_ACTION !== undefined ? data.data.DRUNK_REQUIRE_CONSUME_ACTION : true;
                         const drunkWin = data.data.DRUNK_WINDOW_HOURS !== undefined ? data.data.DRUNK_WINDOW_HOURS : 12;
-                        document.getElementById('drunkWindowHours').value = drunkWin;
-                        document.getElementById('drunkWindowHoursValue').textContent = drunkWin + ' game hours';
-                        document.getElementById('trackFertilityInfo').checked = data.data.TRACK_FERTILITY_INFO || false;
-                        if (data.data.CHILD_PROTECTION_FRAME) document.getElementById('childProtectionFrame').value = data.data.CHILD_PROTECTION_FRAME;
-                        document.getElementById('enableSexDisposal').checked = data.data.ENABLE_SEX_DISPOSAL !== false;  // Default true
-                        document.getElementById('enableAffinityGating').checked = data.data.ENABLE_AFFINITY_GATING !== false;  // Default true
-                        if (document.getElementById('nsfwAllowNpcJoinScenes')) document.getElementById('nsfwAllowNpcJoinScenes').checked = checkedDefault(data.data.NSFW_ALLOW_NPC_JOIN_SCENES, true);  // Default true
-                        if (document.getElementById('nsfwAllowPaceControl')) document.getElementById('nsfwAllowPaceControl').checked = checkedDefault(data.data.NSFW_ALLOW_PACE_CONTROL, true);  // Default true
-                        if (document.getElementById('nsfwAllowMidsceneSteering')) document.getElementById('nsfwAllowMidsceneSteering').checked = checkedDefault(data.data.NSFW_ALLOW_MIDSCENE_STEERING, true);  // Default true
-                        if (document.getElementById('nsfwAffectionCooldownEnabled')) document.getElementById('nsfwAffectionCooldownEnabled').checked = checkedDefault(data.data.NSFW_AFFECTION_COOLDOWN_ENABLED, true);  // Default true
-                        document.getElementById('npcSceneLlmEnabled').checked = data.data.NPC_SCENE_LLM_ENABLED === true || data.data.NPC_SCENE_LLM_ENABLED === '1';
-                        document.getElementById('groupSceneParticipantDialogue').checked = data.data.GROUP_SCENE_PARTICIPANT_DIALOGUE !== false;  // Default true
+                        elSet('drunkWindowHours', 'value', drunkWin);
+                        elSet('drunkWindowHoursValue', 'textContent', drunkWin + ' game hours');
+                        elSet('trackFertilityInfo', 'checked', data.data.TRACK_FERTILITY_INFO || false);
+                        if (data.data.CHILD_PROTECTION_FRAME) elSet('childProtectionFrame', 'value', data.data.CHILD_PROTECTION_FRAME);
+                        elSet('enableSexDisposal', 'checked', data.data.ENABLE_SEX_DISPOSAL !== false);  // Default true
+                        elSet('enableAffinityGating', 'checked', data.data.ENABLE_AFFINITY_GATING !== false);  // Default true
+                        if (document.getElementById('nsfwAllowNpcJoinScenes')) elSet('nsfwAllowNpcJoinScenes', 'checked', checkedDefault(data.data.NSFW_ALLOW_NPC_JOIN_SCENES, true));  // Default true
+                        if (document.getElementById('nsfwAllowPaceControl')) elSet('nsfwAllowPaceControl', 'checked', checkedDefault(data.data.NSFW_ALLOW_PACE_CONTROL, true));  // Default true
+                        if (document.getElementById('nsfwAllowMidsceneSteering')) elSet('nsfwAllowMidsceneSteering', 'checked', checkedDefault(data.data.NSFW_ALLOW_MIDSCENE_STEERING, true));  // Default true
+                        if (document.getElementById('nsfwAffectionCooldownEnabled')) elSet('nsfwAffectionCooldownEnabled', 'checked', checkedDefault(data.data.NSFW_AFFECTION_COOLDOWN_ENABLED, true));  // Default true
+                        elSet('npcSceneLlmEnabled', 'checked', data.data.NPC_SCENE_LLM_ENABLED === true || data.data.NPC_SCENE_LLM_ENABLED === '1');
+                        elSet('groupSceneParticipantDialogue', 'checked', data.data.GROUP_SCENE_PARTICIPANT_DIALOGUE !== false);  // Default true
                         const npcSceneContextThrottle = data.data.NPC_SCENE_CONTEXT_THROTTLE_SECONDS !== undefined ? data.data.NPC_SCENE_CONTEXT_THROTTLE_SECONDS : 6;
-                        document.getElementById('npcSceneContextThrottle').value = npcSceneContextThrottle;
-                        document.getElementById('npcSceneContextThrottleValue').textContent = npcSceneContextThrottle + ' sec';
+                        elSet('npcSceneContextThrottle', 'value', npcSceneContextThrottle);
+                        elSet('npcSceneContextThrottleValue', 'textContent', npcSceneContextThrottle + ' sec');
                         const npcSceneGlobalCooldown = data.data.NPC_SCENE_GLOBAL_COOLDOWN_SECONDS !== undefined ? data.data.NPC_SCENE_GLOBAL_COOLDOWN_SECONDS : 25;
-                        document.getElementById('npcSceneGlobalCooldown').value = npcSceneGlobalCooldown;
-                        document.getElementById('npcSceneGlobalCooldownValue').textContent = npcSceneGlobalCooldown + ' sec';
+                        elSet('npcSceneGlobalCooldown', 'value', npcSceneGlobalCooldown);
+                        elSet('npcSceneGlobalCooldownValue', 'textContent', npcSceneGlobalCooldown + ' sec');
                         const npcSceneThreadCooldown = data.data.NPC_SCENE_THREAD_COOLDOWN_SECONDS !== undefined ? data.data.NPC_SCENE_THREAD_COOLDOWN_SECONDS : 60;
-                        document.getElementById('npcSceneThreadCooldown').value = npcSceneThreadCooldown;
-                        document.getElementById('npcSceneThreadCooldownValue').textContent = npcSceneThreadCooldown + ' sec';
+                        elSet('npcSceneThreadCooldown', 'value', npcSceneThreadCooldown);
+                        elSet('npcSceneThreadCooldownValue', 'textContent', npcSceneThreadCooldown + ' sec');
                         const npcSceneActorCooldown = data.data.NPC_SCENE_ACTOR_COOLDOWN_SECONDS !== undefined ? data.data.NPC_SCENE_ACTOR_COOLDOWN_SECONDS : 75;
-                        document.getElementById('npcSceneActorCooldown').value = npcSceneActorCooldown;
-                        document.getElementById('npcSceneActorCooldownValue').textContent = npcSceneActorCooldown + ' sec';
+                        elSet('npcSceneActorCooldown', 'value', npcSceneActorCooldown);
+                        elSet('npcSceneActorCooldownValue', 'textContent', npcSceneActorCooldown + ' sec');
                         const npcSceneStaleSeconds = data.data.NPC_SCENE_STALE_SECONDS !== undefined ? data.data.NPC_SCENE_STALE_SECONDS : 330;
-                        document.getElementById('npcSceneStaleSeconds').value = npcSceneStaleSeconds;
-                        document.getElementById('npcSceneStaleSecondsValue').textContent = npcSceneStaleSeconds + ' sec';
+                        elSet('npcSceneStaleSeconds', 'value', npcSceneStaleSeconds);
+                        elSet('npcSceneStaleSecondsValue', 'textContent', npcSceneStaleSeconds + ' sec');
                         const npcSceneDistancePriorityMargin = data.data.NPC_SCENE_DISTANCE_PRIORITY_MARGIN !== undefined ? data.data.NPC_SCENE_DISTANCE_PRIORITY_MARGIN : 96;
-                        document.getElementById('npcSceneDistancePriorityMargin').value = npcSceneDistancePriorityMargin;
-                        document.getElementById('npcSceneDistancePriorityMarginValue').textContent = npcSceneDistancePriorityMargin + ' units';
-                        document.getElementById('blockRechatInScene').checked = data.data.BLOCK_RECHAT_IN_SCENE !== false;  // Default true
-                        document.getElementById('legacySceneSpeakPolicy').value = data.data.LEGACY_SCENE_SPEAK_POLICY || 'authoritative';
-                        document.getElementById('nsfwEventAuditLog').checked = data.data.NSFW_EVENT_AUDIT_LOG !== false;
+                        elSet('npcSceneDistancePriorityMargin', 'value', npcSceneDistancePriorityMargin);
+                        elSet('npcSceneDistancePriorityMarginValue', 'textContent', npcSceneDistancePriorityMargin + ' units');
+                        elSet('blockRechatInScene', 'checked', data.data.BLOCK_RECHAT_IN_SCENE !== false);  // Default true
+                        elSet('legacySceneSpeakPolicy', 'value', data.data.LEGACY_SCENE_SPEAK_POLICY || 'authoritative');
+                        elSet('nsfwEventAuditLog', 'checked', data.data.NSFW_EVENT_AUDIT_LOG !== false);
                         const consentCarryover = data.data.SCENE_CONSENT_CARRYOVER_SECONDS !== undefined ? data.data.SCENE_CONSENT_CARRYOVER_SECONDS : 1800;
-                        document.getElementById('sceneConsentCarryover').value = consentCarryover;
-                        document.getElementById('sceneConsentCarryoverValue').textContent = consentCarryover + ' seconds';
-                        document.getElementById('whiskeyDickEnabled').checked = data.data.WHISKEY_DICK_ENABLED === true || data.data.WHISKEY_DICK_ENABLED === '1';
-                        document.getElementById('whiskeyDickAutoEndScene').checked = data.data.WHISKEY_DICK_AUTO_END_SCENE !== false;
-                        document.getElementById('whiskeyDickBullyingEnabled').checked = data.data.WHISKEY_DICK_BULLYING_ENABLED === true || data.data.WHISKEY_DICK_BULLYING_ENABLED === '1';
+                        elSet('sceneConsentCarryover', 'value', consentCarryover);
+                        elSet('sceneConsentCarryoverValue', 'textContent', consentCarryover + ' seconds');
+                        elSet('whiskeyDickEnabled', 'checked', data.data.WHISKEY_DICK_ENABLED === true || data.data.WHISKEY_DICK_ENABLED === '1');
+                        elSet('whiskeyDickAutoEndScene', 'checked', data.data.WHISKEY_DICK_AUTO_END_SCENE !== false);
+                        elSet('whiskeyDickBullyingEnabled', 'checked', data.data.WHISKEY_DICK_BULLYING_ENABLED === true || data.data.WHISKEY_DICK_BULLYING_ENABLED === '1');
                         const whiskeyChance3 = data.data.WHISKEY_DICK_CHANCE_3 !== undefined ? data.data.WHISKEY_DICK_CHANCE_3 : 25;
-                        document.getElementById('whiskeyDickChance3').value = whiskeyChance3;
-                        document.getElementById('whiskeyDickChance3Value').textContent = whiskeyChance3 + '%';
+                        elSet('whiskeyDickChance3', 'value', whiskeyChance3);
+                        elSet('whiskeyDickChance3Value', 'textContent', whiskeyChance3 + '%');
                         const whiskeyChance4 = data.data.WHISKEY_DICK_CHANCE_4 !== undefined ? data.data.WHISKEY_DICK_CHANCE_4 : 50;
-                        document.getElementById('whiskeyDickChance4').value = whiskeyChance4;
-                        document.getElementById('whiskeyDickChance4Value').textContent = whiskeyChance4 + '%';
+                        elSet('whiskeyDickChance4', 'value', whiskeyChance4);
+                        elSet('whiskeyDickChance4Value', 'textContent', whiskeyChance4 + '%');
                         const whiskeyChance5 = data.data.WHISKEY_DICK_CHANCE_5 !== undefined ? data.data.WHISKEY_DICK_CHANCE_5 : 75;
-                        document.getElementById('whiskeyDickChance5').value = whiskeyChance5;
-                        document.getElementById('whiskeyDickChance5Value').textContent = whiskeyChance5 + '%';
+                        elSet('whiskeyDickChance5', 'value', whiskeyChance5);
+                        elSet('whiskeyDickChance5Value', 'textContent', whiskeyChance5 + '%');
                         const whiskeyChance6 = data.data.WHISKEY_DICK_CHANCE_6 !== undefined ? data.data.WHISKEY_DICK_CHANCE_6 : 100;
-                        document.getElementById('whiskeyDickChance6').value = whiskeyChance6;
-                        document.getElementById('whiskeyDickChance6Value').textContent = whiskeyChance6 + '%';
+                        elSet('whiskeyDickChance6', 'value', whiskeyChance6);
+                        elSet('whiskeyDickChance6Value', 'textContent', whiskeyChance6 + '%');
                         if (document.getElementById('whiskeyDickDuration')) {
                             const whiskeyDur = data.data.NSFW_WHISKEY_DICK_DURATION_MINUTES !== undefined ? data.data.NSFW_WHISKEY_DICK_DURATION_MINUTES : 10;
-                            document.getElementById('whiskeyDickDuration').value = whiskeyDur;
-                            document.getElementById('whiskeyDickDurationValue').textContent = whiskeyDur + ' min';
+                            elSet('whiskeyDickDuration', 'value', whiskeyDur);
+                            elSet('whiskeyDickDurationValue', 'textContent', whiskeyDur + ' min');
                         }
                         if (document.getElementById('whiskeyDickDrinkWindow')) {
                             const whiskeyWin = data.data.NSFW_PLAYER_DRUNK_WINDOW_MINUTES !== undefined ? data.data.NSFW_PLAYER_DRUNK_WINDOW_MINUTES : 5;
-                            document.getElementById('whiskeyDickDrinkWindow').value = whiskeyWin;
-                            document.getElementById('whiskeyDickDrinkWindowValue').textContent = whiskeyWin + ' min';
+                            elSet('whiskeyDickDrinkWindow', 'value', whiskeyWin);
+                            elSet('whiskeyDickDrinkWindowValue', 'textContent', whiskeyWin + ' min');
                         }
                         const blockRechatTimeout = data.data.BLOCK_RECHAT_TIMEOUT !== undefined ? data.data.BLOCK_RECHAT_TIMEOUT : 300;
-                        document.getElementById('blockRechatTimeout').value = blockRechatTimeout;
-                        document.getElementById('blockRechatTimeoutValue').textContent = blockRechatTimeout + ' seconds';
+                        elSet('blockRechatTimeout', 'value', blockRechatTimeout);
+                        elSet('blockRechatTimeoutValue', 'textContent', blockRechatTimeout + ' seconds');
                         const playerSceneRechatCadence = data.data.PLAYER_SCENE_RECHAT_CADENCE_SECONDS !== undefined ? data.data.PLAYER_SCENE_RECHAT_CADENCE_SECONDS : 0;
                         const playerSceneRechatCadenceEl = document.getElementById('playerSceneRechatCadence');
                         if (playerSceneRechatCadenceEl) {
                             playerSceneRechatCadenceEl.value = playerSceneRechatCadence;
-                            document.getElementById('playerSceneRechatCadenceValue').textContent = (playerSceneRechatCadence == 0) ? 'OFF (hard block)' : playerSceneRechatCadence + ' sec';
+                            elSet('playerSceneRechatCadenceValue', 'textContent', (playerSceneRechatCadence == 0) ? 'OFF (hard block)' : playerSceneRechatCadence + ' sec');
                         }
                         const prostitutePaymentWindow = data.data.PROSTITUTE_PAYMENT_WINDOW_MINUTES !== undefined ? data.data.PROSTITUTE_PAYMENT_WINDOW_MINUTES : 20;
                         const prostitutePaymentWindowEl = document.getElementById('prostitutePaymentWindow');
@@ -6922,45 +7063,45 @@ PROMPT;
                         }
                         // Token limits
                         const sexSceneTokens = data.data.TOKEN_LIMIT_SEX_SCENE !== undefined ? data.data.TOKEN_LIMIT_SEX_SCENE : 100;
-                        document.getElementById('tokenLimitSexScene').value = sexSceneTokens;
-                        document.getElementById('tokenLimitSexSceneValue').textContent = sexSceneTokens + ' tokens';
+                        elSet('tokenLimitSexScene', 'value', sexSceneTokens);
+                        elSet('tokenLimitSexSceneValue', 'textContent', sexSceneTokens + ' tokens');
                         const climaxTokens = data.data.TOKEN_LIMIT_CLIMAX !== undefined ? data.data.TOKEN_LIMIT_CLIMAX : 50;
-                        document.getElementById('tokenLimitClimax').value = climaxTokens;
-                        document.getElementById('tokenLimitClimaxValue').textContent = climaxTokens + ' tokens';
+                        elSet('tokenLimitClimax', 'value', climaxTokens);
+                        elSet('tokenLimitClimaxValue', 'textContent', climaxTokens + ' tokens');
                         const physicsTokens = data.data.TOKEN_LIMIT_PHYSICS !== undefined ? data.data.TOKEN_LIMIT_PHYSICS : 240;
-                        document.getElementById('tokenLimitPhysics').value = physicsTokens;
-                        document.getElementById('tokenLimitPhysicsValue').textContent = physicsTokens + ' tokens';
+                        elSet('tokenLimitPhysics', 'value', physicsTokens);
+                        elSet('tokenLimitPhysicsValue', 'textContent', physicsTokens + ' tokens');
                         // Cooldowns
                         const cooldownSexScene = data.data.COOLDOWN_SEX_SCENE !== undefined ? data.data.COOLDOWN_SEX_SCENE : 15;
-                        document.getElementById('cooldownSexScene').value = cooldownSexScene;
-                        document.getElementById('cooldownSexSceneValue').textContent = cooldownSexScene + ' sec';
+                        elSet('cooldownSexScene', 'value', cooldownSexScene);
+                        elSet('cooldownSexSceneValue', 'textContent', cooldownSexScene + ' sec');
                         const cooldownClimax = data.data.COOLDOWN_CLIMAX !== undefined ? data.data.COOLDOWN_CLIMAX : 30;
-                        document.getElementById('cooldownClimax').value = cooldownClimax;
-                        document.getElementById('cooldownClimaxValue').textContent = cooldownClimax + ' sec';
+                        elSet('cooldownClimax', 'value', cooldownClimax);
+                        elSet('cooldownClimaxValue', 'textContent', cooldownClimax + ' sec');
                         const physTouchCd = data.data.PHYSICS_TOUCH_COOLDOWN !== undefined ? data.data.PHYSICS_TOUCH_COOLDOWN : 2;
-                        document.getElementById('physicsTouchCooldown').value = physTouchCd;
-                        document.getElementById('physicsTouchCooldownValue').textContent = physTouchCd + ' sec';
+                        elSet('physicsTouchCooldown', 'value', physTouchCd);
+                        elSet('physicsTouchCooldownValue', 'textContent', physTouchCd + ' sec');
                         const physTouchSceneCd = data.data.PHYSICS_TOUCH_SCENE_COOLDOWN !== undefined ? data.data.PHYSICS_TOUCH_SCENE_COOLDOWN : 120;
                         if (document.getElementById('physicsTouchSceneCooldown')) {
-                            document.getElementById('physicsTouchSceneCooldown').value = physTouchSceneCd;
-                            document.getElementById('physicsTouchSceneCooldownValue').textContent = physTouchSceneCd + ' sec';
+                            elSet('physicsTouchSceneCooldown', 'value', physTouchSceneCd);
+                            elSet('physicsTouchSceneCooldownValue', 'textContent', physTouchSceneCd + ' sec');
                         }
                         const physGrabCd = data.data.PHYSICS_GRAB_COOLDOWN !== undefined ? data.data.PHYSICS_GRAB_COOLDOWN : 2;
-                        document.getElementById('physicsGrabCooldown').value = physGrabCd;
-                        document.getElementById('physicsGrabCooldownValue').textContent = physGrabCd + ' sec';
+                        elSet('physicsGrabCooldown', 'value', physGrabCd);
+                        elSet('physicsGrabCooldownValue', 'textContent', physGrabCd + ' sec');
                         const physLowConfidenceCd = data.data.PHYSICS_LOW_CONFIDENCE_COOLDOWN !== undefined ? data.data.PHYSICS_LOW_CONFIDENCE_COOLDOWN : 8;
-                        document.getElementById('physicsLowConfidenceCooldown').value = physLowConfidenceCd;
-                        document.getElementById('physicsLowConfidenceCooldownValue').textContent = physLowConfidenceCd + ' sec';
+                        elSet('physicsLowConfidenceCooldown', 'value', physLowConfidenceCd);
+                        elSet('physicsLowConfidenceCooldownValue', 'textContent', physLowConfidenceCd + ' sec');
                         const physSustainedBreastTouch = data.data.PHYSICS_SUSTAINED_BREAST_TOUCH_SECONDS !== undefined ? data.data.PHYSICS_SUSTAINED_BREAST_TOUCH_SECONDS : 5;
-                        document.getElementById('physicsSustainedBreastTouch').value = physSustainedBreastTouch;
-                        document.getElementById('physicsSustainedBreastTouchValue').textContent = physSustainedBreastTouch + ' sec';
-                        document.getElementById('physicsSpankEnabled').checked = data.data.PHYSICS_SPANK_ENABLED !== false;
+                        elSet('physicsSustainedBreastTouch', 'value', physSustainedBreastTouch);
+                        elSet('physicsSustainedBreastTouchValue', 'textContent', physSustainedBreastTouch + ' sec');
+                        elSet('physicsSpankEnabled', 'checked', data.data.PHYSICS_SPANK_ENABLED !== false);
                         const physSpankSpeed = data.data.PHYSICS_SPANK_MIN_SPEED !== undefined ? data.data.PHYSICS_SPANK_MIN_SPEED : 30;
-                        document.getElementById('physicsSpankMinSpeed').value = physSpankSpeed;
-                        document.getElementById('physicsSpankMinSpeedValue').textContent = physSpankSpeed + ' speed';
+                        elSet('physicsSpankMinSpeed', 'value', physSpankSpeed);
+                        elSet('physicsSpankMinSpeedValue', 'textContent', physSpankSpeed + ' speed');
                         const physSpankCd = data.data.PHYSICS_SPANK_COOLDOWN !== undefined ? data.data.PHYSICS_SPANK_COOLDOWN : 5;
-                        document.getElementById('physicsSpankCooldown').value = physSpankCd;
-                        document.getElementById('physicsSpankCooldownValue').textContent = physSpankCd + ' sec';
+                        elSet('physicsSpankCooldown', 'value', physSpankCd);
+                        elSet('physicsSpankCooldownValue', 'textContent', physSpankCd + ' sec');
                         // Slavery mechanics
                         const checkedDefault = function(value, fallback) {
                             if (value === undefined || value === null) return fallback;
@@ -6972,30 +7113,30 @@ PROMPT;
                             document.getElementById(labelId).textContent = resolved + suffix;
                         };
                         const slaveryIdleAliasMapDefault = "WorshipMaster=IdleWorship\nAskMasterForFreedom=AskMasterForFreedom\nBringMasterDrink=IdleMQ201HoldingDrinkTray|home\nSweepMastersFloors=IdleLooseSweepingStart|home\nWaitForMasterCommand=IdleSnapToAttention\nPraiseMaster=IdlePray\nThinkAboutMaster=IdleStudy\nWelcomeMaster=IdleSilentBow\nSurrenderToMaster=IdleSurrender\nShowDisdainForMaster=IdleExamine\nBraceForPain=IdleBracedPain\nGraveStanding=IdleBowHeadAtGrave_01\nBrokenGraveStanding=IdleBowHeadAtGrave_02";
-                        document.getElementById('slaveryIdlesEnabled').checked = checkedDefault(data.data.SLAVERY_IDLES_ENABLED, true);
-                        if (document.getElementById('slaveryAllowAskFreedom')) document.getElementById('slaveryAllowAskFreedom').checked = checkedDefault(data.data.SLAVERY_ALLOW_ASK_FREEDOM, false);
-                        document.getElementById('slaveryAmbientIdlesEnabled').checked = checkedDefault(data.data.SLAVERY_AMBIENT_IDLES_ENABLED, true);
-                        document.getElementById('slaveryActionIdlesEnabled').checked = checkedDefault(data.data.SLAVERY_ACTION_IDLES_ENABLED, true);
-                        document.getElementById('slaveryHomeServiceIdles').checked = checkedDefault(data.data.SLAVERY_HOME_SERVICE_IDLES, true);
+                        elSet('slaveryIdlesEnabled', 'checked', checkedDefault(data.data.SLAVERY_IDLES_ENABLED, true));
+                        if (document.getElementById('slaveryAllowAskFreedom')) elSet('slaveryAllowAskFreedom', 'checked', checkedDefault(data.data.SLAVERY_ALLOW_ASK_FREEDOM, false));
+                        elSet('slaveryAmbientIdlesEnabled', 'checked', checkedDefault(data.data.SLAVERY_AMBIENT_IDLES_ENABLED, true));
+                        elSet('slaveryActionIdlesEnabled', 'checked', checkedDefault(data.data.SLAVERY_ACTION_IDLES_ENABLED, true));
+                        elSet('slaveryHomeServiceIdles', 'checked', checkedDefault(data.data.SLAVERY_HOME_SERVICE_IDLES, true));
                         setSliderValue('slaveryIdleChance', 'slaveryIdleChanceValue', data.data.SLAVERY_IDLE_CHANCE, 12, '%');
                         setSliderValue('slaveryIdleCooldown', 'slaveryIdleCooldownValue', data.data.SLAVERY_IDLE_COOLDOWN_SECONDS, 120, ' sec');
-                        document.getElementById('slaveryIdleAliasMap').value = data.data.SLAVERY_IDLE_ALIAS_MAP || slaveryIdleAliasMapDefault;
-                        document.getElementById('slaveryTierIdleBonded').value = data.data.SLAVERY_TIER_IDLE_BONDED || "WorshipMaster\nAskMasterForFreedom\nBringMasterDrink\nSweepMastersFloors";
-                        document.getElementById('slaveryTierIdleDevoted').value = data.data.SLAVERY_TIER_IDLE_DEVOTED || "WaitForMasterCommand\nPraiseMaster";
-                        document.getElementById('slaveryTierIdleFond').value = data.data.SLAVERY_TIER_IDLE_FOND || "ThinkAboutMaster\nBringMasterDrink\nSweepMastersFloors";
-                        document.getElementById('slaveryTierIdleFriendly').value = data.data.SLAVERY_TIER_IDLE_FRIENDLY || "WelcomeMaster\nBringMasterDrink\nSweepMastersFloors";
-                        document.getElementById('slaveryTierIdleAcquaintance').value = data.data.SLAVERY_TIER_IDLE_ACQUAINTANCE || "WelcomeMaster\nBringMasterDrink\nSweepMastersFloors";
-                        document.getElementById('slaveryTierIdleNeutral').value = data.data.SLAVERY_TIER_IDLE_NEUTRAL || "GraveStanding\nSurrenderToMaster\nBringMasterDrink\nSweepMastersFloors";
-                        document.getElementById('slaveryTierIdleWary').value = data.data.SLAVERY_TIER_IDLE_WARY || "GraveStanding\nBringMasterDrink\nSweepMastersFloors";
-                        document.getElementById('slaveryTierIdleCold').value = data.data.SLAVERY_TIER_IDLE_COLD || "BraceForPain\nBringMasterDrink\nSweepMastersFloors";
-                        document.getElementById('slaveryTierIdleResentful').value = data.data.SLAVERY_TIER_IDLE_RESENTFUL || "GraveStanding\nShowDisdainForMaster\nBringMasterDrink\nSweepMastersFloors";
-                        document.getElementById('slaveryTierIdleHateful').value = data.data.SLAVERY_TIER_IDLE_HATEFUL || "BrokenGraveStanding\nBringMasterDrink\nSweepMastersFloors";
-                        document.getElementById('slaveryTierIdleHostile').value = data.data.SLAVERY_TIER_IDLE_HOSTILE || "BrokenGraveStanding\nBringMasterDrink\nSweepMastersFloors";
-                        document.getElementById('slaveryPoisonEnabled').checked = checkedDefault(data.data.SLAVERY_POISON_ENABLED, false);
-                        document.getElementById('slaveryPoisonSceneOnly').checked = checkedDefault(data.data.SLAVERY_POISON_SCENE_ONLY, true);
-                        document.getElementById('slaveryPoisonNotifyPlayer').checked = checkedDefault(data.data.SLAVERY_POISON_NOTIFY_PLAYER, true);
+                        elSet('slaveryIdleAliasMap', 'value', data.data.SLAVERY_IDLE_ALIAS_MAP || slaveryIdleAliasMapDefault);
+                        elSet('slaveryTierIdleBonded', 'value', data.data.SLAVERY_TIER_IDLE_BONDED || "WorshipMaster\nAskMasterForFreedom\nBringMasterDrink\nSweepMastersFloors");
+                        elSet('slaveryTierIdleDevoted', 'value', data.data.SLAVERY_TIER_IDLE_DEVOTED || "WaitForMasterCommand\nPraiseMaster");
+                        elSet('slaveryTierIdleFond', 'value', data.data.SLAVERY_TIER_IDLE_FOND || "ThinkAboutMaster\nBringMasterDrink\nSweepMastersFloors");
+                        elSet('slaveryTierIdleFriendly', 'value', data.data.SLAVERY_TIER_IDLE_FRIENDLY || "WelcomeMaster\nBringMasterDrink\nSweepMastersFloors");
+                        elSet('slaveryTierIdleAcquaintance', 'value', data.data.SLAVERY_TIER_IDLE_ACQUAINTANCE || "WelcomeMaster\nBringMasterDrink\nSweepMastersFloors");
+                        elSet('slaveryTierIdleNeutral', 'value', data.data.SLAVERY_TIER_IDLE_NEUTRAL || "GraveStanding\nSurrenderToMaster\nBringMasterDrink\nSweepMastersFloors");
+                        elSet('slaveryTierIdleWary', 'value', data.data.SLAVERY_TIER_IDLE_WARY || "GraveStanding\nBringMasterDrink\nSweepMastersFloors");
+                        elSet('slaveryTierIdleCold', 'value', data.data.SLAVERY_TIER_IDLE_COLD || "BraceForPain\nBringMasterDrink\nSweepMastersFloors");
+                        elSet('slaveryTierIdleResentful', 'value', data.data.SLAVERY_TIER_IDLE_RESENTFUL || "GraveStanding\nShowDisdainForMaster\nBringMasterDrink\nSweepMastersFloors");
+                        elSet('slaveryTierIdleHateful', 'value', data.data.SLAVERY_TIER_IDLE_HATEFUL || "BrokenGraveStanding\nBringMasterDrink\nSweepMastersFloors");
+                        elSet('slaveryTierIdleHostile', 'value', data.data.SLAVERY_TIER_IDLE_HOSTILE || "BrokenGraveStanding\nBringMasterDrink\nSweepMastersFloors");
+                        elSet('slaveryPoisonEnabled', 'checked', checkedDefault(data.data.SLAVERY_POISON_ENABLED, false));
+                        elSet('slaveryPoisonSceneOnly', 'checked', checkedDefault(data.data.SLAVERY_POISON_SCENE_ONLY, true));
+                        elSet('slaveryPoisonNotifyPlayer', 'checked', checkedDefault(data.data.SLAVERY_POISON_NOTIFY_PLAYER, true));
                         const slaveryPoisonMinTier = data.data.SLAVERY_POISON_MIN_TIER || 'hateful';
-                        document.getElementById('slaveryPoisonMinTier').value = ['resentful', 'hateful', 'hostile'].includes(slaveryPoisonMinTier) ? slaveryPoisonMinTier : 'hateful';
+                        elSet('slaveryPoisonMinTier', 'value', ['resentful', 'hateful', 'hostile'].includes(slaveryPoisonMinTier) ? slaveryPoisonMinTier : 'hateful');
                         setSliderValue('slaveryPoisonHatefulChance', 'slaveryPoisonHatefulChanceValue', data.data.SLAVERY_POISON_HATEFUL_CHANCE, 25, '%');
                         setSliderValue('slaveryPoisonHostileChance', 'slaveryPoisonHostileChanceValue', data.data.SLAVERY_POISON_HOSTILE_CHANCE, 100, '%');
                         setSliderValue('slaveryPoisonSuccessChance', 'slaveryPoisonSuccessChanceValue', data.data.SLAVERY_POISON_SUCCESS_CHANCE, 65, '%');
@@ -7003,7 +7144,7 @@ PROMPT;
                         setSliderValue('slaveryPoisonCooldownHours', 'slaveryPoisonCooldownHoursValue', data.data.SLAVERY_POISON_COOLDOWN_GAME_HOURS, 72, ' game hours');
                         setSliderValue('slaveryPoisonDurationSeconds', 'slaveryPoisonDurationSecondsValue', data.data.SLAVERY_POISON_DURATION_SECONDS, 120, ' sec');
                         setSliderValue('slaveryPoisonMagnitude', 'slaveryPoisonMagnitudeValue', data.data.SLAVERY_POISON_MAGNITUDE, 3, '');
-                        document.getElementById('slaveryPoisonConsumeTypes').value = data.data.SLAVERY_POISON_CONSUME_TYPES || "food\ndrink\npotion\ningredient";
+                        elSet('slaveryPoisonConsumeTypes', 'value', data.data.SLAVERY_POISON_CONSUME_TYPES || "food\ndrink\npotion\ningredient");
                         // Set auto-generate toggle button state
                         const autoGenToggle = document.getElementById('autoGenerateToggle');
                         if (data.data.AUTO_GENERATE_NSFW_PROFILES) {
@@ -7013,110 +7154,110 @@ PROMPT;
                         }
                         // Set AI connector dropdown if a value was saved
                         if (data.data.AUTO_GENERATE_CONNECTOR) {
-                            document.getElementById('aiConnectorSelect').value = data.data.AUTO_GENERATE_CONNECTOR;
+                            elSet('aiConnectorSelect', 'value', data.data.AUTO_GENERATE_CONNECTOR);
                         }
                         // Drunk physics
-                        document.getElementById('drunkAnimations').checked = data.data.DRUNK_ANIMATIONS !== false;
-                        document.getElementById('drunkRequireMovement').checked = data.data.DRUNK_REQUIRE_MOVEMENT_FOR_STUMBLE !== false;
+                        elSet('drunkAnimations', 'checked', data.data.DRUNK_ANIMATIONS !== false);
+                        elSet('drunkRequireMovement', 'checked', data.data.DRUNK_REQUIRE_MOVEMENT_FOR_STUMBLE !== false);
                         const dsf = data.data.DRUNK_STUMBLE_FORCE !== undefined ? data.data.DRUNK_STUMBLE_FORCE : 6;
-                        document.getElementById('drunkStumbleForce').value = dsf;
-                        document.getElementById('drunkStumbleForceValue').textContent = dsf;
+                        elSet('drunkStumbleForce', 'value', dsf);
+                        elSet('drunkStumbleForceValue', 'textContent', dsf);
                         const dsc = data.data.DRUNK_STUMBLE_COOLDOWN_SECONDS !== undefined ? data.data.DRUNK_STUMBLE_COOLDOWN_SECONDS : 30;
-                        document.getElementById('drunkStumbleCooldown').value = dsc;
-                        document.getElementById('drunkStumbleCooldownValue').textContent = dsc + ' sec';
+                        elSet('drunkStumbleCooldown', 'value', dsc);
+                        elSet('drunkStumbleCooldownValue', 'textContent', dsc + ' sec');
                         const df6 = data.data.DRUNK_FALL_CHANCE_S6 !== undefined ? data.data.DRUNK_FALL_CHANCE_S6 : 5;
-                        document.getElementById('drunkFallChanceS6').value = df6;
-                        document.getElementById('drunkFallChanceS6Value').textContent = df6 + '%';
+                        elSet('drunkFallChanceS6', 'value', df6);
+                        elSet('drunkFallChanceS6Value', 'textContent', df6 + '%');
                         const df7 = data.data.DRUNK_FALL_CHANCE_S7 !== undefined ? data.data.DRUNK_FALL_CHANCE_S7 : 15;
-                        document.getElementById('drunkFallChanceS7').value = df7;
-                        document.getElementById('drunkFallChanceS7Value').textContent = df7 + '%';
+                        elSet('drunkFallChanceS7', 'value', df7);
+                        elSet('drunkFallChanceS7Value', 'textContent', df7 + '%');
                         const df8 = data.data.DRUNK_FALL_CHANCE_S8 !== undefined ? data.data.DRUNK_FALL_CHANCE_S8 : 35;
-                        document.getElementById('drunkFallChanceS8').value = df8;
-                        document.getElementById('drunkFallChanceS8Value').textContent = df8 + '%';
+                        elSet('drunkFallChanceS8', 'value', df8);
+                        elSet('drunkFallChanceS8Value', 'textContent', df8 + '%');
                         const df9 = data.data.DRUNK_FALL_CHANCE_S9 !== undefined ? data.data.DRUNK_FALL_CHANCE_S9 : 60;
-                        document.getElementById('drunkFallChanceS9').value = df9;
-                        document.getElementById('drunkFallChanceS9Value').textContent = df9 + '%';
+                        elSet('drunkFallChanceS9', 'value', df9);
+                        elSet('drunkFallChanceS9Value', 'textContent', df9 + '%');
                         const dsf9 = data.data.DRUNK_STANDING_FALL_CHANCE_S9 !== undefined ? data.data.DRUNK_STANDING_FALL_CHANCE_S9 : 20;
-                        document.getElementById('drunkStandingFallChanceS9').value = dsf9;
-                        document.getElementById('drunkStandingFallChanceS9Value').textContent = dsf9 + '%';
+                        elSet('drunkStandingFallChanceS9', 'value', dsf9);
+                        elSet('drunkStandingFallChanceS9Value', 'textContent', dsf9 + '%');
                         const dst6 = data.data.DRUNK_STUMBLE_CHANCE_S6 !== undefined ? data.data.DRUNK_STUMBLE_CHANCE_S6 : 15;
-                        document.getElementById('drunkStumbleChanceS6').value = dst6;
-                        document.getElementById('drunkStumbleChanceS6Value').textContent = dst6 + '%';
+                        elSet('drunkStumbleChanceS6', 'value', dst6);
+                        elSet('drunkStumbleChanceS6Value', 'textContent', dst6 + '%');
                         const dst7 = data.data.DRUNK_STUMBLE_CHANCE_S7 !== undefined ? data.data.DRUNK_STUMBLE_CHANCE_S7 : 25;
-                        document.getElementById('drunkStumbleChanceS7').value = dst7;
-                        document.getElementById('drunkStumbleChanceS7Value').textContent = dst7 + '%';
+                        elSet('drunkStumbleChanceS7', 'value', dst7);
+                        elSet('drunkStumbleChanceS7Value', 'textContent', dst7 + '%');
                         const dst8 = data.data.DRUNK_STUMBLE_CHANCE_S8 !== undefined ? data.data.DRUNK_STUMBLE_CHANCE_S8 : 35;
-                        document.getElementById('drunkStumbleChanceS8').value = dst8;
-                        document.getElementById('drunkStumbleChanceS8Value').textContent = dst8 + '%';
+                        elSet('drunkStumbleChanceS8', 'value', dst8);
+                        elSet('drunkStumbleChanceS8Value', 'textContent', dst8 + '%');
                         const dst9 = data.data.DRUNK_STUMBLE_CHANCE_S9 !== undefined ? data.data.DRUNK_STUMBLE_CHANCE_S9 : 50;
-                        document.getElementById('drunkStumbleChanceS9').value = dst9;
-                        document.getElementById('drunkStumbleChanceS9Value').textContent = dst9 + '%';
+                        elSet('drunkStumbleChanceS9', 'value', dst9);
+                        elSet('drunkStumbleChanceS9Value', 'textContent', dst9 + '%');
                         const dfa = data.data.DRUNK_FALL_AFTER_DRINK_SECONDS !== undefined ? data.data.DRUNK_FALL_AFTER_DRINK_SECONDS : 8;
-                        document.getElementById('drunkFallAfterDrink').value = dfa;
-                        document.getElementById('drunkFallAfterDrinkValue').textContent = dfa + ' sec';
+                        elSet('drunkFallAfterDrink', 'value', dfa);
+                        elSet('drunkFallAfterDrinkValue', 'textContent', dfa + ' sec');
                         // Drug system
-                        document.getElementById('drugsEnabled').checked = data.data.DRUGS_ENABLED !== false;
-                        document.getElementById('drugAnimations').checked = data.data.DRUG_ANIMATIONS !== false;
-                        document.getElementById('drugRequireConsumeAction').checked = data.data.DRUG_REQUIRE_CONSUME_ACTION !== false;
+                        elSet('drugsEnabled', 'checked', data.data.DRUGS_ENABLED !== false);
+                        elSet('drugAnimations', 'checked', data.data.DRUG_ANIMATIONS !== false);
+                        elSet('drugRequireConsumeAction', 'checked', data.data.DRUG_REQUIRE_CONSUME_ACTION !== false);
                         const skL1 = data.data.SKOOMA_L1_WEAROFF_HOURS !== undefined ? data.data.SKOOMA_L1_WEAROFF_HOURS : 6;
-                        document.getElementById('skoomaL1Wearoff').value = skL1;
-                        document.getElementById('skoomaL1WearoffValue').textContent = skL1 + ' game hours';
+                        elSet('skoomaL1Wearoff', 'value', skL1);
+                        elSet('skoomaL1WearoffValue', 'textContent', skL1 + ' game hours');
                         const skL2 = data.data.SKOOMA_L2_DECAY_HOURS !== undefined ? data.data.SKOOMA_L2_DECAY_HOURS : 3;
-                        document.getElementById('skoomaL2Decay').value = skL2;
-                        document.getElementById('skoomaL2DecayValue').textContent = skL2 + ' game hours';
+                        elSet('skoomaL2Decay', 'value', skL2);
+                        elSet('skoomaL2DecayValue', 'textContent', skL2 + ' game hours');
                         const skL3 = data.data.SKOOMA_L3_DETOX_HOURS !== undefined ? data.data.SKOOMA_L3_DETOX_HOURS : 24;
-                        document.getElementById('skoomaL3Detox').value = skL3;
-                        document.getElementById('skoomaL3DetoxValue').textContent = skL3 + ' game hours';
+                        elSet('skoomaL3Detox', 'value', skL3);
+                        elSet('skoomaL3DetoxValue', 'textContent', skL3 + ' game hours');
                         const dwh = data.data.DRUG_WINDOW_HOURS !== undefined ? data.data.DRUG_WINDOW_HOURS : 6;
-                        document.getElementById('drugWindowHours').value = dwh;
-                        document.getElementById('drugWindowHoursValue').textContent = dwh + ' game hours';
+                        elSet('drugWindowHours', 'value', dwh);
+                        elSet('drugWindowHoursValue', 'textContent', dwh + ' game hours');
                         const sar = data.data.SAP_AUTO_ROUSE_SECONDS !== undefined ? data.data.SAP_AUTO_ROUSE_SECONDS : 1080;
-                        document.getElementById('sapAutoRouseSeconds').value = sar;
-                        document.getElementById('sapAutoRouseSecondsValue').textContent = Math.round(sar / 60) + ' min';
+                        elSet('sapAutoRouseSeconds', 'value', sar);
+                        elSet('sapAutoRouseSecondsValue', 'textContent', Math.round(sar / 60) + ' min');
                         const skT1 = data.data.SKOOMA_TTS_TEMPO_1 !== undefined ? data.data.SKOOMA_TTS_TEMPO_1 : 1.1;
-                        document.getElementById('skoomaTempo1').value = skT1;
-                        document.getElementById('skoomaTempo1Value').textContent = skT1 + 'x';
+                        elSet('skoomaTempo1', 'value', skT1);
+                        elSet('skoomaTempo1Value', 'textContent', skT1 + 'x');
                         const skT2 = data.data.SKOOMA_TTS_TEMPO_2 !== undefined ? data.data.SKOOMA_TTS_TEMPO_2 : 1.2;
-                        document.getElementById('skoomaTempo2').value = skT2;
-                        document.getElementById('skoomaTempo2Value').textContent = skT2 + 'x';
+                        elSet('skoomaTempo2', 'value', skT2);
+                        elSet('skoomaTempo2Value', 'textContent', skT2 + 'x');
                         const skT3 = data.data.SKOOMA_TTS_TEMPO_3 !== undefined ? data.data.SKOOMA_TTS_TEMPO_3 : 1.0;
-                        document.getElementById('skoomaTempo3').value = skT3;
-                        document.getElementById('skoomaTempo3Value').textContent = skT3 + 'x';
+                        elSet('skoomaTempo3', 'value', skT3);
+                        elSet('skoomaTempo3Value', 'textContent', skT3 + 'x');
                         const sapT = data.data.SAP_TTS_TEMPO !== undefined ? data.data.SAP_TTS_TEMPO : 0.7;
-                        document.getElementById('sapTempo').value = sapT;
-                        document.getElementById('sapTempoValue').textContent = sapT + 'x';
-                        document.getElementById('alcoholMatchTerms').value = data.data.ALCOHOL_MATCH_TERMS || "wine\nale\nmead\nbeer\nbrandy\nspirits\nliquor\ngrog\nrum\nwhiskey\nwhisky\nvodka\ngin\nabsinthe\nmoonshine\nrotgut\nfirebrand\nhonningbrew\nblack-briar\nblack briar\nsujamma\nflin\nmazte";
-                        document.getElementById('skoomaMatchTerms').value = data.data.SKOOMA_MATCH_TERMS || "skooma\nskuma\nscuma\nschuma\nskoomah\nskooma bottle\nbalmora blue\nredwater\nredwater skooma";
-                        document.getElementById('sapMatchTerms').value = data.data.SAP_MATCH_TERMS || "sleeping tree sap\nsleeping-tree sap\ntree sap\nsleeping sap";
+                        elSet('sapTempo', 'value', sapT);
+                        elSet('sapTempoValue', 'textContent', sapT + 'x');
+                        elSet('alcoholMatchTerms', 'value', data.data.ALCOHOL_MATCH_TERMS || "wine\nale\nmead\nbeer\nbrandy\nspirits\nliquor\ngrog\nrum\nwhiskey\nwhisky\nvodka\ngin\nabsinthe\nmoonshine\nrotgut\nfirebrand\nhonningbrew\nblack-briar\nblack briar\nsujamma\nflin\nmazte");
+                        elSet('skoomaMatchTerms', 'value', data.data.SKOOMA_MATCH_TERMS || "skooma\nskuma\nscuma\nschuma\nskoomah\nskooma bottle\nbalmora blue\nredwater\nredwater skooma");
+                        elSet('sapMatchTerms', 'value', data.data.SAP_MATCH_TERMS || "sleeping tree sap\nsleeping-tree sap\ntree sap\nsleeping sap");
                         const skSp = data.data.SKOOMA_SPEEDMULT !== undefined ? data.data.SKOOMA_SPEEDMULT : 115;
-                        document.getElementById('skoomaSpeedmult').value = skSp;
-                        document.getElementById('skoomaSpeedmultValue').textContent = skSp;
+                        elSet('skoomaSpeedmult', 'value', skSp);
+                        elSet('skoomaSpeedmultValue', 'textContent', skSp);
                         const skDc = data.data.SKOOMA_DANCE_CHANCE !== undefined ? data.data.SKOOMA_DANCE_CHANCE : 2;
-                        document.getElementById('skoomaDanceChance').value = skDc;
-                        document.getElementById('skoomaDanceChanceValue').textContent = skDc + '%';
+                        elSet('skoomaDanceChance', 'value', skDc);
+                        elSet('skoomaDanceChanceValue', 'textContent', skDc + '%');
                         const skDcd = data.data.SKOOMA_DANCE_COOLDOWN_SECONDS !== undefined ? data.data.SKOOMA_DANCE_COOLDOWN_SECONDS : 25;
-                        document.getElementById('skoomaDanceCooldown').value = skDcd;
-                        document.getElementById('skoomaDanceCooldownValue').textContent = skDcd + ' sec';
+                        elSet('skoomaDanceCooldown', 'value', skDcd);
+                        elSet('skoomaDanceCooldownValue', 'textContent', skDcd + ' sec');
                         const skFid = data.data.SKOOMA_FIRST_IDLE_DELAY_SECONDS !== undefined ? data.data.SKOOMA_FIRST_IDLE_DELAY_SECONDS : 8;
-                        document.getElementById('skoomaFirstIdleDelay').value = skFid;
-                        document.getElementById('skoomaFirstIdleDelayValue').textContent = skFid + ' sec';
+                        elSet('skoomaFirstIdleDelay', 'value', skFid);
+                        elSet('skoomaFirstIdleDelayValue', 'textContent', skFid + ' sec');
                         const skCcd = data.data.SKOOMA_CRAZED_IDLE_COOLDOWN_SECONDS !== undefined ? data.data.SKOOMA_CRAZED_IDLE_COOLDOWN_SECONDS : 18;
-                        document.getElementById('skoomaCrazedCooldown').value = skCcd;
-                        document.getElementById('skoomaCrazedCooldownValue').textContent = skCcd + ' sec';
-                        document.getElementById('skoomaPostConsumeIdle').value = data.data.SKOOMA_POST_CONSUME_IDLE || 'IdleCivilWarCheer';
-                        document.getElementById('skoomaL1IdlePool').value = data.data.SKOOMA_L1_IDLE_POOL || "IdleCO2Ceremony1Welcome\nIdleLaugh\nIdleCiceroAgitated\nIdleCivilWarCheer\nIdleGetAttention\nIdleApplaud4\nIdleApplaud5";
-                        document.getElementById('skoomaL2IdlePool').value = data.data.SKOOMA_L2_IDLE_POOL || "IdleCiceroDance1\nIdleCiceroDance2\nIdleCiceroDance3";
-                        document.getElementById('skoomaL3IdlePool').value = data.data.SKOOMA_L3_IDLE_POOL || "IdleWipeBrow\nIdleSleepNod\nIdleWarmHands";
-                        document.getElementById('skoomaDanceIdle').value = data.data.SKOOMA_DANCE_IDLE || 'IdleCiceroDance2';
-                        document.getElementById('skoomaCrazedIdle').value = data.data.SKOOMA_CRAZED_IDLE || 'IdleCiceroAgitated';
-                        document.getElementById('drugOarVariable').value = data.data.DRUG_OAR_VARIABLE || 'Variable09';
+                        elSet('skoomaCrazedCooldown', 'value', skCcd);
+                        elSet('skoomaCrazedCooldownValue', 'textContent', skCcd + ' sec');
+                        elSet('skoomaPostConsumeIdle', 'value', data.data.SKOOMA_POST_CONSUME_IDLE || 'IdleCivilWarCheer');
+                        elSet('skoomaL1IdlePool', 'value', data.data.SKOOMA_L1_IDLE_POOL || "IdleCO2Ceremony1Welcome\nIdleLaugh\nIdleCiceroAgitated\nIdleCivilWarCheer\nIdleGetAttention\nIdleApplaud4\nIdleApplaud5");
+                        elSet('skoomaL2IdlePool', 'value', data.data.SKOOMA_L2_IDLE_POOL || "IdleCiceroDance1\nIdleCiceroDance2\nIdleCiceroDance3");
+                        elSet('skoomaL3IdlePool', 'value', data.data.SKOOMA_L3_IDLE_POOL || "IdleWipeBrow\nIdleSleepNod\nIdleWarmHands");
+                        elSet('skoomaDanceIdle', 'value', data.data.SKOOMA_DANCE_IDLE || 'IdleCiceroDance2');
+                        elSet('skoomaCrazedIdle', 'value', data.data.SKOOMA_CRAZED_IDLE || 'IdleCiceroAgitated');
+                        elSet('drugOarVariable', 'value', data.data.DRUG_OAR_VARIABLE || 'Variable09');
                         // Note: Pricing modifiers are now loaded via loadPromptSettings in the Prompts tab
                     } else {
                         showAlert('settingsErrorAlert', 'Error loading settings: ' + data.error, 'error');
                     }
                 })
                 .catch(error => {
-                    showAlert('settingsErrorAlert', 'Network error: ' + error.message, 'error');
+                    showAlert('settingsErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
                 });
         }
 
@@ -7139,6 +7280,13 @@ PROMPT;
                     else { showAlert('reltypesErrorAlert', 'Error saving: ' + (data.error || 'unknown'), 'error'); }
                 })
                 .catch(function(err) { showAlert('reltypesErrorAlert', 'Error saving: ' + err.message, 'error'); });
+        }
+
+        // Null-safe DOM setter: names the missing element instead of throwing mid-handler
+        function elSet(id, prop, val) {
+            const el = document.getElementById(id);
+            if (!el) { console.warn('[NSFW] missing element:', id); return; }
+            el[prop] = val;
         }
 
         function saveSettings() {
@@ -7305,7 +7453,7 @@ PROMPT;
                 }
             })
             .catch(error => {
-                showAlert('settingsErrorAlert', 'Network error: ' + error.message, 'error');
+                showAlert('settingsErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
             });
         }
 
@@ -7548,7 +7696,7 @@ PROMPT;
             })
             .catch(error => {
                 hideProcessing();
-                showAlert('settingsErrorAlert', 'Network error: ' + error.message, 'error');
+                showAlert('settingsErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
             });
         }
 
@@ -7663,7 +7811,7 @@ PROMPT;
             })
             .catch(error => {
                 hideProcessing();
-                showAlert('settingsErrorAlert', 'Network error: ' + error.message, 'error');
+                showAlert('settingsErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
             });
         }
         function showProcessing(){
@@ -8892,7 +9040,7 @@ PROMPT;
         })
         .catch(error => {
             hideProcessing();
-            showAlert('speakStylesErrorAlert', 'Network error: ' + error.message, 'error');
+            showAlert('speakStylesErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
         });
     }
 
@@ -8932,7 +9080,7 @@ PROMPT;
         })
         .catch(error => {
             hideProcessing();
-            showAlert('speakStylesErrorAlert', 'Network error: ' + error.message, 'error');
+            showAlert('speakStylesErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
         });
     }
 
@@ -9121,7 +9269,7 @@ PROMPT;
         })
         .catch(error => {
             hideProcessing();
-            showAlert('speakStylesErrorAlert', 'Network error: ' + error.message, 'error');
+            showAlert('speakStylesErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
         });
     }
 
@@ -9298,7 +9446,7 @@ PROMPT;
         })
         .catch(error => {
             hideProcessing();
-            showAlert('speakStylesErrorAlert', 'Network error: ' + error.message, 'error');
+            showAlert('speakStylesErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
         });
     }
 
@@ -9708,7 +9856,7 @@ PROMPT;
         })
         .catch(error => {
             hideProcessing();
-            showAlert('speakStylesErrorAlert', 'Network error: ' + error.message, 'error');
+            showAlert('speakStylesErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
         });
     }
 
@@ -9861,7 +10009,7 @@ PROMPT;
         })
         .catch(error => {
             hideProcessing();
-            showAlert('speakStylesErrorAlert', 'Network error: ' + error.message, 'error');
+            showAlert('speakStylesErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
         });
     }
 
@@ -9939,7 +10087,7 @@ PROMPT;
         })
         .catch(error => {
             hideProcessing();
-            showAlert('speakStylesErrorAlert', 'Network error: ' + error.message, 'error');
+            showAlert('speakStylesErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
         });
     }
 
@@ -11048,7 +11196,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         })
         .catch(error => {
             hideProcessing();
-            showAlert('promptsErrorAlert', 'Network error: ' + error.message, 'error');
+            showAlert('promptsErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
         });
     }
 

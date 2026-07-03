@@ -8,6 +8,58 @@
                 SHARMAT is a CHIM NSFW framework designed to bring meaningful, realistic relationship building and actions into the AI platform. It is driven by multilevel prompt gating and timing, built off the CHIM relationship system, and is designed to help even less capable models deliver a more realistic NSFW experience. Actions in SHARMAT must to some degree be <strong style="color: #FDF5D0;">EARNED</strong> by the player: relationships must be maintained, and NPCs are made aware of edge cases they would otherwise miss using the standard prompt-overhead methods of the past.
             </p>
 
+            <h3 class="info-subtitle">Updates</h3>
+            <div class="info-box">
+                <p style="color: #B8A8C8; margin: 0 0 10px;">Pulls the latest SHARMAT server extension from GitHub. Your settings, prompts, and NPC profiles are kept (they live in the database), local conf files are preserved, and a file backup is taken first. Game-side mod files are not touched - those still come from the mod download.</p>
+                <button type="button" class="btn-primary" onclick="sharmatCheckUpdate()">Check for Updates</button>
+                <button type="button" class="btn-primary" id="sharmatRunUpdateBtn" style="display:none;" onclick="sharmatRunUpdate()">Update Now</button>
+                <div id="sharmatUpdateStatus" style="margin-top: 10px; color: #B8A8C8;"></div>
+                <div style="margin-top: 12px; border-top: 1px solid #3A3545; padding-top: 10px;">
+                    <label style="display:block; font-size: 12px; color: #B8A8C8; margin-bottom: 4px;">GitHub access token (only needed while the repo is private - a fine-grained token with read-only access)</label>
+                    <input type="password" id="sharmatUpdateToken" placeholder="github_pat_..." style="width: 320px;">
+                    <button type="button" class="btn-secondary" onclick="sharmatSaveUpdateToken()">Save Token</button>
+                    <span id="sharmatTokenStatus" style="margin-left: 8px; color: #8f819f;"></span>
+                </div>
+            </div>
+            <script>
+            function sharmatCheckUpdate() {
+                const st = document.getElementById('sharmatUpdateStatus');
+                st.textContent = 'Checking GitHub...';
+                fetch('?action=sharmatCheckUpdate').then(r => r.json()).then(d => {
+                    if (!d.success) { st.textContent = 'Check failed: ' + d.error; return; }
+                    const inst = d.installed ? d.installed : 'unknown (manual install)';
+                    if (d.update_available) {
+                        st.innerHTML = 'Installed: <b>' + inst + '</b> &rarr; Latest: <b>' + d.latest + '</b>' +
+                            (d.latest_date ? ' (' + d.latest_date.substring(0, 10) + ')' : '') +
+                            (d.latest_message ? '<br><span style="color:#8f819f;">' + d.latest_message.replace(/</g, '&lt;') + '</span>' : '');
+                        document.getElementById('sharmatRunUpdateBtn').style.display = 'inline-block';
+                    } else {
+                        st.textContent = 'Up to date (' + d.latest + ').';
+                    }
+                }).catch(e => { st.textContent = 'Check failed: ' + e.message; });
+            }
+            function sharmatRunUpdate() {
+                if (!confirm('Update SHARMAT server files from GitHub now? Settings and prompts are kept; a file backup is taken first.')) return;
+                const st = document.getElementById('sharmatUpdateStatus');
+                st.textContent = 'Downloading and applying update...';
+                fetch('?action=sharmatRunUpdate', { method: 'POST' }).then(r => r.json()).then(d => {
+                    if (!d.success) { st.textContent = 'Update failed: ' + d.error; return; }
+                    let msg = 'Updated ' + d.files_updated + ' files to ' + d.commit + '.';
+                    if (d.failed_count > 0) { msg += ' ' + d.failed_count + ' files could not be written. ' + (d.hint || ''); }
+                    else { msg += ' Reload this page to load the new version.'; }
+                    st.textContent = msg;
+                    document.getElementById('sharmatRunUpdateBtn').style.display = 'none';
+                }).catch(e => { st.textContent = 'Update failed: ' + e.message; });
+            }
+            function sharmatSaveUpdateToken() {
+                const fd = new FormData();
+                fd.append('token', document.getElementById('sharmatUpdateToken').value.trim());
+                fetch('?action=sharmatSaveUpdateToken', { method: 'POST', body: fd }).then(r => r.json()).then(d => {
+                    document.getElementById('sharmatTokenStatus').textContent = d.success ? (d.saved ? 'Token saved.' : 'Token cleared.') : 'Save failed.';
+                }).catch(() => { document.getElementById('sharmatTokenStatus').textContent = 'Save failed.'; });
+            }
+            </script>
+
             <h3 class="info-subtitle">Overview</h3>
             <p style="line-height: 1.6; color: #B8A8C8; margin-bottom: 15px;">
                 This extension makes NPCs aware of intimate scenes and lets them speak and act in character during them. It works with <strong style="color: #FDF5D0;">both OStim and SexLab</strong>: the server reacts to scene events from either framework, for player scenes, player group scenes (orgies), and NPC-to-NPC scenes. NPC behaviour is shaped by the <strong style="color: #FDF5D0;">relationship model</strong> (affinity tiers), an optional <strong style="color: #FDF5D0;">arousal gate</strong>, and the per-NPC profile (sex prompt, speech style, kinks). So it is recommended that you at least use the relationship model for the most authentic experience.
@@ -20,7 +72,7 @@
                     <li><strong>Relationship tiers:</strong> with the Relationship Model on, the prompt injected is chosen by the NPC's affinity toward their partner (Hostile up to Bonded). Marriage and affair scenes get their own tier prompts.</li>
                     <li><strong>Arousal gate (optional):</strong> sex actions unlock progressively as the NPC's <strong>sex_disposal</strong> rises. Prostitutes skip this gate (they gate on relationship + payment instead).</li>
                     <li><strong>Prostitution:</strong> driven by the per-NPC checkbox. One flat session price, adjusted by an affinity discount/premium. At the top affinity tier she can choose to stop charging (QuitProstitution).</li>
-                    <li><strong>Intoxication:</strong> the NPC's Drink/Consume/Toast alcohol actions are tallied over a game-time window into 10 drunk stages, each with its own prompt and progressively slurred speech.</li>
+                    <li><strong>Intoxication:</strong> real alcohol consumption (the inventory-backed Consume action) is tallied over a game-time window into 10 drunk stages, each with its own prompt and progressively slurred speech. Toast/Drink are social flavor by default; a settings toggle can make them count too.</li>
                 </ul>
             </div>
 
