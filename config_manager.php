@@ -1209,7 +1209,7 @@ SQL;
 
             // If not found, try alternate formats (underscore <-> space)
             if (!$npcData) {
-                // Try converting underscores to spaces (e.g., vivienne_onis -> Vivienne Onis)
+                // Try converting underscores to spaces (e.g., whiterun_guard -> Whiterun Guard)
                 $altName = ucwords(str_replace('_', ' ', $npcName));
                 $npcData = $npcManager->getByName($altName);
                 if ($npcData) $actualNpcName = $altName;
@@ -1561,8 +1561,11 @@ SQL;
                 $settings = json_decode($settingsRow['value'], true) ?: [];
             }
 
-            // Find connector (prefer Grok)
-            $connectorName = $settings['sex_prompt_connector'] ?? null;
+            // Find connector: the UI's on-screen selection wins, then the saved setting, then fallbacks
+            $connectorName = trim((string)($_POST['connector'] ?? ''));
+            if ($connectorName === '') {
+                $connectorName = $settings['sex_prompt_connector'] ?? null;
+            }
             if (!$connectorName) {
                 $connectors = $GLOBALS["db"]->fetchAll("SELECT label FROM core_llm_connector ORDER BY label");
                 foreach ($connectors as $conn) {
@@ -1593,10 +1596,12 @@ SQL;
                 throw new Exception('Failed to load connector');
             }
 
-            $apiBadge = new ApiBadge();
-            $apiKeyData = $apiBadge->getById($connectorData['api_badge_id']);
-            if (!$apiKeyData) {
-                throw new Exception('No API key for connector');
+            // API key is optional: local connectors (llama.cpp/kobold/oobabooga) have no badge and
+            // their endpoints ignore Authorization. Only send the header when a key actually exists.
+            $apiKeyData = null;
+            if (!empty($connectorData['api_badge_id'])) {
+                $apiBadge = new ApiBadge();
+                $apiKeyData = $apiBadge->getById($connectorData['api_badge_id']);
             }
 
             // Build request - ask for JSON response
@@ -1618,10 +1623,11 @@ SQL;
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($requestData));
-            curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                'Content-Type: application/json',
-                'Authorization: Bearer ' . $apiKeyData['api_key']
-            ]);
+            $curlHeaders = ['Content-Type: application/json'];
+            if (!empty($apiKeyData['api_key'])) {
+                $curlHeaders[] = 'Authorization: Bearer ' . $apiKeyData['api_key'];
+            }
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $curlHeaders);
             curl_setopt($ch, CURLOPT_TIMEOUT, 45);
 
             $apiResponse = curl_exec($ch);
@@ -5792,6 +5798,8 @@ PROMPT;
             alertEl.textContent = message;
             alertEl.className = `alert ${type}`;
             alertEl.style.display = 'block';
+            // Alerts sit at the top of each section; bring them on-screen or errors look like "nothing happened"
+            alertEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
             setTimeout(() => {
                 alertEl.style.display = 'none';
@@ -6402,7 +6410,7 @@ PROMPT;
                 npcInput.addEventListener('input', function() {
                     const query = this.value.trim();
 
-                    // Update title live as user types (format: vivienne_onis -> Vivienne Onis)
+                    // Update title live as user types (format: whiterun_guard -> Whiterun Guard)
                     const titleEl = document.getElementById('npcSettingsTitle');
                     if (query.length > 0) {
                         const formattedName = formatNpcName(query);
@@ -8944,6 +8952,7 @@ PROMPT;
 
         const formData = new FormData();
         formData.append('npc', actualNpcName);
+        formData.append('connector', connector); // honor the on-screen selection; the saved setting is only a fallback
 
         showProcessing();
         fetch('?action=generateSexPrompt', {
@@ -9241,7 +9250,7 @@ PROMPT;
         return str.charAt(0).toUpperCase() + str.slice(1).replace(/_/g, ' ');
     }
 
-    // Format NPC name: vivienne_onis -> Vivienne Onis
+    // Format NPC name: whiterun_guard -> Whiterun Guard
     function formatNpcName(name) {
         return name
             .replace(/_/g, ' ')
@@ -9350,7 +9359,7 @@ PROMPT;
             const profanity = profanityLabels[npc.profanity_level] || 'Moderate';
             const profanityClass = profanityClasses[npc.profanity_level] || '';
             const sourceBadge = npc.source === 'ai' ? '<span class="badge-ai">AI</span>' : '<span class="badge-manual">User</span>';
-            // Format NPC name for display (vivienne_onis -> Vivienne Onis)
+            // Format NPC name for display (whiterun_guard -> Whiterun Guard)
             const displayName = formatNpcName(npc.name);
             // Escape the raw name for safe embedding in onclick JS strings - an apostrophe (e.g. K'avald) would otherwise close the string and break Edit/Delete/priority
             const safeName = jsStr(npc.name);
