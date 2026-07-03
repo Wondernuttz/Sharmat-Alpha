@@ -2261,7 +2261,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             // Sticky refusal also blocks re-initiating sex acts until the scene ends.
             if (!$isSlave && !empty($intimacyStatus["refused_until_scene_end"])) { $_consentedFns = false; }
 
-            $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss";
+            if ($affinity >= 56 || $isSlave) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; } // affection needs Fond+
             if ($_consentedFns && $affinity >= 56 && (!function_exists('aiagentNsfwRelTypeSexEligible') || aiagentNsfwRelTypeSexEligible($relGateNpc ?? ($GLOBALS['HERIKA_NAME'] ?? '')))) {
                 $GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY'] = true; // context_pre injects the initiation nudge (OStim audit fix 1)
             }
@@ -2290,11 +2290,11 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
                 error_log("[AIAGENTNSFW] sex_disposal ENABLED - NOT consented, sex acts WITHHELD before relationship/model gate for " . $npcName);
             }
         } else {
-            // Arousal gating disabled. CONSENT GATE: affection (Kiss) is always free, but the SEX-act
+            // Arousal gating disabled. CONSENT GATE: affection (Kiss) needs Fond+, and the SEX-act
             // initiators only unlock once she has consented (AcceptSex / slave / paid prostitute). Until then
             // the model gets only Kiss + Accept/Refuse - so it CANNOT blow past the relationship gate by
             // calling StartSex directly. Marriage/affair/normal all require the explicit AcceptSex.
-            $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss";
+            if ($affinity >= 56 || $isSlave) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; }
             if ($isProstitute) {
                 // Prostitutes: OStim sex acts gated on the service being covered (paid/free), NOT accepted_sex.
                 $_consentedFns = $prostituteServiceUnlocked || $isSlave || $npcSceneGateDisabled || $skoomaBargain;
@@ -2322,9 +2322,14 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             }
         }
 
+        // Affection needs Fond (56); below that no hugs or hand-holding (slaves keep theirs -
+        // the slavery lane owns compliance). Was unconditional, so hostile/stranger NPCs could
+        // call hand-holding, blipping OStim idles and the sex-ask machinery.
+        if ($affinity >= 56 || $isSlave) {
+            $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHug";
+            $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHoldHands";
+        }
         // Always available
-        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHug";
-        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHoldHands";
         $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdPutOnClothes";
         $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdConsumeSoul";
 
@@ -2607,7 +2612,8 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdCollectPayment";
 	        error_log("[AIAGENTNSFW] Fallback function route - unpaid prostitute locked to negotiation/payment tools for " . $fallbackNpcName);
 	    } else {
-	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss";
+	        $fallbackAffinity = function_exists('getNpcAffinity') ? (int)getNpcAffinity($fallbackNpcName) : 0;
+	        if ($fallbackAffinity >= 56 || $fallbackIsSlaveActor) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; } // affection needs Fond+
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdRemoveClothes";
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartMassage";
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartSelfMasturbation";
@@ -2616,8 +2622,10 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartAnalSex";
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartThreesome";
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartTitfuck";
-	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHug";
-	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHoldHands";
+	        if ($fallbackAffinity >= 56 || $fallbackIsSlaveActor) {
+	            $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHug";
+	            $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHoldHands";
+	        }
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdPutOnClothes";
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdConsumeSoul";
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartHandJobSex";

@@ -553,9 +553,26 @@ class NsfwOstimHandler {
 
                 // NEW SCENE: standing/intro and actual sex use the relationship/model gate.
                 // Tier 1/2 OStim affection scenes are not mini sex gates; they are context only.
-                $isNonSexAffectionScene = ($sceneTier > 0 && $sceneTier <= 2);
+                // A tier-0 idle beat right after an affection tool call IS an affection gesture
+                // (hand-hold/hug blipping through OStim) - classify it tier 1, never the sex ask.
+                if (!isset($sceneAffectionBeat)) {
+                    $sceneAffectionBeat = false;
+                    if ($sceneTier === 0) {
+                        try {
+                            foreach ($orderedActorList as $affBeatActor) {
+                                if ($affBeatActor === ($GLOBALS["PLAYER_NAME"] ?? "")) { continue; }
+                                $affBeatRow = $GLOBALS["db"]->fetchOne("SELECT 1 AS x FROM actions_issued WHERE actorname='" . $GLOBALS["db"]->escape($affBeatActor) . "' AND action IN ('GiveHug','Kiss','HoldHands') AND localts > " . (time() - 60) . " LIMIT 1");
+                                if ($affBeatRow) { $sceneAffectionBeat = true; break; }
+                            }
+                        } catch (Exception $e) {
+                            // unknown -> keep the stricter sex-gate classification
+                        }
+                    }
+                }
+                $effectiveTier = ($sceneAffectionBeat && $sceneTier === 0) ? 1 : $sceneTier;
+                $isNonSexAffectionScene = ($effectiveTier > 0 && $effectiveTier <= 2);
                 $intimacyStatus["level"] = 0;
-                $intimacyStatus["intensity_tier"] = $sceneTier;
+                $intimacyStatus["intensity_tier"] = $effectiveTier;
                 $intimacyStatus["scene_phase"] = $isNonSexAffectionScene ? "affection" : "tier_prompt";
                 $intimacyStatus["scene_is_idle"] = in_array("idle", $sexTags);
                 $intimacyStatus["scene_start_time"] = time();
