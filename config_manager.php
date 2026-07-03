@@ -76,8 +76,6 @@
         handleSharmatCheckUpdate();
     } elseif ($action === 'sharmatRunUpdate') {
         handleSharmatRunUpdate();
-    } elseif ($action === 'sharmatSaveUpdateToken') {
-        handleSharmatSaveUpdateToken();
     } elseif ($action === 'loadGlobalStyles') {
         handleLoadGlobalStyles();
     } elseif ($action === 'loadGlobalStyle') {
@@ -853,9 +851,8 @@ SQL;
     }
 
     // ---- Self-update from the SHARMAT GitHub repo (server ext files only; game mod files excluded) ----
-    function _sharmatUpdateHttpGet($url, $token = '') {
+    function _sharmatUpdateHttpGet($url) {
         $headers = ['User-Agent: SHARMAT-updater', 'Accept: application/vnd.github+json'];
-        if ($token !== '') { $headers[] = 'Authorization: Bearer ' . $token; }
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
@@ -869,22 +866,9 @@ SQL;
         return [$code, $body];
     }
 
-    function _sharmatUpdateToken() {
-        $row = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id='sharmat_update_token'");
-        return trim((string)($row['value'] ?? ''));
-    }
-
-    function handleSharmatSaveUpdateToken() {
-        $token = trim((string)($_POST['token'] ?? ''));
-        $GLOBALS['db']->upsertRow('conf_opts', ['id' => 'sharmat_update_token', 'value' => $token], "id='sharmat_update_token'");
-        echo json_encode(['success' => true, 'saved' => $token !== '']);
-        exit;
-    }
-
     function handleSharmatCheckUpdate() {
         try {
-            list($code, $body) = _sharmatUpdateHttpGet('https://api.github.com/repos/Wondernuttz/Sharmat-Alpha/commits/main', _sharmatUpdateToken());
-            if ($code === 404 || $code === 401 || $code === 403) { throw new Exception("GitHub says {$code} - the repo is private or the access token is missing/invalid. Paste a valid GitHub token below and save it."); }
+            list($code, $body) = _sharmatUpdateHttpGet('https://api.github.com/repos/Wondernuttz/Sharmat-Alpha/commits/main');
             if ($code !== 200) { throw new Exception("GitHub API HTTP {$code}"); }
             $data = json_decode($body, true);
             $latest = (string)($data['sha'] ?? '');
@@ -937,13 +921,12 @@ SQL;
     function handleSharmatRunUpdate() {
         @set_time_limit(300);
         try {
-            $token = _sharmatUpdateToken();
-            list($code, $body) = _sharmatUpdateHttpGet('https://api.github.com/repos/Wondernuttz/Sharmat-Alpha/commits/main', $token);
+            list($code, $body) = _sharmatUpdateHttpGet('https://api.github.com/repos/Wondernuttz/Sharmat-Alpha/commits/main');
             if ($code !== 200) { throw new Exception("GitHub API HTTP {$code}"); }
             $latest = (string)(json_decode($body, true)['sha'] ?? '');
             if ($latest === '') { throw new Exception('Could not resolve latest commit'); }
 
-            list($zcode, $zipBody) = _sharmatUpdateHttpGet('https://api.github.com/repos/Wondernuttz/Sharmat-Alpha/zipball/main', $token);
+            list($zcode, $zipBody) = _sharmatUpdateHttpGet('https://api.github.com/repos/Wondernuttz/Sharmat-Alpha/zipball/main');
             if ($zcode !== 200 || strlen($zipBody) < 1000) { throw new Exception("Repo download failed (HTTP {$zcode})"); }
             $tmpZip = tempnam(sys_get_temp_dir(), 'sharmat_up') . '.zip';
             file_put_contents($tmpZip, $zipBody);

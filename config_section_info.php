@@ -14,12 +14,6 @@
                 <button type="button" class="btn-primary" onclick="sharmatCheckUpdate()">Check for Updates</button>
                 <button type="button" class="btn-primary" id="sharmatRunUpdateBtn" style="display:none;" onclick="sharmatRunUpdate()">Update Now</button>
                 <div id="sharmatUpdateStatus" style="margin-top: 10px; color: #B8A8C8;"></div>
-                <div style="margin-top: 12px; border-top: 1px solid #3A3545; padding-top: 10px;">
-                    <label style="display:block; font-size: 12px; color: #B8A8C8; margin-bottom: 4px;">GitHub access token (only needed while the repo is private - a fine-grained token with read-only access)</label>
-                    <input type="password" id="sharmatUpdateToken" placeholder="github_pat_..." style="width: 320px;">
-                    <button type="button" class="btn-secondary" onclick="sharmatSaveUpdateToken()">Save Token</button>
-                    <span id="sharmatTokenStatus" style="margin-left: 8px; color: #8f819f;"></span>
-                </div>
             </div>
             <script>
             function sharmatCheckUpdate() {
@@ -50,13 +44,6 @@
                     st.textContent = msg;
                     document.getElementById('sharmatRunUpdateBtn').style.display = 'none';
                 }).catch(e => { st.textContent = 'Update failed: ' + e.message; });
-            }
-            function sharmatSaveUpdateToken() {
-                const fd = new FormData();
-                fd.append('token', document.getElementById('sharmatUpdateToken').value.trim());
-                fetch('?action=sharmatSaveUpdateToken', { method: 'POST', body: fd }).then(r => r.json()).then(d => {
-                    document.getElementById('sharmatTokenStatus').textContent = d.success ? (d.saved ? 'Token saved.' : 'Token cleared.') : 'Save failed.';
-                }).catch(() => { document.getElementById('sharmatTokenStatus').textContent = 'Save failed.'; });
             }
             </script>
 
