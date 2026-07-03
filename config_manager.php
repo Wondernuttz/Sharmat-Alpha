@@ -963,7 +963,7 @@ SQL;
                 'failed' => array_slice($failed, 0, 10),
                 'failed_count' => count($failed),
                 'backup' => (empty($backupFailed) ? $backupDir : 'backup incomplete: ' . $backupDir),
-                'hint' => empty($failed) ? '' : 'Some files could not be written. In the Dwemer terminal run: sudo chown -R www-data:www-data /var/www/html/HerikaServer/ext/aiagent_nsfw  then press Update Now again.',
+                'hint' => empty($failed) ? '' : 'One-time fix: in the Dwemer terminal run  sudo chown -R www-data:www-data /var/www/html/HerikaServer/ext/aiagent_nsfw  (password prompt shows nothing while typing - that is normal), then press Update Now again.',
             ]);
         } catch (Exception $e) {
             echo json_encode(['success' => false, 'error' => $e->getMessage()]);
