@@ -913,7 +913,11 @@ SQL;
             } else {
                 // local conf survives updates; everything else is repo-authoritative
                 if (in_array($relPath, $preserve, true) && file_exists($d)) { continue; }
-                if (@copy($s, $d)) { $copied++; } else { $failed[] = $relPath; }
+                if (@copy($s, $d)) { $copied++; continue; }
+                // Overwrite blocked (file owned by another user): REPLACING only needs write on
+                // the directory - write a temp sibling and rename it over the target.
+                $tmp = $dst . '/.sharmat_tmp_' . basename($d);
+                if (@copy($s, $tmp) && @rename($tmp, $d)) { $copied++; } else { @unlink($tmp); $failed[] = $relPath; }
             }
         }
     }
