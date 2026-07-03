@@ -92,6 +92,21 @@ if (!empty($GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY']) && isset($GLOBALS['HERIK
     }
 }
 
+// COURTSHIP NUDGE: Fond+ but rel type not eligible - she may express affection (which can flip
+// her type to crush), nothing more. Without this the affection toolset was granted silently.
+if (!empty($GLOBALS['AIAGENTNSFW_AFFECTION_AUTONOMY']) && isset($GLOBALS['HERIKA_PERS'])) {
+    $__cnx = function_exists('getIntimacyForActor') ? getIntimacyForActor($actorName) : [];
+    if ((int)($__cnx['level'] ?? 0) < 1 && empty($__cnx['sex_started']) && (int)($__cnx['intensity_tier'] ?? 0) < 3) {
+        $__cnudge = function_exists('getGlobalPrompt') ? trim((string)getGlobalPrompt('affection_autonomy_nudge')) : '';
+        if ($__cnudge === '') {
+            $__cpn = trim((string)($GLOBALS['PLAYER_NAME'] ?? 'your companion'));
+            $__cnudge = "You have grown genuinely fond of {$__cpn}. When a moment feels right to YOU - warmth, gratitude, quiet closeness - you may express affection on your own: a hug, a kiss, holding hands (Give_Hug, Kiss, Hold_Hands). Nothing beyond affection is on the table or expected; let whatever this is grow naturally.";
+        }
+        $GLOBALS['HERIKA_PERS'] .= "\n\n<affection_autonomy>\n" . $__cnudge . "\n</affection_autonomy>";
+        error_log("[AIAGENTNSFW] COURTSHIP NUDGE injected for {$actorName} (Fond+/type not eligible, normal turn)");
+    }
+}
+
 if (function_exists('aiagentNsfwReconcileActorRuntimeAfterRollback')) {
     aiagentNsfwReconcileActorRuntimeAfterRollback($actorName, $GLOBALS["gameRequest"][2] ?? null);
 }
