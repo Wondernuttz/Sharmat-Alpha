@@ -885,8 +885,29 @@ class NsfwOstimHandler {
         }
 
         $storedSceneDesc = $cleanedSceneDesc;
-	        if ($sceneTier === 0 && (in_array("idle", $sexTags, true) || in_array("intro", $sexTags, true))) {
-	            $storedSceneDesc = implode(" and ", $orderedActorList) . " are in an intimate starting stance before anything has been accepted. Nothing sexual has happened yet; the NPC must decide whether to accept or refuse.";
+	        $isIdleIntroBeat = ($sceneTier === 0 && (in_array("idle", $sexTags, true) || in_array("intro", $sexTags, true)))
+	            || stripos((string)$sexStageName, 'standingapart') !== false;
+	        if ($isIdleIntroBeat) {
+	            // A recent affection tool call means this idle "scene" is a hand-hold/hug gesture
+	            // blipping through OStim, not an advance - the DB flavor text for the idle
+	            // ("wants more from you") framed hand-holding as a proposition and NPCs reacted
+	            // to it as one. Override BOTH the prompt copy and the stored copy.
+	            $affectionRecent = false;
+	            try {
+	                foreach ($orderedActorList as $affA) {
+	                    if ($affA === $GLOBALS["PLAYER_NAME"]) { continue; }
+	                    $affRow = $GLOBALS["db"]->fetchOne("SELECT 1 AS x FROM actions_issued WHERE actorname='" . $GLOBALS["db"]->escape($affA) . "' AND action IN ('GiveHug','Kiss','HoldHands') AND localts > " . (time() - 60) . " LIMIT 1");
+	                    if ($affRow) { $affectionRecent = true; break; }
+	                }
+	            } catch (Exception $e) {
+	                // fall through to the neutral decision framing
+	            }
+	            if ($affectionRecent) {
+	                $cleanedSceneDesc = implode(" and ", $orderedActorList) . " share a tender, non-sexual moment of affection (a held hand, an embrace). Nothing sexual is happening or being asked for; respond with simple warmth in line with your feelings.";
+	            } else {
+	                $cleanedSceneDesc = implode(" and ", $orderedActorList) . " are in an intimate starting stance before anything has been accepted. Nothing sexual has happened yet; the NPC must decide whether to accept or refuse.";
+	            }
+	            $storedSceneDesc = $cleanedSceneDesc;
 	        }
 	        aiagentNsfwSceneThreadUpsert($sceneThreadKey, 'player_scene', $orderedActorList, $sexStageName, $storedSceneDesc, 'ext_nsfw_sexcene');
 
