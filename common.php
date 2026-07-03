@@ -1958,11 +1958,16 @@ function getDrunkStageForActor($actorName) {
     $minGamets = $currentGamets - ($windowHours / 0.0000024); // game-hours -> gamets
     $actorE = $GLOBALS["db"]->escape($actorName);
     $hardDrugRegex = $GLOBALS["db"]->escape(aiagentNsfwHardDrugRegex());
+    // Consume-only mode (default): a drink counts only via the inventory-backed Consume path -
+    // a real item is used and the drink animation plays. Drink/Toast are then social flavor,
+    // so the model cannot intoxicate anyone by narrating drinks that never happened.
+    $actionRegex = (function_exists('_getNsfwSetting') && !_getNsfwSetting('DRUNK_REQUIRE_CONSUME_ACTION', true))
+        ? '^(Consume|Drink|Toast)$' : '^Consume$';
     $rows = $GLOBALS["db"]->fetchAll(
         "SELECT gamets FROM public.actions_issued
          WHERE actorname = '{$actorE}'
            AND gamets > {$minGamets} AND gamets <= {$currentGamets}
-           AND action ~* '^(Consume|Drink|Toast)$'
+           AND action ~* '{$actionRegex}'
            AND fullcall !~* '{$hardDrugRegex}'
          ORDER BY gamets ASC"
     );

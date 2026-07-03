@@ -700,6 +700,14 @@ ingredient</textarea>
                     <p class="legend">Track if NPCs are intoxicated</p>
                 </div>
 
+                <div class="settings-checkbox-group">
+                    <label for="drunkRequireConsume">
+                        <input type="checkbox" id="drunkRequireConsume" name="DRUNK_REQUIRE_CONSUME_ACTION">
+                        <span>Real Drinks Only (Consume action)</span>
+                    </label>
+                    <p class="legend">Only the inventory-backed Consume action counts toward drunkenness - a real bottle is used and the drinking animation plays. Drink/Toast become social flavor that never intoxicates. Off = old behavior where Drink and Toast also count.</p>
+                </div>
+
                 <div class="settings-slider-group">
                     <span class="slider-title">Drunkenness Duration</span>
                     <div class="slider-container">

@@ -862,6 +862,7 @@ SQL;
                 'NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS' => isset($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']))) : 30,
                 'GENERIC_GLOSSARY' => $_POST['GENERIC_GLOSSARY'] ?? '',
                 'TRACK_DRUNK_STATUS' => isset($_POST['TRACK_DRUNK_STATUS']) ? filter_var($_POST['TRACK_DRUNK_STATUS'], FILTER_VALIDATE_BOOLEAN) : false,
+                'DRUNK_REQUIRE_CONSUME_ACTION' => isset($_POST['DRUNK_REQUIRE_CONSUME_ACTION']) ? filter_var($_POST['DRUNK_REQUIRE_CONSUME_ACTION'], FILTER_VALIDATE_BOOLEAN) : true,
                 'DRUNK_WINDOW_HOURS' => isset($_POST['DRUNK_WINDOW_HOURS']) ? max(1, intval($_POST['DRUNK_WINDOW_HOURS'])) : 12,
                 'TRACK_FERTILITY_INFO' => isset($_POST['TRACK_FERTILITY_INFO']) ? filter_var($_POST['TRACK_FERTILITY_INFO'], FILTER_VALIDATE_BOOLEAN) : false,
                 'CHILD_PROTECTION_FRAME' => $_POST['CHILD_PROTECTION_FRAME'] ?? '',
@@ -6839,6 +6840,8 @@ PROMPT;
                             document.getElementById('playerSceneCallCooldownValue').textContent = (parseInt(psCD) === 0 ? 'Off' : psCD + ' sec');
                         }
                         document.getElementById('trackDrunkStatus').checked = data.data.TRACK_DRUNK_STATUS || false;
+                        const drunkReqConsumeEl = document.getElementById('drunkRequireConsume');
+                        if (drunkReqConsumeEl) drunkReqConsumeEl.checked = data.data.DRUNK_REQUIRE_CONSUME_ACTION !== undefined ? data.data.DRUNK_REQUIRE_CONSUME_ACTION : true;
                         const drunkWin = data.data.DRUNK_WINDOW_HOURS !== undefined ? data.data.DRUNK_WINDOW_HOURS : 12;
                         document.getElementById('drunkWindowHours').value = drunkWin;
                         document.getElementById('drunkWindowHoursValue').textContent = drunkWin + ' game hours';
@@ -7159,6 +7162,7 @@ PROMPT;
             if (document.getElementById('sceneCallMinAffinity')) fdSet('NSFW_SCENE_CALL_MIN_AFFINITY', 'sceneCallMinAffinity', 'value');
             if (document.getElementById('playerSceneCallCooldown')) fdSet('NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS', 'playerSceneCallCooldown', 'value');
             fdSet('TRACK_DRUNK_STATUS', 'trackDrunkStatus', 'checked');
+            fdSet('DRUNK_REQUIRE_CONSUME_ACTION', 'drunkRequireConsume', 'checked');
             fdSet('DRUNK_WINDOW_HOURS', 'drunkWindowHours', 'value');
             fdSet('TRACK_FERTILITY_INFO', 'trackFertilityInfo', 'checked');
             fdSet('CHILD_PROTECTION_FRAME', 'childProtectionFrame', 'value');

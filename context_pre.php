@@ -169,6 +169,12 @@ if (isset($GLOBALS["HERIKA_PERS"]) && class_exists('NsfwRelationship')) {
     }
 }
 
+// Real-drinks-only mode: the model must know Drink/Toast are flavor, or it keeps "drinking" in
+// dialogue and wonders why nothing happens.
+if (isset($GLOBALS["HERIKA_PERS"]) && _getNsfwSetting('DRUNK_REQUIRE_CONSUME_ACTION', true)) {
+    $GLOBALS["HERIKA_PERS"] .= "\n\n#Alcohol action rule: If you actually drink alcohol, use the Consume action with the exact inventory item name (e.g. 'Nord Mead'). The Drink and Toast actions are social flavor only and never intoxicate.";
+}
+
 // Drugs (skooma 3-level stimulant + sleeping tree sap 1-hit) - injected like the alcohol level, BEFORE the
 // drunk early-return so they fire even when she's sober from alcohol. Per-level text comes from the UI
 // (skooma_level_1..3 / sleeping_tree_sap in aiagent_nsfw_prompts); empty = skip, so this is safe pre-UI.
