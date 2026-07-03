@@ -1872,7 +1872,7 @@ function nsfw_auto_init() {
     if (!isset($GLOBALS['db'])) return;
 
     try {
-        $seedVersion = '20260627003';
+        $seedVersion = '20260703434';
         $seedFlag = $GLOBALS['db']->fetchOne(
             "SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_seed_version'"
         );

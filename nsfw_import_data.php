@@ -1,6 +1,6 @@
 <?php
-// Auto-generated NSFW data export - baked from live tuned values 2026-07-02
-// This file is the FRESH-INSTALL SEED and the RESET-TO-DEFAULTS source. Regenerate via bake, do not hand-edit.
+// Auto-generated NSFW data export - baked from live tuned values 2026-07-03
+// This file is the FRESH-INSTALL SEED and the RESET-TO-DEFAULTS source. Regenerate via bake_defaults.php, do not hand-edit.
 
 $NSFW_IMPORT_DATA = array (
   'aiagent_nsfw_ai_prompt_template' => 'You are generating an NSFW character profile for a Skyrim NPC based on their full biography, personality data, and current game state.
