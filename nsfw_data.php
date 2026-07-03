@@ -1014,7 +1014,7 @@ class NsfwNpcData {
      * Uses the new nsfw_npc_data table (NOT core_npc_master)
      *
      * Matches NPC names in a normalized way:
-     * - "vivienne_onis", "Vivienne Onis", "vivienne onis" all match the same record
+     * - "whiterun_guard", "Whiterun Guard", "whiterun guard" all match the same record
      */
     public static function get($npcName) {
         if (empty($npcName)) return [];
@@ -1102,7 +1102,7 @@ class NsfwNpcData {
      * Creates new record if NPC doesn't exist in nsfw_npc_data
      *
      * IMPORTANT: Uses normalized name matching to prevent duplicates.
-     * "vivienne_onis", "Vivienne Onis", and "vivienne onis" are all the same NPC.
+     * "whiterun_guard", "Whiterun Guard", and "whiterun guard" are all the same NPC.
      */
     public static function save($npcName, $data) {
         if (empty($npcName)) return false;
@@ -1117,7 +1117,7 @@ class NsfwNpcData {
             $normalizedName = self::normalizeNameForComparison($npcName);
             $escapedNormalized = $GLOBALS['db']->escape($normalizedName);
             // Check if a normalized match already exists
-            // This catches: "Vivienne Onis", "vivienne_onis", "VIVIENNE ONIS" all as same NPC
+            // This catches: "Whiterun Guard", "whiterun_guard", "WHITERUN GUARD" all as same NPC
             $existing = $GLOBALS['db']->fetchOne(
                 "SELECT npc_name, extended_data FROM nsfw_npc_data WHERE LOWER(REPLACE(npc_name, '_', ' ')) = '$escapedNormalized'"
             );

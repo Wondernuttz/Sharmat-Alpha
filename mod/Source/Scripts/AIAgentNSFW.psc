@@ -3282,7 +3282,7 @@ string Function ResolveOStimOrgasmPartnerName(Actor orgasmer, int threadID, stri
 	if sceneID != "" && orgasmerIndex >= 0 && actors != None
 		; PENETRATIVE-PRIORITY (no FMR dependency): the orgasm partner is whoever the orgasmer is actually penetrating
 		; or being penetrated by - NOT whatever secondary act (handjob/footjob) happens to be listed first. In a 3-way
-		; this is what credited the scene-starter (e.g. Lisette) instead of the real partner (Vivian). Search the
+		; this is what credited the scene-starter instead of the real partner. Search the
 		; penetrative acts FIRST and return that target; only fall through to the broader list below if none. (2026-06-29)
 		int penActionIndex = OMetadata.FindAnyActionForActorCSV(sceneID, orgasmerIndex, OSTIM_PENETRATIVE_ACTION_TYPES)
 		if penActionIndex != -1

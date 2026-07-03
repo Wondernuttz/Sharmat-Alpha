@@ -290,7 +290,7 @@ class NsfwOstimHandler {
         $actorInfosRaw     = array_slice($infoSexSceneParts, 3);
 
         // Parse actor data — new format includes per-actor role tags:
-        //   "ActorName^tag1,tag2,tag3" (e.g. "Vivienne Onis^dom,vaginal")
+        //   "ActorName^tag1,tag2,tag3" (e.g. "Whiterun Guard^dom,vaginal")
         // Old format without tags: just "ActorName" (backwards compatible)
         $playerName = $GLOBALS["PLAYER_NAME"];
         $rawActorList = [];
@@ -1723,7 +1723,7 @@ class NsfwOstimHandler {
         // CROSS-SCENE FIX: the chatnf_sl_end SCORING is the PSC-authoritative list of who actually ended.
         // A scene-end can be ADDRESSED to a bystander listener (HERIKA_NAME) who is in a DIFFERENT, still-running
         // scene - keying off HERIKA_NAME's own scene_actors then ends the WRONG scene (observed: a Dorian/Eris
-        // end addressed to Vivienne killed her live Sorex scene, which then got misread as a player scene and
+        // end addressed to one participant killed her live NPC-to-NPC scene, which then got misread as a player scene and
         // triggered a "player initiated sex" refusal). So prefer the scoring; expand each scored actor to their
         // stored roster; only fall back to HERIKA_NAME's scene when there is no scoring at all.
         $sceneActors = [];
