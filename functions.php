@@ -1787,30 +1787,23 @@ $GLOBALS["FUNCSERV"]["ExtCmdCollectPayment"]=function() {
 
     if ($paymentAmount <= 0 && !$isFuncret) {
         // DUMB-MODEL RESCUE (tester report 2026-07-04): weak models call TakeGold with no/zero amount and
-        // the doomed command failed in Papyrus ("invalid gold amount"). Rescue with the amount the
-        // negotiation already established: the pending amount, else her menu price for this affinity.
+        // the doomed command failed in Papyrus ("invalid gold amount"). The ONLY amount the server may
+        // reuse is a prior TakeGold's pending amount - HER OWN stated number. The price is NEGOTIATED in
+        // dialogue (haggling, discounts), so the menu rate must never be guess-charged.
         $rescued = (int)($intimacyStatus['payment_pending_amount'] ?? 0);
-        if ($rescued <= 0) {
-            $rescueExt = NsfwNpcData::get($npcName);
-            $rescueFlat = (int)($rescueExt['prostitute_price'] ?? 100);
-            if ($rescueFlat < 1) { $rescueFlat = 100; }
-            $rescueAff = function_exists('getNpcAffinity') ? (int)getNpcAffinity($npcName) : 0;
-            $rescued = function_exists('aiagentNsfwProstituteAffinityPrice')
-                ? (int)aiagentNsfwProstituteAffinityPrice($rescueFlat, $rescueAff)
-                : $rescueFlat;
-        }
         if ($rescued > 0) {
             $paymentAmount = $rescued;
             // Fixed-position rewrite so Papyrus gets the rescued amount instead of the model's zero.
             $gameRequest[3] = "ExtCmdCollectPayment@{$paymentAmount}@{$serviceDesc}@" . ($isGoldPayment ? '' : $paymentItem);
-            error_log("[TakeGold] RESCUED missing/zero amount -> {$paymentAmount} (pending/menu price) for {$npcName}");
+            error_log("[TakeGold] RESCUED missing/zero amount -> {$paymentAmount} (her prior pending amount) for {$npcName}");
         }
     }
 
     if ($paymentAmount <= 0) {
-        error_log("[TakeGold] Invalid amount in " . ($gameRequest[3] ?? '') . " - coaching model to retry with a number");
-        // Coach instead of silently ignoring - a weak model will just repeat the same broken call.
-        $GLOBALS["HERIKA_PERSONALITY"] .= "\n<payment_error>Your TakeGold call carried no gold amount, so NO payment was taken. State your price in dialogue, then call TakeGold again with the amount parameter set to that number (for example: amount 100). Do not provide the service until TakeGold succeeds.</payment_error>";
+        error_log("[TakeGold] Invalid amount in " . ($gameRequest[3] ?? '') . " - coaching model to retry with the agreed number");
+        // Coach instead of silently ignoring - a weak model just repeats the same broken call. No gold
+        // is guessed for her: SHE must restate the agreed price and call again with it.
+        $GLOBALS["HERIKA_PERSONALITY"] .= "\n<payment_error>Your TakeGold call carried no gold amount, so NO payment was taken. Call TakeGold again with the amount parameter set to the price you and the client AGREED on, as a number (for example: amount 100). If no price was agreed yet, state your price first. Do not provide the service until TakeGold succeeds.</payment_error>";
         $GLOBALS["AVOID_LLM_CALL"] = false;
         return;
     }
