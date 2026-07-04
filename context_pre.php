@@ -79,6 +79,26 @@ if ($actorName !== "" && isset($GLOBALS["ENABLED_FUNCTIONS"]) && is_array($GLOBA
 }
 
 // ============================================================
+// TAKE_GOLD AMOUNT ROUTING (tester report 2026-07-04): on structured-JSON connectors there is no
+// tool-args object - the ONLY field that becomes the command parameter is 'target', and nothing told
+// the model the gold amount goes there (logaction showed action Take_Gold, target "0"). Whenever
+// TakeGold is offered, spell it out in the target field's own schema description.
+// ============================================================
+if (isset($GLOBALS["ENABLED_FUNCTIONS"]) && is_array($GLOBALS["ENABLED_FUNCTIONS"])
+    && in_array('ExtCmdCollectPayment', $GLOBALS["ENABLED_FUNCTIONS"], true)) {
+    $__tgHint = " IMPORTANT: when action is Take_Gold, target MUST be the agreed gold price as a plain number (e.g. 100) - never 0, never a name.";
+    if (isset($GLOBALS["structuredOutputTemplate"]["json_schema"]["schema"]["properties"]["target"])) {
+        $GLOBALS["structuredOutputTemplate"]["json_schema"]["schema"]["properties"]["target"]["description"] =
+            (string)($GLOBALS["structuredOutputTemplate"]["json_schema"]["schema"]["properties"]["target"]["description"] ?? '') . $__tgHint;
+    }
+    if (isset($GLOBALS["responseTemplate"]["target"]) && is_string($GLOBALS["responseTemplate"]["target"])
+        && strpos($GLOBALS["responseTemplate"]["target"], 'Take_Gold') === false) {
+        $GLOBALS["responseTemplate"]["target"] .= $__tgHint;
+    }
+    error_log("[AIAGENTNSFW] TakeGold target-routing hint installed for {$actorName}");
+}
+
+// ============================================================
 // CHILD PROTECTION (Phase 1): for any NPC flagged as a child by HARD signals (is_child flag, child
 // race, vanilla child-name blocklist), prepend an in-world "you are a child" frame to the character
 // block so the model never reads an adult's attention, gifts, or kindness as romance. Default-on;
