@@ -1916,63 +1916,19 @@ Event CommandManager(String npcname,String  command, String parameter)
 		endif
 
 		; ============================================
-		; VR MODE: Use OStim for proper actor alignment
+		; PERSISTENT AFFECTION SCENE (2026-07-04): with OStim installed the kiss is a real,
+		; persistent OStim scene via SceneEngine - no Wait+Stop blip, no manual placement. OStim
+		; owns alignment on VR and desktop; the model or the player escalates or ends it (the
+		; hold-hands -> kiss -> sex path is the SceneEngine shift). Legacy path only without OStim.
 		; ============================================
-		if isVRMode && IsPlayerInvolved
-			Debug.Trace("[CHIM-NSFW] VR Kiss: Using OStim for proper alignment")
-
-			ActorUtil.AddPackageOverride(npc, doNothing, 100, 0)
-			npc.EvaluatePackage()
-
-			; Build actor array for OStim
-			Actor[] kissActors = new Actor[2]
-			kissActors[0] = npc
-			kissActors[1] = kissedActor
-
-			; Sort actors for OStim compatibility
-			Actor[] sortedActors = OActorUtil.Sort(kissActors, OActorUtil.toArray())
-
-			if OActor.VerifyActors(sortedActors)
-				; Use OStim kiss scene - try multiple scene IDs
-				string kissScene = OLibrary.GetRandomSceneWithAnySceneTagCSV(sortedActors, "kissing,frenchkissing")
-				if kissScene == ""
-					kissScene = "OARE_StandingKiss"
-				endif
-
-				; Start the scene - OStim will align actors properly for VR
-				int builderID = OThreadBuilder.create(sortedActors)
-				OThreadBuilder.SetStartingAnimation(builderID, kissScene)
-				int kissThreadID = OThreadBuilder.Start(builderID)
-
-				Debug.Trace("[CHIM-NSFW] VR Kiss: Started OStim thread " + kissThreadID + " with scene: " + kissScene)
-
-				StorageUtil.SetIntValue(kissedActor, "chim_kiss_status", 1)
-				StorageUtil.SetIntValue(npc, "chim_kiss_status", 1)
-
+		if AIAgentNSFWSceneEngine.HasOStim()
+			npc.EquipItem(GetBestArmorForSlot(npc, 0x00000080), false, true) ; restore the legacy prep unequip
+			if AIAgentNSFWSceneEngine.StartOrJoinScene(npc, kissedActor, true, "kiss")
 				AIAgentFunctions.logMessage(npcname+" kisses "+parameter,"ext_nsfw_action")
-				AIAgentFunctions.setAnimationBusy(1, npcname)
-
-				; Wait for the kiss duration then stop the scene
-				Wait(10)
-
-				; Stop the OStim scene
-				if kissThreadID >= 0 && OThread.IsRunning(kissThreadID)
-					OThread.Stop(kissThreadID)
-				endif
-
-				AIAgentFunctions.setAnimationBusy(0, npcname)
-				StorageUtil.SetIntValue(kissedActor, "chim_kiss_status", 0)
-				StorageUtil.SetIntValue(npc, "chim_kiss_status", 0)
+				AIAgentFunctions.logMessageForActor("command@ExtCmdKiss@"+parameter+"@"+npcname+" gave a kiss to "+parameter+"","funcret",npcname)
 			else
-				Debug.Trace("[CHIM-NSFW] VR Kiss: Actor verification failed")
-				AIAgentFunctions.logMessageForActor("command@ExtCmdKiss@"+parameter+"@error. Could not start kiss animation","funcret",npcname)
+				AIAgentFunctions.logMessageForActor("command@ExtCmdKiss@"+parameter+"@error. Could not start kiss scene","funcret",npcname)
 			endif
-
-			ActorUtil.RemovePackageOverride(npc, doNothing)
-			npc.EvaluatePackage()
-			npc.EquipItem(GetBestArmorForSlot(npc, 0x00000080), false, true) ; Feet
-
-			AIAgentFunctions.logMessageForActor("command@ExtCmdKiss@"+parameter+"@"+npcname+" gave a kiss to "+parameter+"","funcret",npcname)
 
 		else
 			; ============================================
@@ -2283,52 +2239,16 @@ Event CommandManager(String npcname,String  command, String parameter)
 		; body position and head position can differ. OStim handles
 		; VR actor alignment properly through its scene system.
 		; ============================================
-		if isVRMode
-			Debug.Trace("[CHIM-NSFW] VR Hug: Using OStim for proper alignment")
-
+		; PERSISTENT AFFECTION SCENE (2026-07-04): see ExtCmdKiss - persistent OStim scene via
+		; SceneEngine, no Wait+Stop blip. Legacy paired-idle path only without OStim.
+		if AIAgentNSFWSceneEngine.HasOStim()
 			AIAgentAIMind.ResetPackages(npc)
-			Package doNothing = Game.GetForm(0x654e2) as Package
-			ActorUtil.AddPackageOverride(npc, doNothing, 100, 0)
-			npc.EvaluatePackage()
-
-			; Build actor array for OStim
-			Actor[] hugActors = new Actor[2]
-			hugActors[0] = npc
-			hugActors[1] = receiver
-
-			; Sort actors for OStim compatibility
-			Actor[] sortedActors = OActorUtil.Sort(hugActors, OActorUtil.toArray())
-
-			if OActor.VerifyActors(sortedActors)
-				; Use OARE standing hug scene for proper VR alignment
-				string hugScene = "OARE_StandingHug"
-
-				; Start the scene - OStim will align actors properly for VR
-				int builderID = OThreadBuilder.create(sortedActors)
-				OThreadBuilder.SetStartingAnimation(builderID, hugScene)
-				int hugThreadID = OThreadBuilder.Start(builderID)
-
-				Debug.Trace("[CHIM-NSFW] VR Hug: Started OStim thread " + hugThreadID + " with scene: " + hugScene)
-
-				; Wait for the hug duration then stop the scene
-				AIAgentFunctions.setAnimationBusy(1, npcname)
-				Wait(5)
-
-				; Stop the OStim scene
-				if hugThreadID >= 0 && OThread.IsRunning(hugThreadID)
-					OThread.Stop(hugThreadID)
-				endif
-
-				AIAgentFunctions.setAnimationBusy(0, npcname)
+			if AIAgentNSFWSceneEngine.StartOrJoinScene(npc, receiver, true, "hug")
+				AIAgentFunctions.logMessage(npcname+" hugs "+parameter,"ext_nsfw_action")
+				AIAgentFunctions.logMessageForActor("command@ExtCmdHug@"+parameter+"@"+npcname+" gives a hug to "+parameter+"","funcret",npcname)
 			else
-				Debug.Trace("[CHIM-NSFW] VR Hug: Actor verification failed")
-				AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Could not start hug animation","funcret",npcname)
+				AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Could not start hug scene","funcret",npcname)
 			endif
-
-			ActorUtil.RemovePackageOverride(npc, doNothing)
-			npc.EvaluatePackage()
-
-			AIAgentFunctions.logMessageForActor("command@ExtCmdHug@"+parameter+"@"+npcname+" gives a hug to "+parameter+"","funcret",npcname)
 
 		else
 			; ============================================
@@ -2415,47 +2335,21 @@ Event CommandManager(String npcname,String  command, String parameter)
 			return
 		endif
 
-		Debug.Trace("[CHIM-NSFW] HoldHands: Using OStim for hand-holding alignment")
-
-		AIAgentAIMind.ResetPackages(npc)
-		Package doNothing = Game.GetForm(0x654e2) as Package
-		ActorUtil.AddPackageOverride(npc, doNothing, 100, 0)
-		npc.EvaluatePackage()
-
-		Actor[] handActors = new Actor[2]
-		handActors[0] = npc
-		handActors[1] = receiver
-
-		Actor[] sortedActors = OActorUtil.Sort(handActors, OActorUtil.toArray())
-
-		if OActor.VerifyActors(sortedActors)
-			string handScene = "OARE_StandingHandHolding"
-
-			int builderID = OThreadBuilder.create(sortedActors)
-			OThreadBuilder.SetStartingAnimation(builderID, handScene)
-			int handThreadID = OThreadBuilder.Start(builderID)
-
-			Debug.Trace("[CHIM-NSFW] HoldHands: Started OStim thread " + handThreadID + " with scene: " + handScene)
-
-			AIAgentFunctions.setAnimationBusy(1, npcname)
-			Wait(5)
-
-			if handThreadID >= 0 && OThread.IsRunning(handThreadID)
-				OThread.Stop(handThreadID)
+		; PERSISTENT AFFECTION SCENE (2026-07-04): see ExtCmdKiss - persistent OStim scene via
+		; SceneEngine, no Wait+Stop blip. Hand-holding has no legacy fallback animation.
+		if AIAgentNSFWSceneEngine.HasOStim()
+			AIAgentAIMind.ResetPackages(npc)
+			if AIAgentNSFWSceneEngine.StartOrJoinScene(npc, receiver, true, "holdhands")
+				AIAgentFunctions.logMessage(npcname+" holds hands with "+parameter,"ext_nsfw_action")
+				AIAgentFunctions.logMessageForActor("command@ExtCmdHoldHands@"+parameter+"@"+npcname+" holds hands with "+parameter+"","funcret",npcname)
+			else
+				AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Could not start hand-holding scene","funcret",npcname)
 			endif
-
-			AIAgentFunctions.setAnimationBusy(0, npcname)
 		else
-			Debug.Trace("[CHIM-NSFW] HoldHands: Actor verification failed")
-			AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Could not start hand-holding animation","funcret",npcname)
+			AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Hand-holding requires OStim","funcret",npcname)
 		endif
 
-		ActorUtil.RemovePackageOverride(npc, doNothing)
-		npc.EvaluatePackage()
-
-		AIAgentFunctions.logMessageForActor("command@ExtCmdHoldHands@"+parameter+"@"+npcname+" holds hands with "+parameter+"","funcret",npcname)
-
-	endIf	
+	endIf
 	
 	if (command=="ExtCmdStartSex" || command=="ExtCmdStartThreesome" || command=="ExtCmdStartBlowJob" || command=="ExtCmdStartMassage" || command=="ExtCmdStartTitfuck" || command=="ExtCmdStartAnalSex" || command=="ExtCmdStartHandjobSex" || command=="ExtCmdStartHandJobSex")
 		

@@ -46,6 +46,25 @@ string Function OStimSceneTagForAct(string sceneAct) global
         ; vampire blood-feeding: matches OStim vampire-bite scenes (OARE_Devour*, OStim2P*VampireBite*).
         ; MinAI maps the "vampire" tag to "vampirebite" (minai_SexOstim), so these tags resolve the bite scenes.
         return "vampirebite,vampire,bite,neckkissing,feeding,devour"
+    elseif sceneAct == "kiss"
+        return "kissing,frenchkissing"
+    elseif sceneAct == "hug"
+        return "cuddling,hugging,embrace"
+    elseif sceneAct == "holdhands"
+        return "holdinghands,handholding"
+    endif
+    return ""
+EndFunction
+
+; Chaste OARE staples by exact scene id - the tag pass can miss these (OARE_StandingHandHolding is
+; tagged only "oare"), and the affection acts must NEVER fall through to a random (possibly sex) scene.
+string Function OStimExactSceneForAct(string sceneAct) global
+    if sceneAct == "kiss"
+        return "OARE_StandingKiss"
+    elseif sceneAct == "hug"
+        return "OARE_StandingHug"
+    elseif sceneAct == "holdhands"
+        return "OARE_StandingHandHolding"
     endif
     return ""
 EndFunction
@@ -179,6 +198,9 @@ int Function StartOStimScene(Actor[] actors, string sceneAct = "") global
         endif
     endif
     if scene == ""
+        scene = OStimExactSceneForAct(sceneAct) ; affection acts pin their OARE staple, never a random scene
+    endif
+    if scene == ""
         scene = OLibrary.GetRandomScene(actors) ; fallback: any valid scene for this actor set
     endif
     int builderID = OThreadBuilder.Create(actors)
@@ -223,6 +245,9 @@ bool Function ShiftOStimSceneToAct(int threadID, string sceneAct) global
         if tagCSV != ""
             scene = OLibrary.GetRandomSceneWithAnySceneTagCSV(actors, tagCSV)
         endif
+    endif
+    if scene == "" && actors.Length == 2
+        scene = OStimExactSceneForAct(sceneAct) ; e.g. shift a hug to hand-holding (tagged only "oare")
     endif
     if scene == ""
         Debug.Trace("[CHIM-NSFW SceneEngine] OStim shift: no scene matched act=" + sceneAct + " - leaving current scene")

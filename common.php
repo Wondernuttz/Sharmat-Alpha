@@ -1774,7 +1774,11 @@ function aiagentNsfwRelTypeSexEligible($npcName) {
             $eligPlayer = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
             $eligMarried = ($eligSpouse !== '') || in_array($eligStatus, ['married', 'betrothed'], true);
             $eligToPlayer = ($eligSpouse !== '' && $eligPlayer !== '' && stripos($eligSpouse, $eligPlayer) !== false);
-            if ($eligMarried && !$eligToPlayer) { $affFloor = 76; $affWhy = 'devoted (married - affair rules)'; }
+            if ($eligMarried && !$eligToPlayer) {
+                // Affair floor is UI-tunable (user directive 2026-07-04, was hardcoded Devoted 76).
+                $affFloor = (int)aiagentNsfwArousalNum('NSFW_AFFAIR_MIN_AFFINITY', 56);
+                $affWhy = 'affair floor (married to another)';
+            }
         } catch (Throwable $t) { /* profile unavailable - base Friendly floor applies */ }
         $affVal = (int)($rel['aff'] ?? 0);
         $affNote = " aff={$affVal}/floor={$affFloor}({$affWhy})";

@@ -109,6 +109,15 @@
                     <p class="legend">When an NPC chooses affection (hug, kiss, hand-holding) or agrees to intimacy with you, their relationship type flips to crush automatically - actions speak louder than words. Requires Fond+ affinity; slaves and prostitutes are excluded; locked relationship cards are never touched. Default: on.</p>
                 </div>
 
+                <div class="settings-slider-group">
+                    <span class="slider-title">Affair Minimum Affinity (Married NPCs)</span>
+                    <div class="slider-container">
+                        <input type="range" id="affairMinAffinity" name="NSFW_AFFAIR_MIN_AFFINITY" min="0" max="100" step="1" value="56" oninput="var v=parseInt(this.value);var t=v>=91?'Bonded':(v>=76?'Devoted':(v>=56?'Fond':(v>=31?'Friendly':(v>=6?'Acquaintance':'Neutral'))));document.getElementById('affairMinAffinityValue').textContent = v + ' (' + t + ')';">
+                        <span class="slider-value" id="affairMinAffinityValue">56 (Fond)</span>
+                    </div>
+                    <p class="legend">Affinity an NPC married to someone else needs before an affair with you is even possible. The relationship type must still be a checked sex-eligible one. Default 56 = Fond; raise to 76 (Devoted) for stricter affair rules.</p>
+                </div>
+
                 <div class="settings-checkbox-group">
                     <label for="nsfwCombatBlockEnabled">
                         <input type="checkbox" id="nsfwCombatBlockEnabled" name="NSFW_COMBAT_BLOCK_ENABLED" checked>
