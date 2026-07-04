@@ -68,7 +68,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdHug"]=function() {
 
         $intimacyStatus=getIntimacyForActor($actorName);
         if (isSexDisposalEnabled()) {
-            $intimacyStatus["sex_disposal"]+=1; // affection: small arousal, builds over time
+            $intimacyStatus["sex_disposal"]+=(int)aiagentNsfwArousalNum('AROUSAL_GAIN_AFFECTION', 1); // affection: small arousal, builds over time
         }
         //$intimacyStatus["level"]=0;
         updateIntimacyForActor($actorName,$intimacyStatus);
@@ -120,7 +120,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdHoldHands"]=function() {
 
         $intimacyStatus=getIntimacyForActor($actorName);
         if (isSexDisposalEnabled()) {
-            $intimacyStatus["sex_disposal"]+=1;
+            $intimacyStatus["sex_disposal"]+=(int)aiagentNsfwArousalNum('AROUSAL_GAIN_AFFECTION', 1);
         }
         updateIntimacyForActor($actorName,$intimacyStatus);
 
@@ -162,7 +162,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdRemoveClothes"]=function() {
     
     $intimacyStatus=getIntimacyForActor($GLOBALS["HERIKA_NAME"]);
     if (isSexDisposalEnabled()) {
-        $intimacyStatus["sex_disposal"]+=6; // undress: strong push, not an instant accept-sex unlock
+        $intimacyStatus["sex_disposal"]+=(int)aiagentNsfwArousalNum('AROUSAL_GAIN_UNDRESS', 6); // undress: strong push, not an instant accept-sex unlock
     }
     $intimacyStatus["is_naked"]=1;  // Track naked state always (informational)
     updateIntimacyForActor($GLOBALS["HERIKA_NAME"],$intimacyStatus);
@@ -290,7 +290,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdStartSex"]=function() {
     foreach ($actors as $actorName) {
         $intimacyStatus = getIntimacyForActor($actorName);
         if (isSexDisposalEnabled()) {
-            $intimacyStatus["sex_disposal"] += 15;
+            $intimacyStatus["sex_disposal"] += (int)aiagentNsfwArousalNum('AROUSAL_GAIN_SEXACT', 15);
         }
         $intimacyStatus["level"] = 2; // full sex act -> active-sex level (matches blowjob/anal)
         updateIntimacyForActor($actorName, $intimacyStatus);
@@ -349,7 +349,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdStartBlowJob"]=function() {
 
         $intimacyStatus=getIntimacyForActor($actorName);
         if (isSexDisposalEnabled()) {
-            $intimacyStatus["sex_disposal"]+=15;
+            $intimacyStatus["sex_disposal"]+=(int)aiagentNsfwArousalNum('AROUSAL_GAIN_SEXACT', 15);
         }
         $intimacyStatus["level"]=2;
         updateIntimacyForActor($actorName,$intimacyStatus);
@@ -408,7 +408,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdStartAnalSex"]=function() {
 
         $intimacyStatus=getIntimacyForActor($actorName);
         if (isSexDisposalEnabled()) {
-            $intimacyStatus["sex_disposal"]+=15;
+            $intimacyStatus["sex_disposal"]+=(int)aiagentNsfwArousalNum('AROUSAL_GAIN_SEXACT', 15);
         }
         $intimacyStatus["level"]=2;
         updateIntimacyForActor($actorName,$intimacyStatus);
@@ -465,7 +465,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdStartMassage"]=function() {
 
         $intimacyStatus=getIntimacyForActor($actorName);
         if (isSexDisposalEnabled()) {
-            $intimacyStatus["sex_disposal"]+=5; // massage: sensual, lower arousal than full sex
+            $intimacyStatus["sex_disposal"]+=(int)aiagentNsfwArousalNum('AROUSAL_GAIN_MASSAGE', 5); // massage: sensual, lower arousal than full sex
         }
         $intimacyStatus["level"]=1;
         updateIntimacyForActor($actorName,$intimacyStatus);
@@ -522,7 +522,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdStartThreesome"]=function() {
 
         $intimacyStatus=getIntimacyForActor($actorName);
         if (isSexDisposalEnabled()) {
-            $intimacyStatus["sex_disposal"]+=15;
+            $intimacyStatus["sex_disposal"]+=(int)aiagentNsfwArousalNum('AROUSAL_GAIN_SEXACT', 15);
         }
         $intimacyStatus["level"]=2; // threesome: full sex act -> active-sex level
         updateIntimacyForActor($actorName,$intimacyStatus);
@@ -583,7 +583,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdStartHandJobSex"]=function() {
 
         $intimacyStatus=getIntimacyForActor($actorName);
         if (isSexDisposalEnabled()) {
-            $intimacyStatus["sex_disposal"]+=15;
+            $intimacyStatus["sex_disposal"]+=(int)aiagentNsfwArousalNum('AROUSAL_GAIN_SEXACT', 15);
         }
         $intimacyStatus["level"]=1;
         updateIntimacyForActor($actorName,$intimacyStatus);
@@ -643,7 +643,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdStartTitfuck"]=function() {
 
         $intimacyStatus=getIntimacyForActor($actorName);
         if (isSexDisposalEnabled()) {
-            $intimacyStatus["sex_disposal"]+=15;
+            $intimacyStatus["sex_disposal"]+=(int)aiagentNsfwArousalNum('AROUSAL_GAIN_SEXACT', 15);
         }
         $intimacyStatus["level"]=1;
         updateIntimacyForActor($actorName,$intimacyStatus);
@@ -699,7 +699,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdDrinkBloodSex"]=function() {
     foreach ($actors as $actorName) {
         $intimacyStatus=getIntimacyForActor($actorName);
         if (isSexDisposalEnabled()) {
-            $intimacyStatus["sex_disposal"]+=15;
+            $intimacyStatus["sex_disposal"]+=(int)aiagentNsfwArousalNum('AROUSAL_GAIN_SEXACT', 15);
         }
         $intimacyStatus["level"]=1;
         updateIntimacyForActor($actorName,$intimacyStatus);
@@ -742,7 +742,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdStartSelfMasturbation"]=function() {
    
     $intimacyStatus=getIntimacyForActor($GLOBALS["HERIKA_NAME"]);
     if (isSexDisposalEnabled()) {
-        $intimacyStatus["sex_disposal"]+=5;
+        $intimacyStatus["sex_disposal"]+=(int)aiagentNsfwArousalNum('AROUSAL_GAIN_MASSAGE', 5);
     }
     $intimacyStatus["level"]=1;
     updateIntimacyForActor($GLOBALS["HERIKA_NAME"],$intimacyStatus);
@@ -801,7 +801,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdKiss"]=function() {
 
         $intimacyStatus=getIntimacyForActor($actorName);
         if (isSexDisposalEnabled()) {
-            $intimacyStatus["sex_disposal"]+=2; // affection: small arousal, builds over time
+            $intimacyStatus["sex_disposal"]+=(int)aiagentNsfwArousalNum('AROUSAL_GAIN_AFFECTION', 1) * 2; // kiss: double the base affection gain
         }
         // affection: leave scene level unchanged (was level=0, which dropped active scenes — matches hug)
         updateIntimacyForActor($actorName,$intimacyStatus);
@@ -933,7 +933,7 @@ $GLOBALS["FUNCSERV"]["ExtCmdAcceptSex"]=function() {
         error_log("[AcceptSex] {$npcName} is prostitute - handling as TRANSACTION");
 
         if (isSexDisposalEnabled()) {
-            $intimacyStatus["sex_disposal"] = ($intimacyStatus["sex_disposal"] ?? 0) + 10; // Less arousal boost for transactions
+            $intimacyStatus["sex_disposal"] = ($intimacyStatus["sex_disposal"] ?? 0) + (int)aiagentNsfwArousalNum('AROUSAL_GAIN_TRANSACTION', 10); // Less arousal boost for transactions
         }
         $intimacyStatus["is_transaction"] = true;  // KEY FLAG: Uses prostitute prompt, not personal sex prompt
         $intimacyStatus["transaction_client"] = $targetName;
@@ -960,8 +960,9 @@ $GLOBALS["FUNCSERV"]["ExtCmdAcceptSex"]=function() {
         // PERSONAL SEX: Non-prostitute or personal intimacy
         // ============================================
         if (isSexDisposalEnabled()) {
-            $intimacyStatus["sex_disposal"] = ($intimacyStatus["sex_disposal"] ?? 0) + 20;
+            $intimacyStatus["sex_disposal"] = ($intimacyStatus["sex_disposal"] ?? 0) + (int)aiagentNsfwArousalNum('AROUSAL_GAIN_ACCEPTSEX', 20);
         }
+	        $intimacyStatus["arousal_pacing_decline_pending"] = false; // she chose to proceed - pacing hold is moot
 	        $intimacyStatus["accepted_sex"] = true;
 	        $intimacyStatus["scene_phase"] = "accepted";
 	        $intimacyStatus["refusal_expressed"] = false;
@@ -1048,7 +1049,12 @@ $GLOBALS["FUNCSERV"]["ExtCmdRefuseSex"]=function() {
     }
     $intimacyStatus["skooma_addiction_bargain"] = false;
     if (isSexDisposalEnabled()) {
-        $intimacyStatus["sex_disposal"] = max(0, ($intimacyStatus["sex_disposal"] ?? 0) - 15);
+        if (!empty($intimacyStatus["arousal_pacing_decline_pending"])) {
+            // Pacing refusal ("not yet - warm me up"): don't drain the warmth she just asked the player to build.
+            $intimacyStatus["arousal_pacing_decline_pending"] = false;
+        } else {
+            $intimacyStatus["sex_disposal"] = max(0, ($intimacyStatus["sex_disposal"] ?? 0) - (int)aiagentNsfwArousalNum('AROUSAL_DROP_REFUSAL', 15));
+        }
     }
 
     // ASSAULT-WITNESS (user directive 2026-07-01): a refusal DURING A PLAYER SEX SCENE from a Friendly-and-below NPC
@@ -2270,16 +2276,16 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
                 $GLOBALS['AIAGENTNSFW_AFFECTION_AUTONOMY'] = true;
             }
             if ($_consentedFns) {
-                if ($currentArousal >= 5) {
+                if ($currentArousal >= (int)aiagentNsfwArousalNum('AROUSAL_THRESHOLD_UNDRESS', 5)) {
                     $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdRemoveClothes";
                 }
-                if ($currentArousal >= 10) {
+                if ($currentArousal >= (int)aiagentNsfwArousalNum('AROUSAL_THRESHOLD_FOREPLAY', 10)) {
                     $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartMassage";
                     $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartSelfMasturbation";
                     $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartHandJobSex";
 
                 }
-                if ($currentArousal >= 20) {
+                if ($currentArousal >= (int)aiagentNsfwArousalNum('AROUSAL_THRESHOLD_SEX', 20)) {
                     $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartBlowJob";
                     $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartSex";
                     $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartThreesome";

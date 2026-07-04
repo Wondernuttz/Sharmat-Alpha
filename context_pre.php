@@ -109,6 +109,44 @@ if (!empty($GLOBALS['AIAGENTNSFW_AFFECTION_AUTONOMY']) && isset($GLOBALS['HERIKA
     }
 }
 
+// AROUSAL RECEPTIVENESS (arousal enabled only): colors HOW arousal builds in conversation by relationship
+// depth - flavor only, gates unchanged. Fond/Devoted/Bonded by affinity; courtship variant when the type
+// is not yet sex-eligible. Slaves/prostitutes excluded (their lanes don't run on arousal). Normal turns only.
+if (function_exists('isSexDisposalEnabled') && isSexDisposalEnabled() && isset($GLOBALS['HERIKA_PERS'])
+    && function_exists('getNpcAffinity') && function_exists('getIntimacyForActor')
+    && (!function_exists('isNpcSlave') || !isNpcSlave($actorName))
+    && (!function_exists('isProstitute') || !isProstitute($actorName))) {
+    $__arx = getIntimacyForActor($actorName);
+    if ((int)($__arx['level'] ?? 0) < 1 && empty($__arx['sex_started']) && (int)($__arx['intensity_tier'] ?? 0) < 3) {
+        $__arAff = (int)getNpcAffinity($actorName);
+        $__arKey = '';
+        if ($__arAff >= 56) {
+            if (function_exists('aiagentNsfwRelTypeSexEligible') && !aiagentNsfwRelTypeSexEligible($actorName)) { $__arKey = 'arousal_recep_courtship'; }
+            elseif ($__arAff >= 91) { $__arKey = 'arousal_recep_bonded'; }
+            elseif ($__arAff >= 76) { $__arKey = 'arousal_recep_devoted'; }
+            else { $__arKey = 'arousal_recep_fond'; }
+        }
+        if ($__arKey !== '') {
+            $__arP = function_exists('getGlobalPrompt') ? trim((string)getGlobalPrompt($__arKey)) : '';
+            if ($__arP === '') {
+                $__arDefaults = [
+                    'arousal_recep_fond' => "You are fond of #PLAYER_NAME#, and your body has started to notice them. Warmth builds slowly in you: genuine compliments, closeness, a lingering touch each stir you a little. You are receptive but not eager - you enjoy being warmed up, and you show it in small tells, not declarations.",
+                    'arousal_recep_devoted' => "You are devoted to #PLAYER_NAME#, and desire comes readily around them. Flirtation, affection, and private moments warm you quickly, and you let them see it - leaning in, lingering, answering warmth with warmth. You still savor the build; being wanted is half the pleasure.",
+                    'arousal_recep_bonded' => "You and #PLAYER_NAME# are bonded - your desire for them lives close to the surface. A look, a touch, a low word can light you up, and you are open about wanting them. You warm fast and you make it known, in your own voice, without waiting to be coaxed.",
+                    'arousal_recep_courtship' => "You have grown fond of #PLAYER_NAME#, and there is a flutter you have not named yet. Their warmth affects you more than you let on - you might blush, linger, or lose your words a little. Nothing beyond affection is on the table; let the feeling build at its own pace.",
+                ];
+                $__arP = $__arDefaults[$__arKey] ?? '';
+            }
+            if ($__arP !== '') {
+                $__arP = str_replace(['#PLAYER_NAME#', '#NPC_NAME#', '#AROUSAL#'],
+                    [$GLOBALS['PLAYER_NAME'] ?? 'your companion', $actorName, (int)($__arx['sex_disposal'] ?? 0)], $__arP);
+                $GLOBALS['HERIKA_PERS'] .= "\n\n<arousal_receptiveness>\n" . $__arP . "\n</arousal_receptiveness>";
+                error_log("[AIAGENTNSFW] AROUSAL RECEPTIVENESS injected ({$__arKey}) for {$actorName}");
+            }
+        }
+    }
+}
+
 if (function_exists('aiagentNsfwReconcileActorRuntimeAfterRollback')) {
     aiagentNsfwReconcileActorRuntimeAfterRollback($actorName, $GLOBALS["gameRequest"][2] ?? null);
 }

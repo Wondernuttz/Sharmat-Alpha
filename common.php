@@ -250,6 +250,42 @@ function getIntimacyForActor($actorName)
         }
     }
 
+    // AROUSAL DECAY: lazy game-time cooldown, applied once per request on first read. Replaces the old
+    // per-conversation-turn -1 (which drained fastest mid-conversation and never while sleeping/waiting).
+    // Rate is UI-tunable; sleep/wait sobers the libido like it sobers the liquor.
+    static $arousalDecayDone = [];
+    if (empty($arousalDecayDone[$actorName]) && function_exists('isSexDisposalEnabled') && isSexDisposalEnabled()
+        && $actorName !== ($GLOBALS["PLAYER_NAME"] ?? null)
+        && (!function_exists('nsfwIsNarratorName') || !nsfwIsNarratorName($actorName))) {
+        $arousalDecayDone[$actorName] = true;
+        $adNow = (float)($GLOBALS["gameRequest"][2] ?? 0);
+        $adCur = (float)($intimacyStatus['sex_disposal'] ?? 0);
+        if ($adNow > 0 && $adCur > 0) {
+            $adRate = (float)_getNsfwSetting('AROUSAL_DECAY_PER_GAME_HOUR', 2);
+            $adLast = (float)($intimacyStatus['arousal_decay_gamets'] ?? 0);
+            $adChanged = false;
+            if ($adLast <= 0 || $adLast > ($adNow + 1)) {
+                // First sighting of this arousal, or Dragon Break (save reloaded before the stamp): restamp only.
+                $intimacyStatus['arousal_decay_gamets'] = $adNow;
+                $adChanged = true;
+            } elseif ($adRate > 0) {
+                $adHours = ($adNow - $adLast) * 0.0000024;
+                $adDrop = (int)floor($adHours * $adRate);
+                if ($adDrop >= 1) {
+                    $intimacyStatus['sex_disposal'] = max(0, $adCur - $adDrop);
+                    // Advance the stamp only by the hours consumed so fractional decay accumulates.
+                    $intimacyStatus['arousal_decay_gamets'] = $adLast + (($adDrop / $adRate) / 0.0000024);
+                    $adChanged = true;
+                    error_log("[AIAGENTNSFW] Arousal decay for {$actorName}: -{$adDrop} over " . round($adHours, 2) . " game-h -> {$intimacyStatus['sex_disposal']}");
+                }
+            }
+            if ($adChanged) {
+                $extended["aiagent_nsfw_intimacy_data"] = $intimacyStatus;
+                NsfwNpcData::save($actorName, $extended);
+            }
+        }
+    }
+
     return $intimacyStatus;
 }
 
@@ -2525,4 +2561,10 @@ function _getNsfwSetting($key, $default = null) {
     }
 
     return isset($cache[$key]) ? $cache[$key] : $default;
+}
+
+// Numeric setting with a safe fallback - arousal gains/thresholds are UI-tunable numbers.
+function aiagentNsfwArousalNum($key, $default) {
+    $v = _getNsfwSetting($key, $default);
+    return is_numeric($v) ? (float)$v : (float)$default;
 }

@@ -737,25 +737,11 @@ if ($npcPromptPartnerName !== "") {
 
 // From here should apply to profiled actors
 
-// Disposal modifiers per iteration
-// Every iteration we lower sex_disposal by 1
-// ONLY if sex_disposal system is enabled
-if (isSexDisposalEnabled()) {
-    if (isset($intimacyStatus["sex_disposal"])) {
-        if ($intimacyStatus["sex_disposal"]>0) {
-
-            $intimacyStatus["sex_disposal"]=$intimacyStatus["sex_disposal"]-1;
-            error_log("Lowering sex_disposal {$intimacyStatus["sex_disposal"]}");
-        } else if ($intimacyStatus["sex_disposal"]<1) {
-
-            $intimacyStatus["sex_disposal"]=-1;
-            error_log("Limting sex_disposal {$intimacyStatus["sex_disposal"]}");
-        }
-    } else {
-        $intimacyStatus["sex_disposal"]=0;
-        $intimacyStatus["level"]=0;
-        error_log("Resetting sex_disposal {$intimacyStatus["sex_disposal"]}");
-    }
+// Arousal cooldown is now GAME-TIME decay applied lazily in getIntimacyForActor (common.php) - the old
+// per-conversation-turn -1 drained fastest while talking and never while sleeping/waiting, which is backwards.
+if (isSexDisposalEnabled() && !isset($intimacyStatus["sex_disposal"])) {
+    $intimacyStatus["sex_disposal"]=0;
+    $intimacyStatus["level"]=0;
 }
 
 $actorName=$GLOBALS["HERIKA_NAME"];
@@ -946,19 +932,45 @@ if (isSexDisposalEnabled()) {
 
     }
 
-    // If current task is relax we increase sex disposal every itteration
+    // Conversation-driven arousal: relax-task ambiance and flirty speech moods. GAIN COOLDOWN: at most one
+    // conversational gain per AROUSAL_GAIN_COOLDOWN_SECONDS - flirty lines used to pump +2 every single turn.
+    // Negative moods land immediately (never cooldown-gated). These moves are PERSISTED here: on plain
+    // non-scene turns no later branch saves, so conversational arousal previously never survived the request.
+    $convGain = (int)aiagentNsfwArousalNum('AROUSAL_GAIN_CONVERSATION', 2);
+    $gainCooldown = (int)aiagentNsfwArousalNum('AROUSAL_GAIN_COOLDOWN_SECONDS', 60);
+    $lastConvGain = (int)($intimacyStatus['arousal_conv_gain_ts'] ?? 0);
+    $convGainReady = ($gainCooldown <= 0) || ((time() - $lastConvGain) >= $gainCooldown) || ($lastConvGain > time());
+    $arousalMoved = false;
+
     $currentTask=DataGetCurrentTask();
-    if (strpos($currentTask,"relax")!==false) {
-        $intimacyStatus["sex_disposal"]+=2;
-        error_log("Increasing sex_disposal {$intimacyStatus["sex_disposal"]} because relax mode");
-    }
+    $wantsConvGain = (strpos($currentTask,"relax")!==false);
 
     // Speech mood modifier
     $moodModif=getSexDisposalFromMood($GLOBALS["HERIKA_NAME"],$GLOBALS["gameRequest"][2]);
-    if ($moodModif>0.45)
-        $intimacyStatus["sex_disposal"]+=2;
-    else if ($moodModif<0)
-        $intimacyStatus["sex_disposal"]-=2;
+    if ($moodModif>0.45) {
+        $wantsConvGain = true;
+    } else if ($moodModif<0) {
+        $intimacyStatus["sex_disposal"] = max(-2, ($intimacyStatus["sex_disposal"] ?? 0) - $convGain);
+        $arousalMoved = true;
+    }
+
+    if ($wantsConvGain && $convGain > 0) {
+        if ($convGainReady) {
+            $intimacyStatus["sex_disposal"] = ($intimacyStatus["sex_disposal"] ?? 0) + $convGain;
+            $intimacyStatus['arousal_conv_gain_ts'] = time();
+            $arousalMoved = true;
+            error_log("[AIAGENTNSFW] Arousal conversation gain +{$convGain} -> {$intimacyStatus["sex_disposal"]} for {$GLOBALS["HERIKA_NAME"]}");
+        } else {
+            error_log("[AIAGENTNSFW] Arousal conversation gain SKIPPED (cooldown {$gainCooldown}s) for {$GLOBALS["HERIKA_NAME"]}");
+        }
+    }
+
+    if ($arousalMoved) {
+        updateIntimacyForActor($GLOBALS["HERIKA_NAME"], [
+            'sex_disposal' => $intimacyStatus["sex_disposal"],
+            'arousal_conv_gain_ts' => $intimacyStatus['arousal_conv_gain_ts'] ?? $lastConvGain,
+        ]);
+    }
 }
 
 
@@ -1893,6 +1905,27 @@ if ($scenePhase === "affection") {
             if ($consentDirective === '') {
                 $consentDirective = "You must decide now. If you want this scene, call AcceptSex. If you do not want this scene, call RefuseSex. Do not describe sex. Do not use your sex speech style. Do not continue the scene until you choose.";
             }
+            // AROUSAL WARM-UP DECLINE: rel gate PASSES but she isn't warmed up yet - direct a WARM "not yet"
+            // instead of the bare accept/refuse choice. Pacing, not rejection: the RefuseSex arousal drain is
+            // skipped (pending flag) and the relationship eval is tagged so affinity is never docked for it.
+            // Skooma-bargain and slaves bypass arousal; prostitutes never reach this branch.
+            if (isSexDisposalEnabled() && !$isSkoomaAddictionBargain) {
+                $wuThr = getGlobalPrompt('arousal_gating_threshold');
+                $wuThr = ($wuThr !== '' && $wuThr !== null) ? (int)$wuThr : 10;
+                $wuArousal = (int)($intimacyStatus["sex_disposal"] ?? 0);
+                if ($wuArousal < $wuThr) {
+                    $wuPrompt = trim((string)getGlobalPrompt('arousal_warmup_decline'));
+                    if ($wuPrompt === '') {
+                        $wuPrompt = "You like #PLAYER_NAME# and this is wanted - but your body is not there yet (arousal #AROUSAL#). Decline THIS advance warmly: no cold rejection, no offense taken. Tell them what would get you in the mood - closeness, kisses, slow hands, sweet words - and invite them to warm you up. If you formally decline the scene, call RefuseSex, but keep your words affectionate and full of promise. This is pacing, not rejection - never treat #PLAYER_NAME# as unwelcome.";
+                    }
+                    $wuPrompt = str_replace(['#PLAYER_NAME#', '#NPC_NAME#', '#AROUSAL#'],
+                        [$GLOBALS['PLAYER_NAME'] ?? 'the player', $actorName, $wuArousal], $wuPrompt);
+                    $consentDirective = $wuPrompt;
+                    $GLOBALS['AIAGENTNSFW_AROUSAL_PACING_DECLINE'] = true;
+                    $intimacyStatus['arousal_pacing_decline_pending'] = true;
+                    error_log("[AIAGENTNSFW] AROUSAL WARMUP DECLINE injected for {$actorName} (arousal {$wuArousal} < {$wuThr}, rel gate passed)");
+                }
+            }
             $tierCueContext = trim((string)$tierCueContext . "\n\n" . NsfwRelationship::wrapXml('consent_decision',
                 $consentDirective . " If you refuse, " . $rvGuard));
             }
@@ -2154,6 +2187,8 @@ if ($scenePhase === "affection") {
                 $arousalPlayerName = $GLOBALS["PLAYER_NAME"] ?? "the player";
                 $arousalLowPrompt = str_replace(['#PLAYER_NAME#', '#AROUSAL#'], [$arousalPlayerName, $currentArousal], $arousalLowPrompt);
                 $GLOBALS["HERIKA_PERSONALITY"] .= "\n<arousal_gate>\n{$arousalLowPrompt}\n</arousal_gate>";
+                // Any refusal born of this low-arousal hold is pacing, not dislike - protect the rel eval.
+                $GLOBALS['AIAGENTNSFW_AROUSAL_PACING_DECLINE'] = true;
                 error_log("[AIAGENTNSFW] Injected arousal_low AFTER consent ($currentArousal < threshold $arousalThreshold) for $actorName");
             }
             error_log("[AIAGENTNSFW] Arousal too low ($currentArousal < $arousalThreshold) - foreplay for $actorName");

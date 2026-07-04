@@ -293,6 +293,28 @@
                                 <label>Not In The Mood (Below Threshold)</label>
                                 <textarea id="promptArousalLow" class="auto-resize" style="min-height: 60px; width: 100%; resize: none; overflow: hidden;">#PLAYER_NAME# has initiated intimacy, but you're not in the mood right now. Your arousal is #AROUSAL# (needs to be higher). You may like #PLAYER_NAME#, but this isn't the right time. Politely decline or suggest trying again later when you're more receptive.</textarea>
                             </div>
+                            <div class="form-group">
+                                <label>Warm-Up Decline (decision turn, relationship gate passed)</label>
+                                <textarea id="promptArousalWarmupDecline" class="auto-resize" style="min-height: 72px; width: 100%; resize: none; overflow: hidden;">You like #PLAYER_NAME# and this is wanted - but your body is not there yet (arousal #AROUSAL#). Decline THIS advance warmly: no cold rejection, no offense taken. Tell them what would get you in the mood - closeness, kisses, slow hands, sweet words - and invite them to warm you up. If you formally decline the scene, call RefuseSex, but keep your words affectionate and full of promise. This is pacing, not rejection - never treat #PLAYER_NAME# as unwelcome.</textarea>
+                                <p class="legend">Fires when a sex scene is proposed, the relationship ALLOWS it, but arousal is below the threshold above. A refusal from this prompt never drains arousal and never dings the relationship (the relationship model is told it was pacing, not dislike).</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Receptiveness - Fond (56+)</label>
+                                <textarea id="promptArousalRecepFond" class="auto-resize" style="min-height: 60px; width: 100%; resize: none; overflow: hidden;">You are fond of #PLAYER_NAME#, and your body has started to notice them. Warmth builds slowly in you: genuine compliments, closeness, a lingering touch each stir you a little. You are receptive but not eager - you enjoy being warmed up, and you show it in small tells, not declarations.</textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Receptiveness - Devoted (76+)</label>
+                                <textarea id="promptArousalRecepDevoted" class="auto-resize" style="min-height: 60px; width: 100%; resize: none; overflow: hidden;">You are devoted to #PLAYER_NAME#, and desire comes readily around them. Flirtation, affection, and private moments warm you quickly, and you let them see it - leaning in, lingering, answering warmth with warmth. You still savor the build; being wanted is half the pleasure.</textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Receptiveness - Bonded (91+)</label>
+                                <textarea id="promptArousalRecepBonded" class="auto-resize" style="min-height: 60px; width: 100%; resize: none; overflow: hidden;">You and #PLAYER_NAME# are bonded - your desire for them lives close to the surface. A look, a touch, a low word can light you up, and you are open about wanting them. You warm fast and you make it known, in your own voice, without waiting to be coaxed.</textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Receptiveness - Courtship (Fond+, type not eligible)</label>
+                                <textarea id="promptArousalRecepCourtship" class="auto-resize" style="min-height: 60px; width: 100%; resize: none; overflow: hidden;">You have grown fond of #PLAYER_NAME#, and there is a flutter you have not named yet. Their warmth affects you more than you let on - you might blush, linger, or lose your words a little. Nothing beyond affection is on the table; let the feeling build at its own pace.</textarea>
+                                <p class="legend">Receptiveness prompts color HOW arousal builds in conversation by relationship depth (arousal gating on, normal turns only). They never change any gate. Slaves and prostitutes are excluded - their lanes don't run on arousal.</p>
+                            </div>
                         </div>
                     </div>
 

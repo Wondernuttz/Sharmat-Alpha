@@ -1011,6 +1011,20 @@ SQL;
                 'TRACK_FERTILITY_INFO' => isset($_POST['TRACK_FERTILITY_INFO']) ? filter_var($_POST['TRACK_FERTILITY_INFO'], FILTER_VALIDATE_BOOLEAN) : false,
                 'CHILD_PROTECTION_FRAME' => $_POST['CHILD_PROTECTION_FRAME'] ?? '',
                 'ENABLE_SEX_DISPOSAL' => isset($_POST['ENABLE_SEX_DISPOSAL']) ? filter_var($_POST['ENABLE_SEX_DISPOSAL'], FILTER_VALIDATE_BOOLEAN) : true,
+                // Arousal tuning (arousal refactor 2026-07-03): decay, gain cooldown, gains, thresholds
+                'AROUSAL_DECAY_PER_GAME_HOUR' => isset($_POST['AROUSAL_DECAY_PER_GAME_HOUR']) ? max(0, min(100, intval($_POST['AROUSAL_DECAY_PER_GAME_HOUR']))) : 2,
+                'AROUSAL_GAIN_COOLDOWN_SECONDS' => isset($_POST['AROUSAL_GAIN_COOLDOWN_SECONDS']) ? max(0, min(3600, intval($_POST['AROUSAL_GAIN_COOLDOWN_SECONDS']))) : 60,
+                'AROUSAL_GAIN_CONVERSATION' => isset($_POST['AROUSAL_GAIN_CONVERSATION']) ? max(0, min(20, intval($_POST['AROUSAL_GAIN_CONVERSATION']))) : 2,
+                'AROUSAL_GAIN_AFFECTION' => isset($_POST['AROUSAL_GAIN_AFFECTION']) ? max(0, min(20, intval($_POST['AROUSAL_GAIN_AFFECTION']))) : 1,
+                'AROUSAL_GAIN_UNDRESS' => isset($_POST['AROUSAL_GAIN_UNDRESS']) ? max(0, min(50, intval($_POST['AROUSAL_GAIN_UNDRESS']))) : 6,
+                'AROUSAL_GAIN_MASSAGE' => isset($_POST['AROUSAL_GAIN_MASSAGE']) ? max(0, min(50, intval($_POST['AROUSAL_GAIN_MASSAGE']))) : 5,
+                'AROUSAL_GAIN_SEXACT' => isset($_POST['AROUSAL_GAIN_SEXACT']) ? max(0, min(50, intval($_POST['AROUSAL_GAIN_SEXACT']))) : 15,
+                'AROUSAL_GAIN_TRANSACTION' => isset($_POST['AROUSAL_GAIN_TRANSACTION']) ? max(0, min(50, intval($_POST['AROUSAL_GAIN_TRANSACTION']))) : 10,
+                'AROUSAL_GAIN_ACCEPTSEX' => isset($_POST['AROUSAL_GAIN_ACCEPTSEX']) ? max(0, min(50, intval($_POST['AROUSAL_GAIN_ACCEPTSEX']))) : 20,
+                'AROUSAL_DROP_REFUSAL' => isset($_POST['AROUSAL_DROP_REFUSAL']) ? max(0, min(50, intval($_POST['AROUSAL_DROP_REFUSAL']))) : 15,
+                'AROUSAL_THRESHOLD_UNDRESS' => isset($_POST['AROUSAL_THRESHOLD_UNDRESS']) ? max(0, min(100, intval($_POST['AROUSAL_THRESHOLD_UNDRESS']))) : 5,
+                'AROUSAL_THRESHOLD_FOREPLAY' => isset($_POST['AROUSAL_THRESHOLD_FOREPLAY']) ? max(0, min(100, intval($_POST['AROUSAL_THRESHOLD_FOREPLAY']))) : 10,
+                'AROUSAL_THRESHOLD_SEX' => isset($_POST['AROUSAL_THRESHOLD_SEX']) ? max(0, min(100, intval($_POST['AROUSAL_THRESHOLD_SEX']))) : 20,
                 'ENABLE_AFFINITY_GATING' => isset($_POST['ENABLE_AFFINITY_GATING']) ? filter_var($_POST['ENABLE_AFFINITY_GATING'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_ALLOW_NPC_JOIN_SCENES' => isset($_POST['NSFW_ALLOW_NPC_JOIN_SCENES']) ? filter_var($_POST['NSFW_ALLOW_NPC_JOIN_SCENES'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_ALLOW_PACE_CONTROL' => isset($_POST['NSFW_ALLOW_PACE_CONTROL']) ? filter_var($_POST['NSFW_ALLOW_PACE_CONTROL'], FILTER_VALIDATE_BOOLEAN) : true,
@@ -3046,6 +3060,11 @@ PROMPT;
                 'enable_witness_lines' => isset($_POST['enable_witness_lines']) ? (bool)$_POST['enable_witness_lines'] : true,
                 'arousal_low' => $_POST['arousal_low'] ?? '',
                 'arousal_gating_threshold' => isset($_POST['arousal_gating_threshold']) ? (int)$_POST['arousal_gating_threshold'] : 10,
+                'arousal_warmup_decline' => $_POST['arousal_warmup_decline'] ?? '',
+                'arousal_recep_fond' => $_POST['arousal_recep_fond'] ?? '',
+                'arousal_recep_devoted' => $_POST['arousal_recep_devoted'] ?? '',
+                'arousal_recep_bonded' => $_POST['arousal_recep_bonded'] ?? '',
+                'arousal_recep_courtship' => $_POST['arousal_recep_courtship'] ?? '',
 
                 // Price Templates (budget/standard/luxury) - stored as JSON objects
                 'price_template_budget' => isset($_POST['price_template_budget']) ? json_decode($_POST['price_template_budget'], true) : null,
@@ -3179,6 +3198,11 @@ PROMPT;
             'enable_witness_lines' => true,
             'arousal_low' => '#PLAYER_NAME# has initiated intimacy, but you\'re not in the mood right now. Your arousal is #AROUSAL# (needs to be higher). You may like #PLAYER_NAME#, but this isn\'t the right time. Politely decline or suggest trying again later when you\'re more receptive.',
             'arousal_gating_threshold' => 10,
+            'arousal_warmup_decline' => 'You like #PLAYER_NAME# and this is wanted - but your body is not there yet (arousal #AROUSAL#). Decline THIS advance warmly: no cold rejection, no offense taken. Tell them what would get you in the mood - closeness, kisses, slow hands, sweet words - and invite them to warm you up. If you formally decline the scene, call RefuseSex, but keep your words affectionate and full of promise. This is pacing, not rejection - never treat #PLAYER_NAME# as unwelcome.',
+            'arousal_recep_fond' => 'You are fond of #PLAYER_NAME#, and your body has started to notice them. Warmth builds slowly in you: genuine compliments, closeness, a lingering touch each stir you a little. You are receptive but not eager - you enjoy being warmed up, and you show it in small tells, not declarations.',
+            'arousal_recep_devoted' => 'You are devoted to #PLAYER_NAME#, and desire comes readily around them. Flirtation, affection, and private moments warm you quickly, and you let them see it - leaning in, lingering, answering warmth with warmth. You still savor the build; being wanted is half the pleasure.',
+            'arousal_recep_bonded' => 'You and #PLAYER_NAME# are bonded - your desire for them lives close to the surface. A look, a touch, a low word can light you up, and you are open about wanting them. You warm fast and you make it known, in your own voice, without waiting to be coaxed.',
+            'arousal_recep_courtship' => 'You have grown fond of #PLAYER_NAME#, and there is a flutter you have not named yet. Their warmth affects you more than you let on - you might blush, linger, or lose your words a little. Nothing beyond affection is on the table; let the feeling build at its own pace.',
 
             // Section 2A: Marriage (Spouse + Spouse) Tier Prompts (11 tiers)
             'marriage_spouse_hostile' => 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -6999,6 +7023,25 @@ PROMPT;
                         if (data.data.CHILD_PROTECTION_FRAME) elSet('childProtectionFrame', 'value', data.data.CHILD_PROTECTION_FRAME);
                         elSet('enableSexDisposal', 'checked', data.data.ENABLE_SEX_DISPOSAL !== false);  // Default true
                         elSet('enableAffinityGating', 'checked', data.data.ENABLE_AFFINITY_GATING !== false);  // Default true
+                        // Arousal tuning numbers (elSet is null-safe)
+                        const arousalNums = {
+                            arousalDecayPerHour: ['AROUSAL_DECAY_PER_GAME_HOUR', 2],
+                            arousalGainCooldown: ['AROUSAL_GAIN_COOLDOWN_SECONDS', 60],
+                            arousalGainConversation: ['AROUSAL_GAIN_CONVERSATION', 2],
+                            arousalGainAffection: ['AROUSAL_GAIN_AFFECTION', 1],
+                            arousalGainUndress: ['AROUSAL_GAIN_UNDRESS', 6],
+                            arousalGainMassage: ['AROUSAL_GAIN_MASSAGE', 5],
+                            arousalGainSexact: ['AROUSAL_GAIN_SEXACT', 15],
+                            arousalGainTransaction: ['AROUSAL_GAIN_TRANSACTION', 10],
+                            arousalGainAcceptsex: ['AROUSAL_GAIN_ACCEPTSEX', 20],
+                            arousalDropRefusal: ['AROUSAL_DROP_REFUSAL', 15],
+                            arousalThresholdUndress: ['AROUSAL_THRESHOLD_UNDRESS', 5],
+                            arousalThresholdForeplay: ['AROUSAL_THRESHOLD_FOREPLAY', 10],
+                            arousalThresholdSex: ['AROUSAL_THRESHOLD_SEX', 20]
+                        };
+                        Object.keys(arousalNums).forEach(function(id) {
+                            elSet(id, 'value', data.data[arousalNums[id][0]] !== undefined ? data.data[arousalNums[id][0]] : arousalNums[id][1]);
+                        });
                         // Declared before first use: these were mid-handler consts used 100 lines
                         // earlier, so every settings load died in the temporal dead zone and the UI
                         // below the scene toggles silently never populated.
@@ -7329,6 +7372,21 @@ PROMPT;
             fdSet('CHILD_PROTECTION_FRAME', 'childProtectionFrame', 'value');
             fdSet('ENABLE_SEX_DISPOSAL', 'enableSexDisposal', 'checked');
             fdSet('ENABLE_AFFINITY_GATING', 'enableAffinityGating', 'checked');
+            // Arousal tuning numbers
+            [['AROUSAL_DECAY_PER_GAME_HOUR','arousalDecayPerHour'],
+             ['AROUSAL_GAIN_COOLDOWN_SECONDS','arousalGainCooldown'],
+             ['AROUSAL_GAIN_CONVERSATION','arousalGainConversation'],
+             ['AROUSAL_GAIN_AFFECTION','arousalGainAffection'],
+             ['AROUSAL_GAIN_UNDRESS','arousalGainUndress'],
+             ['AROUSAL_GAIN_MASSAGE','arousalGainMassage'],
+             ['AROUSAL_GAIN_SEXACT','arousalGainSexact'],
+             ['AROUSAL_GAIN_TRANSACTION','arousalGainTransaction'],
+             ['AROUSAL_GAIN_ACCEPTSEX','arousalGainAcceptsex'],
+             ['AROUSAL_DROP_REFUSAL','arousalDropRefusal'],
+             ['AROUSAL_THRESHOLD_UNDRESS','arousalThresholdUndress'],
+             ['AROUSAL_THRESHOLD_FOREPLAY','arousalThresholdForeplay'],
+             ['AROUSAL_THRESHOLD_SEX','arousalThresholdSex']
+            ].forEach(function(p) { if (document.getElementById(p[1])) fdSet(p[0], p[1], 'value'); });
             if (document.getElementById('nsfwAllowNpcJoinScenes')) fdSet('NSFW_ALLOW_NPC_JOIN_SCENES', 'nsfwAllowNpcJoinScenes', 'checked');
             if (document.getElementById('nsfwAllowPaceControl')) fdSet('NSFW_ALLOW_PACE_CONTROL', 'nsfwAllowPaceControl', 'checked');
             if (document.getElementById('nsfwAllowMidsceneSteering')) fdSet('NSFW_ALLOW_MIDSCENE_STEERING', 'nsfwAllowMidsceneSteering', 'checked');
@@ -10379,6 +10437,11 @@ PROMPT;
         witness_breast_play: '#PLAYER_NAME# is sexually assaulting #NPC_NAME# - playing with titties.',
         enable_witness_lines: true,
         arousal_low: '#PLAYER_NAME# has initiated intimacy, but you\'re not in the mood right now. Your arousal is #AROUSAL# (needs to be higher). You may like #PLAYER_NAME#, but this isn\'t the right time. Politely decline or suggest trying again later when you\'re more receptive.',
+        arousal_warmup_decline: 'You like #PLAYER_NAME# and this is wanted - but your body is not there yet (arousal #AROUSAL#). Decline THIS advance warmly: no cold rejection, no offense taken. Tell them what would get you in the mood - closeness, kisses, slow hands, sweet words - and invite them to warm you up. If you formally decline the scene, call RefuseSex, but keep your words affectionate and full of promise. This is pacing, not rejection - never treat #PLAYER_NAME# as unwelcome.',
+        arousal_recep_fond: 'You are fond of #PLAYER_NAME#, and your body has started to notice them. Warmth builds slowly in you: genuine compliments, closeness, a lingering touch each stir you a little. You are receptive but not eager - you enjoy being warmed up, and you show it in small tells, not declarations.',
+        arousal_recep_devoted: 'You are devoted to #PLAYER_NAME#, and desire comes readily around them. Flirtation, affection, and private moments warm you quickly, and you let them see it - leaning in, lingering, answering warmth with warmth. You still savor the build; being wanted is half the pleasure.',
+        arousal_recep_bonded: 'You and #PLAYER_NAME# are bonded - your desire for them lives close to the surface. A look, a touch, a low word can light you up, and you are open about wanting them. You warm fast and you make it known, in your own voice, without waiting to be coaxed.',
+        arousal_recep_courtship: 'You have grown fond of #PLAYER_NAME#, and there is a flutter you have not named yet. Their warmth affects you more than you let on - you might blush, linger, or lose your words a little. Nothing beyond affection is on the table; let the feeling build at its own pace.',
 
         // SECTION 2A: Marriage spouse prompts (11 tiers)
         marriage_spouse_hostile: 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -10712,6 +10775,11 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     setPromptValue('promptWitnessBreastPlay', s.witness_breast_play, 'witness_breast_play');
                     if (document.getElementById('enableWitnessLines')) { document.getElementById('enableWitnessLines').checked = s.enable_witness_lines !== false; }
                     setPromptValue('promptArousalLow', s.arousal_low, 'arousal_low');
+                    setPromptValue('promptArousalWarmupDecline', s.arousal_warmup_decline, 'arousal_warmup_decline');
+                    setPromptValue('promptArousalRecepFond', s.arousal_recep_fond, 'arousal_recep_fond');
+                    setPromptValue('promptArousalRecepDevoted', s.arousal_recep_devoted, 'arousal_recep_devoted');
+                    setPromptValue('promptArousalRecepBonded', s.arousal_recep_bonded, 'arousal_recep_bonded');
+                    setPromptValue('promptArousalRecepCourtship', s.arousal_recep_courtship, 'arousal_recep_courtship');
                     if (s.arousal_gating_threshold !== undefined) {
                         document.getElementById('arousalGatingThreshold').value = s.arousal_gating_threshold;
                         document.getElementById('arousalGatingThresholdValue').textContent = s.arousal_gating_threshold;
@@ -11009,6 +11077,11 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('witness_breast_play', getVal('promptWitnessBreastPlay'));
         formData.append('enable_witness_lines', (document.getElementById('enableWitnessLines') && document.getElementById('enableWitnessLines').checked) ? '1' : '0');
         formData.append('arousal_low', getVal('promptArousalLow'));
+        formData.append('arousal_warmup_decline', getVal('promptArousalWarmupDecline'));
+        formData.append('arousal_recep_fond', getVal('promptArousalRecepFond'));
+        formData.append('arousal_recep_devoted', getVal('promptArousalRecepDevoted'));
+        formData.append('arousal_recep_bonded', getVal('promptArousalRecepBonded'));
+        formData.append('arousal_recep_courtship', getVal('promptArousalRecepCourtship'));
         formData.append('arousal_gating_threshold', document.getElementById('arousalGatingThreshold').value);
 
         // Devices & Wearables (Devious Devices)
@@ -11288,6 +11361,11 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         document.getElementById('enableNonConsentPrompt').checked = true;
         var _wlReset = document.getElementById('enableWitnessLines'); if (_wlReset) { _wlReset.checked = true; } // fix 2026-07-01: witness toggle was missing from reset
         resetVal('promptArousalLow', 'arousal_low');
+        resetVal('promptArousalWarmupDecline', 'arousal_warmup_decline');
+        resetVal('promptArousalRecepFond', 'arousal_recep_fond');
+        resetVal('promptArousalRecepDevoted', 'arousal_recep_devoted');
+        resetVal('promptArousalRecepBonded', 'arousal_recep_bonded');
+        resetVal('promptArousalRecepCourtship', 'arousal_recep_courtship');
         document.getElementById('arousalGatingThreshold').value = 10;
         document.getElementById('arousalGatingThresholdValue').textContent = '10';
 

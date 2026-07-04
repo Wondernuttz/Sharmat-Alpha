@@ -688,7 +688,77 @@ ingredient</textarea>
                         <input type="checkbox" id="enableSexDisposal" name="ENABLE_SEX_DISPOSAL">
                         <span>Enable Arousal Gating</span>
                     </label>
-                    <p class="legend">When enabled, intimate actions are progressively unlocked based on the NPC's arousal level. Arousal builds up through flirty conversation, romantic moods, and relaxing activities - then gradually cools down over time. At threshold 1: kissing unlocks. At 5: stripping. At 10: foreplay. At 20: full sex acts. When disabled, all NSFW functions are available immediately (useful for quick testing or if you prefer player-driven pacing).<br><br><strong style="color: #B8A8C8;">Pro tip:</strong> Combine this with the CHIM relationship system for deeply immersive romantic progression. As relationship tiers advance (from Wary → Neutral → Friendly → Fond → Devoted → Bonded), the AI naturally becomes more receptive to flirtation, which builds arousal faster. This creates organic, multi-layered intimacy where emotional connection and physical attraction develop together over time.</p>
+                    <p class="legend">When enabled, intimate actions are progressively unlocked based on the NPC's arousal level. Arousal builds through flirty conversation (rate-limited by the gain cooldown below), affection, and intimate actions - and cools down with GAME time (sleep, waiting, and fast-travel all lower it, like sobering up). Thresholds below control what unlocks when; the scene-engage threshold lives on the Prompts tab (Arousal Gating Threshold). Relationship gates stay separate: the relationship decides IF she ever would (permission), arousal decides if she's in the mood right NOW (readiness) - both must pass. When disabled, all NSFW functions are available immediately.<br><br><strong style="color: #B8A8C8;">Pro tip:</strong> Combine this with the CHIM relationship system for deeply immersive romantic progression. As relationship tiers advance, receptiveness prompts make the AI warm to flirtation faster, so emotional connection and physical attraction develop together over time.</p>
+                </div>
+
+                <h3 style="margin: 20px 0 10px; color: #FDF5D0; font-size: 16px;">Arousal Tuning</h3>
+                <p class="legend" style="margin-bottom: 12px;">All values only apply while Arousal Gating is enabled. Gains are points added per action; thresholds are the arousal needed to unlock that group of actions.</p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px;">
+                    <div class="form-group">
+                        <label style="color: #9988BB; font-size: 12px; display: block;">Decay per Game Hour</label>
+                        <input type="number" id="arousalDecayPerHour" name="AROUSAL_DECAY_PER_GAME_HOUR" min="0" max="100" step="1" value="2" style="width: 90px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">Points lost per GAME hour. 0 = never cools down. Default: 2.</p>
+                    </div>
+                    <div class="form-group">
+                        <label style="color: #9988BB; font-size: 12px; display: block;">Conversation Gain Cooldown</label>
+                        <input type="number" id="arousalGainCooldown" name="AROUSAL_GAIN_COOLDOWN_SECONDS" min="0" max="3600" step="5" value="60" style="width: 90px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">Seconds between conversation/mood arousal gains. 0 = every turn (old behavior). Default: 60.</p>
+                    </div>
+                    <div class="form-group">
+                        <label style="color: #9988BB; font-size: 12px; display: block;">Gain: Conversation/Mood</label>
+                        <input type="number" id="arousalGainConversation" name="AROUSAL_GAIN_CONVERSATION" min="0" max="20" step="1" value="2" style="width: 90px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">Per flirty/relaxed beat (also the negative-mood drop). Default: 2.</p>
+                    </div>
+                    <div class="form-group">
+                        <label style="color: #9988BB; font-size: 12px; display: block;">Gain: Affection</label>
+                        <input type="number" id="arousalGainAffection" name="AROUSAL_GAIN_AFFECTION" min="0" max="20" step="1" value="1" style="width: 90px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">Per hug/hand-hold; a kiss gives double. Default: 1.</p>
+                    </div>
+                    <div class="form-group">
+                        <label style="color: #9988BB; font-size: 12px; display: block;">Gain: Undressing</label>
+                        <input type="number" id="arousalGainUndress" name="AROUSAL_GAIN_UNDRESS" min="0" max="50" step="1" value="6" style="width: 90px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">When she removes her clothes. Default: 6.</p>
+                    </div>
+                    <div class="form-group">
+                        <label style="color: #9988BB; font-size: 12px; display: block;">Gain: Massage/Sensual</label>
+                        <input type="number" id="arousalGainMassage" name="AROUSAL_GAIN_MASSAGE" min="0" max="50" step="1" value="5" style="width: 90px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">Massage and solo touch. Default: 5.</p>
+                    </div>
+                    <div class="form-group">
+                        <label style="color: #9988BB; font-size: 12px; display: block;">Gain: Sex Acts</label>
+                        <input type="number" id="arousalGainSexact" name="AROUSAL_GAIN_SEXACT" min="0" max="50" step="1" value="15" style="width: 90px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">Per sex act she initiates or joins. Default: 15.</p>
+                    </div>
+                    <div class="form-group">
+                        <label style="color: #9988BB; font-size: 12px; display: block;">Gain: Paid Transaction</label>
+                        <input type="number" id="arousalGainTransaction" name="AROUSAL_GAIN_TRANSACTION" min="0" max="50" step="1" value="10" style="width: 90px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">Prostitute accepting a transaction. Default: 10.</p>
+                    </div>
+                    <div class="form-group">
+                        <label style="color: #9988BB; font-size: 12px; display: block;">Gain: AcceptSex</label>
+                        <input type="number" id="arousalGainAcceptsex" name="AROUSAL_GAIN_ACCEPTSEX" min="0" max="50" step="1" value="20" style="width: 90px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">When she consents to a scene. Default: 20.</p>
+                    </div>
+                    <div class="form-group">
+                        <label style="color: #9988BB; font-size: 12px; display: block;">Drop: Refusal</label>
+                        <input type="number" id="arousalDropRefusal" name="AROUSAL_DROP_REFUSAL" min="0" max="50" step="1" value="15" style="width: 90px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">Lost on a genuine RefuseSex. A "warm me up" pacing decline never drains. Default: 15.</p>
+                    </div>
+                    <div class="form-group">
+                        <label style="color: #9988BB; font-size: 12px; display: block;">Threshold: Undressing</label>
+                        <input type="number" id="arousalThresholdUndress" name="AROUSAL_THRESHOLD_UNDRESS" min="0" max="100" step="1" value="5" style="width: 90px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">Arousal needed to unlock stripping. Default: 5.</p>
+                    </div>
+                    <div class="form-group">
+                        <label style="color: #9988BB; font-size: 12px; display: block;">Threshold: Foreplay</label>
+                        <input type="number" id="arousalThresholdForeplay" name="AROUSAL_THRESHOLD_FOREPLAY" min="0" max="100" step="1" value="10" style="width: 90px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">Unlocks massage, handplay, solo. Default: 10.</p>
+                    </div>
+                    <div class="form-group">
+                        <label style="color: #9988BB; font-size: 12px; display: block;">Threshold: Full Sex</label>
+                        <input type="number" id="arousalThresholdSex" name="AROUSAL_THRESHOLD_SEX" min="0" max="100" step="1" value="20" style="width: 90px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">Unlocks the full sex acts. Default: 20.</p>
+                    </div>
                 </div>
             </div>
 
