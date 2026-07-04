@@ -1684,7 +1684,7 @@ Sets payment_confirmed=true to unlock scene progression
 ******/
 
 $GLOBALS["F_NAMES"]["ExtCmdCollectPayment"]="TakeGold";
-$GLOBALS["F_TRANSLATIONS"]["ExtCmdCollectPayment"]="Collect the agreed payment from the player for negotiated services. Payment is gold by default. If you agreed to barter, set 'item' to the exact item name from the player's inventory and 'amount' to the agreed gold-equivalent price - the item must be worth at least that much. On payment_failed (player lacks it) or payment_insufficient (item not worth enough) respond to that context and do not proceed.";
+$GLOBALS["F_TRANSLATIONS"]["ExtCmdCollectPayment"]="Collect the agreed payment from the player for negotiated services. You MUST set 'amount' to the agreed gold price as a NUMBER (like 50 or 100) - never 0, never empty. Payment is gold by default. If you agreed to barter, set 'item' to the exact item name from the player's inventory and 'amount' to the agreed gold-equivalent price - the item must be worth at least that much. On payment_failed (player lacks it) or payment_insufficient (item not worth enough) respond to that context and do not proceed.";
 $GLOBALS["FUNCTIONS"][] =
 [
     "name" => $GLOBALS["F_NAMES"]["ExtCmdCollectPayment"],
@@ -1785,8 +1785,32 @@ $GLOBALS["FUNCSERV"]["ExtCmdCollectPayment"]=function() {
     $isGoldPayment = ($paymentItem === '' || strcasecmp($paymentItem, 'gold') === 0);
     error_log("[TakeGold] raw gameRequest[3]=" . ($gameRequest[3] ?? '') . " | parsed amount={$paymentAmount} service={$serviceDesc} item=" . ($paymentItem !== '' ? $paymentItem : 'gold') . " isFuncret=" . ($isFuncret ? '1' : '0'));
 
+    if ($paymentAmount <= 0 && !$isFuncret) {
+        // DUMB-MODEL RESCUE (tester report 2026-07-04): weak models call TakeGold with no/zero amount and
+        // the doomed command failed in Papyrus ("invalid gold amount"). Rescue with the amount the
+        // negotiation already established: the pending amount, else her menu price for this affinity.
+        $rescued = (int)($intimacyStatus['payment_pending_amount'] ?? 0);
+        if ($rescued <= 0) {
+            $rescueExt = NsfwNpcData::get($npcName);
+            $rescueFlat = (int)($rescueExt['prostitute_price'] ?? 100);
+            if ($rescueFlat < 1) { $rescueFlat = 100; }
+            $rescueAff = function_exists('getNpcAffinity') ? (int)getNpcAffinity($npcName) : 0;
+            $rescued = function_exists('aiagentNsfwProstituteAffinityPrice')
+                ? (int)aiagentNsfwProstituteAffinityPrice($rescueFlat, $rescueAff)
+                : $rescueFlat;
+        }
+        if ($rescued > 0) {
+            $paymentAmount = $rescued;
+            // Fixed-position rewrite so Papyrus gets the rescued amount instead of the model's zero.
+            $gameRequest[3] = "ExtCmdCollectPayment@{$paymentAmount}@{$serviceDesc}@" . ($isGoldPayment ? '' : $paymentItem);
+            error_log("[TakeGold] RESCUED missing/zero amount -> {$paymentAmount} (pending/menu price) for {$npcName}");
+        }
+    }
+
     if ($paymentAmount <= 0) {
-        error_log("[TakeGold] Invalid amount in " . ($gameRequest[3] ?? '') . " - ignoring");
+        error_log("[TakeGold] Invalid amount in " . ($gameRequest[3] ?? '') . " - coaching model to retry with a number");
+        // Coach instead of silently ignoring - a weak model will just repeat the same broken call.
+        $GLOBALS["HERIKA_PERSONALITY"] .= "\n<payment_error>Your TakeGold call carried no gold amount, so NO payment was taken. State your price in dialogue, then call TakeGold again with the amount parameter set to that number (for example: amount 100). Do not provide the service until TakeGold succeeds.</payment_error>";
         $GLOBALS["AVOID_LLM_CALL"] = false;
         return;
     }
