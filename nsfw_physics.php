@@ -778,13 +778,38 @@ class NsfwPhysics {
             error_log("[NSFW Physics] Ignored invalid penetration flag for {$actorName} {$bodyPart}; raw body part was {$rawBodyPart}");
         }
 
+        // AFFECTION-OVERLAP GUARD (tester report 2026-07-04): the legacy kiss/hug embrace can stack both
+        // actors on the same spot, so CBPC fires a genital "penetration" that is pure pose overlap - the
+        // narration then convinces the model sex has started. During an affection beat (recent
+        // Hug/Kiss/HoldHands, no consent/sex state) demote it to a neutral closeness line.
+        $affectionOverlap = false;
+        if ($isPenetration && function_exists('getIntimacyForActor') && isset($GLOBALS['db'])) {
+            try {
+                $apIx = getIntimacyForActor($actorName);
+                $apInSexState = !empty($apIx['accepted_sex']) || !empty($apIx['sex_started']) || (int)($apIx['intensity_tier'] ?? 0) >= 3;
+                if (!$apInSexState) {
+                    $apRow = $GLOBALS['db']->fetchOne("SELECT 1 AS x FROM actions_issued WHERE actorname='" . $GLOBALS['db']->escape($actorName) . "' AND action IN ('GiveHug','Kiss','HoldHands') AND localts > " . (time() - 90) . " LIMIT 1");
+                    if ($apRow) {
+                        $isPenetration = false;
+                        $affectionOverlap = true;
+                        error_log("[NSFW Physics] AFFECTION OVERLAP: demoted genital collision to closeness for {$actorName} (kiss/hug pose stack, no sex state)");
+                    }
+                }
+            } catch (Exception $e) {}
+        }
+
         $playerName = $GLOBALS["PLAYER_NAME"] ?? "Player";
         $isSensitive = self::isSensitiveBodyPart($rawBodyPart);
         $sustained = self::updateSustainedTouchState($actorName, $bodyPart, $isBlocked, $isPenetration, $routeCandidate, $consumeSuppressedSustained);
         $isSustainedTouch = !empty($sustained['sustained']);
 
         // Build message with appropriate language
-        $message = self::buildTouchMessage($playerName, $actorName, $bodyPart, $isBlocked, $blockedBy, $isPenetration, $playerSex, $isSustainedTouch);
+        if ($affectionOverlap) {
+            // Pose-overlap contact during an embrace is closeness, never a body-part touch report.
+            $message = "{$playerName} and {$actorName} are pressed close together in the embrace. This is affectionate closeness, not a sexual act.";
+        } else {
+            $message = self::buildTouchMessage($playerName, $actorName, $bodyPart, $isBlocked, $blockedBy, $isPenetration, $playerSex, $isSustainedTouch);
+        }
 
         // Wrap in appropriate XML tag
         if ($isPenetration && !$isBlocked) {
