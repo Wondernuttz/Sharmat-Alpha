@@ -1660,6 +1660,11 @@
                             <label>Courtship Nudge (Fond+, type not eligible)</label>
                             <textarea id="promptAffectionAutonomyNudge" class="auto-resize" style="min-height: 64px; width: 100%; resize: none; overflow: hidden;">You have grown genuinely fond of #PLAYER_NAME#. When a moment feels right to YOU - warmth, gratitude, quiet closeness - you may express affection on your own: a hug, a kiss, holding hands (Give_Hug, Kiss, Hold_Hands). Nothing beyond affection is on the table or expected; let whatever this is grow naturally.</textarea>
                         </div>
+                        <div class="form-group">
+                            <label>Redress Nudge (naked, scene over)</label>
+                            <textarea id="promptRedressNudge" class="auto-resize" style="min-height: 64px; width: 100%; resize: none; overflow: hidden;">You are still undressed and the intimate moment has passed. When it feels natural - the talk winds down, you move to leave, someone could walk in - get dressed again by calling the Put_On_Clothes action. Do not stay naked through ordinary conversation unless you have a reason to.</textarea>
+                            <p class="legend">Fires on normal turns while the NPC is flagged naked with no scene running, until she redresses. Slaves are excluded (the slavery lane owns their dress state).</p>
+                        </div>
                     </div>
 
                     <!-- 2e. Masturbation -->

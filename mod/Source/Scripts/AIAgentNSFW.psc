@@ -1703,11 +1703,8 @@ Event CommandManager(String npcname,String  command, String parameter)
 
 	if (command=="ExtCmdStartSex" || command=="ExtCmdStartThreesome" || command=="ExtCmdStartBlowJob" || command=="ExtCmdStartTitfuck" || command=="ExtCmdStartAnalSex" || command=="ExtCmdStartHandJobSex" || command=="ExtCmdStartHandjobSex" || command=="ExtCmdStartMassage" || command=="ExtCmdDrinkBloodSex")
 		; REAL EXECUTION (2026-06-29): the old path only printed "started an intimate scene" and never animated.
-		; Resolve the target and actually START (or JOIN, for a threesome) an OStim/SexLab scene via the engine.
-		Actor sceneTarget = AIAgentFunctions.getAgentByName(parameter)
-		if sceneTarget == None
-			sceneTarget = Game.GetPlayer()
-		endif
+		; Resolve the target(s) and actually START (or JOIN) an OStim/SexLab scene via the engine.
+		noFacialExpressionsFaction = Game.GetFormFromFile(0xD92, "OStim.esp") as Faction ; SexCommand mouth-wait relies on this
 		; Steer scene selection by the act the model actually called, so StartBlowJob picks a blowjob scene,
 		; StartAnalSex an anal scene, etc. (the engine falls back to a random scene if no tagged match exists).
 		string sceneAct = ""
@@ -1726,11 +1723,94 @@ Event CommandManager(String npcname,String  command, String parameter)
 		elseif command=="ExtCmdDrinkBloodSex"
 			sceneAct = "bloodfeed"
 		endif
-		bool sceneHandled = AIAgentNSFWSceneEngine.StartOrJoinScene(npc, sceneTarget, true, sceneAct)
+
+		string scPlayerName = Game.GetPlayer().GetDisplayName()
+		bool sceneHandled = false
+		String[] scNames = StringUtil.Split(parameter, ",")
+
+		if scNames.Length > 1 || command=="ExtCmdStartThreesome"
+			; GROUP START (fix 2026-07-04): "A,B" resolves EVERY named actor - the old path fed the whole
+			; CSV to getAgentByName, got None, and silently defaulted to the PLAYER in a 2-actor scene.
+			Actor[] groupActors = new Actor[5]
+			groupActors[0] = npc
+			int gCount = 1
+			bool gHasPlayer = false
+			int gi = 0
+			while gi < scNames.Length && gCount < 5
+				string gn = scNames[gi]
+				while StringUtil.GetLength(gn) > 0 && StringUtil.Substring(gn, 0, 1) == " "
+					gn = StringUtil.Substring(gn, 1)
+				endwhile
+				if StringUtil.GetLength(gn) > 0
+					Actor gRes = None
+					if StringUtil.Find(gn, scPlayerName) >= 0 || gn == "player" || gn == "Player"
+						gRes = Game.GetPlayer()
+						gHasPlayer = true
+					else
+						gRes = AIAgentFunctions.getAgentByName(gn)
+					endif
+					if gRes == None
+						; a NAMED target that is not a registered agent is an ERROR - never a silent player retarget
+						AIAgentFunctions.logMessageForActor("command@" + command + "@" + parameter + "@error: " + gn + " is not nearby/available - no scene started", "funcret", npcname)
+						return
+					endif
+					if groupActors.Find(gRes) < 0
+						groupActors[gCount] = gRes
+						gCount += 1
+					endif
+				endif
+				gi += 1
+			endwhile
+			; a threesome with a single named partner brings the PLAYER as the third
+			if command=="ExtCmdStartThreesome" && gCount == 2 && !gHasPlayer
+				groupActors[gCount] = Game.GetPlayer()
+				gCount += 1
+			endif
+			if gCount < 2
+				AIAgentFunctions.logMessageForActor("command@" + command + "@" + parameter + "@error: no valid partners resolved - no scene started", "funcret", npcname)
+				return
+			endif
+			sceneHandled = AIAgentNSFWSceneEngine.StartGroupScene(groupActors, gCount, sceneAct)
+		else
+			Actor sceneTarget = None
+			if parameter == "" || parameter == "player" || parameter == "Player" || StringUtil.Find(parameter, scPlayerName) >= 0
+				sceneTarget = Game.GetPlayer()
+			else
+				sceneTarget = AIAgentFunctions.getAgentByName(parameter)
+				if sceneTarget == None
+					; NAMED NPC target that is not a registered agent: error out - the silent player default
+					; caused "she said she'd bed her friend and started a scene with ME"
+					AIAgentFunctions.logMessageForActor("command@" + command + "@" + parameter + "@error: " + parameter + " is not nearby/available - no scene started", "funcret", npcname)
+					return
+				endif
+			endif
+			sceneHandled = AIAgentNSFWSceneEngine.StartOrJoinScene(npc, sceneTarget, true, sceneAct)
+		endif
+
 		if sceneHandled
+			; intimacy bubble (ported from the legacy path): keep partners close for the scene; OStimEnd
+			; restores the saved distances. Save-once: mdi==0 means nothing saved for this scene yet.
+			if mdi == 0
+				mdi=AIAgentFunctions.get_conf_i("_max_distance_inside")
+				mdo=AIAgentFunctions.get_conf_i("_max_distance_outside")
+			endif
+			AIAgentFunctions.setConf("_max_distance_inside",256,256,256)
+			AIAgentFunctions.setConf("_max_distance_outside",256,256,256)
 			AIAgentFunctions.logMessageForActor("command@" + command + "@" + parameter + "@" + npcname + " started/joined an intimate scene with " + parameter, "funcret", npcname)
 		else
 			AIAgentFunctions.logMessageForActor("command@" + command + "@" + parameter + "@error: could not start or join a scene with " + parameter, "funcret", npcname)
+		endif
+		return
+	endif
+
+	if (command=="ExtCmdLeaveScene")
+		; GROUP-SCENE EXIT (OStim audit fix #4): the refuser LEAVES; the scene continues with the rest.
+		; OStim has no RemoveActor API, so SceneEngine stops the thread and restarts it minus the leaver.
+		; Queued by the server refusal router for 3+ actor scenes; couple scenes still use ExtCmdStopScene.
+		if AIAgentNSFWSceneEngine.LeaveScene(npc)
+			AIAgentFunctions.logMessageForActor("command@ExtCmdLeaveScene@" + parameter + "@" + npcname + " left the scene; it continues without them", "funcret", npcname)
+		else
+			AIAgentFunctions.logMessageForActor("command@ExtCmdLeaveScene@" + parameter + "@error: no running scene to leave", "funcret", npcname)
 		endif
 		return
 	endif
@@ -2748,7 +2828,13 @@ Event CommandManager(String npcname,String  command, String parameter)
 			
 			
 			;String newScene=OLibrary.GetRandomScene(actorsInvolved)
-			OThread.WarpTo(thrId2,actionScene2,true)
+			if actionScene2 != ""
+				OThread.WarpTo(thrId2,actionScene2,true)
+			else
+				; no scene matched the requested act - leave the current scene running (same guard as SceneEngine shift)
+				AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@error: no scene matches that act here - current scene continues","funcret",npcname)
+				return
+			endif
 
 			Debug.Trace("[CHIM-NSFW] <"+actionScene2+"> <"+sanitizedTag+">, Actors:"+actorsInvolved.length);
 		else
@@ -3547,11 +3633,14 @@ Event OStimEnd(string EventName, string Json, float NumArg, Form Sender)
 	endif
 
 	; Change this to restore from CHIM MCM directly
-	if (playerInScene)
+	if (playerInScene && mdi > 0)
+		; mdi==0 means no save-site ran this scene - restoring would ZERO the follow distance
 		Debug.Trace("[CHIM-NSFW] Restoring settings because intimacy bubble");
-		
+
 		AIAgentFunctions.setConf("_max_distance_inside",mdi,mdi,mdi);
 		AIAgentFunctions.setConf("_max_distance_outside",mdo,mdo,mdo);
+		mdi = 0
+		mdo = 0
 	endif;
 	
 	
@@ -3778,6 +3867,14 @@ Event OStimThreadEnd(string EventName, string Json, float ThreadID, Form Sender)
 			i += 1
 			endif
 	endwhile
+
+	; Player threads: OStimEnd already sends chatnf_sl_end - a second send here re-stamped the ended
+	; marker (extending the initiator blackout) and double-primed pillow talk. Locks/busy are cleared above.
+	if Actors.Find(Game.GetPlayer()) >= 0
+		ClearStashedNpcSceneActors(threadEndIDInt)
+		Debug.Trace("[CHIM-NSFW] OStimThreadEnd: player thread - OStimEnd owns the teardown message")
+		return
+	endif
 
 	AIAgentFunctions.requestMessage(scoring,"chatnf_sl_end")
 	ClearStashedNpcSceneActors(threadEndIDInt)
@@ -4861,11 +4958,14 @@ Event EndSexScene(int tid, bool HasPlayer)
 		endwhile
 		
 		; Change this to restore from CHIM MCM directly
-		if (playerInScene)
+		if (playerInScene && mdi > 0)
+			; mdi==0 means no save-site ran this scene - restoring would ZERO the follow distance
 			Debug.Trace("Restoring settings because intimacy bubble");
-			
+
 			AIAgentFunctions.setConf("_max_distance_inside",mdi,mdi,mdi);
 			AIAgentFunctions.setConf("_max_distance_outside",mdo,mdo,mdo);
+			mdi = 0
+			mdo = 0
 		endif;
 		
 		i = sortedActorList.Length

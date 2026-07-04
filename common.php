@@ -1343,6 +1343,14 @@ function aiagentNsfwMarkRefusalSpeech(&$intimacyStatus, $refusalKey = '') {
 // Queue the MECHANICAL scene stop. Only ExtCmdStopScene is a real stop now (RefuseSex is speech/state only after
 // the Papyrus split), so this refuses any other command. Self-suppresses when the actor is exit-locked: she
 // refuses, the scene is NOT force-stopped. Returns true only if a stop was actually queued.
+// Refusal/rejection exits: in a 3+ actor scene the refuser LEAVES and the scene continues without them
+// (ExtCmdLeaveScene = stop + restart minus the leaver game-side; OStim has no remove-actor API).
+// Couple scenes still get the full ExtCmdStopScene. Non-consent completions keep the full stop.
+function aiagentNsfwSceneExitCommand($intimacyStatus) {
+    $actors = is_array($intimacyStatus) ? ($intimacyStatus['scene_actors'] ?? []) : [];
+    return (is_array($actors) && count($actors) > 2) ? 'ExtCmdLeaveScene' : 'ExtCmdStopScene';
+}
+
 function aiagentNsfwQueuePlayerSceneStop($actorName, $command = 'ExtCmdStopScene', $localts = null) {
     $actorName = trim((string)$actorName);
     $command = trim((string)$command);

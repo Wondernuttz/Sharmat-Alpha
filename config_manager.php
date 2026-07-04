@@ -3068,6 +3068,7 @@ PROMPT;
                 'arousal_recep_devoted' => $_POST['arousal_recep_devoted'] ?? '',
                 'arousal_recep_bonded' => $_POST['arousal_recep_bonded'] ?? '',
                 'arousal_recep_courtship' => $_POST['arousal_recep_courtship'] ?? '',
+                'redress_nudge' => $_POST['redress_nudge'] ?? '',
 
                 // Price Templates (budget/standard/luxury) - stored as JSON objects
                 'price_template_budget' => isset($_POST['price_template_budget']) ? json_decode($_POST['price_template_budget'], true) : null,
@@ -3206,6 +3207,7 @@ PROMPT;
             'arousal_recep_devoted' => 'You are devoted to #PLAYER_NAME#, and desire comes readily around them. Flirtation, affection, and private moments warm you quickly, and you let them see it - leaning in, lingering, answering warmth with warmth. You still savor the build; being wanted is half the pleasure.',
             'arousal_recep_bonded' => 'You and #PLAYER_NAME# are bonded - your desire for them lives close to the surface. A look, a touch, a low word can light you up, and you are open about wanting them. You warm fast and you make it known, in your own voice, without waiting to be coaxed.',
             'arousal_recep_courtship' => 'You have grown fond of #PLAYER_NAME#, and there is a flutter you have not named yet. Their warmth affects you more than you let on - you might blush, linger, or lose your words a little. Nothing beyond affection is on the table; let the feeling build at its own pace.',
+            'redress_nudge' => 'You are still undressed and the intimate moment has passed. When it feels natural - the talk winds down, you move to leave, someone could walk in - get dressed again by calling the Put_On_Clothes action. Do not stay naked through ordinary conversation unless you have a reason to.',
 
             // Section 2A: Marriage (Spouse + Spouse) Tier Prompts (11 tiers)
             'marriage_spouse_hostile' => 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -10458,6 +10460,7 @@ PROMPT;
         arousal_recep_devoted: 'You are devoted to #PLAYER_NAME#, and desire comes readily around them. Flirtation, affection, and private moments warm you quickly, and you let them see it - leaning in, lingering, answering warmth with warmth. You still savor the build; being wanted is half the pleasure.',
         arousal_recep_bonded: 'You and #PLAYER_NAME# are bonded - your desire for them lives close to the surface. A look, a touch, a low word can light you up, and you are open about wanting them. You warm fast and you make it known, in your own voice, without waiting to be coaxed.',
         arousal_recep_courtship: 'You have grown fond of #PLAYER_NAME#, and there is a flutter you have not named yet. Their warmth affects you more than you let on - you might blush, linger, or lose your words a little. Nothing beyond affection is on the table; let the feeling build at its own pace.',
+        redress_nudge: 'You are still undressed and the intimate moment has passed. When it feels natural - the talk winds down, you move to leave, someone could walk in - get dressed again by calling the Put_On_Clothes action. Do not stay naked through ordinary conversation unless you have a reason to.',
 
         // SECTION 2A: Marriage spouse prompts (11 tiers)
         marriage_spouse_hostile: 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -10796,6 +10799,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     setPromptValue('promptArousalRecepDevoted', s.arousal_recep_devoted, 'arousal_recep_devoted');
                     setPromptValue('promptArousalRecepBonded', s.arousal_recep_bonded, 'arousal_recep_bonded');
                     setPromptValue('promptArousalRecepCourtship', s.arousal_recep_courtship, 'arousal_recep_courtship');
+                    setPromptValue('promptRedressNudge', s.redress_nudge, 'redress_nudge');
                     if (s.arousal_gating_threshold !== undefined) {
                         document.getElementById('arousalGatingThreshold').value = s.arousal_gating_threshold;
                         document.getElementById('arousalGatingThresholdValue').textContent = s.arousal_gating_threshold;
@@ -11098,6 +11102,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('arousal_recep_devoted', getVal('promptArousalRecepDevoted'));
         formData.append('arousal_recep_bonded', getVal('promptArousalRecepBonded'));
         formData.append('arousal_recep_courtship', getVal('promptArousalRecepCourtship'));
+        formData.append('redress_nudge', getVal('promptRedressNudge'));
         formData.append('arousal_gating_threshold', document.getElementById('arousalGatingThreshold').value);
 
         // Devices & Wearables (Devious Devices)
@@ -11382,6 +11387,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         resetVal('promptArousalRecepDevoted', 'arousal_recep_devoted');
         resetVal('promptArousalRecepBonded', 'arousal_recep_bonded');
         resetVal('promptArousalRecepCourtship', 'arousal_recep_courtship');
+        resetVal('promptRedressNudge', 'redress_nudge');
         document.getElementById('arousalGatingThreshold').value = 10;
         document.getElementById('arousalGatingThresholdValue').textContent = '10';
 

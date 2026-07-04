@@ -173,6 +173,24 @@ if (function_exists('isSexDisposalEnabled') && isSexDisposalEnabled() && isset($
     }
 }
 
+// REDRESS NUDGE (tester report: NPCs never call PutOnClothes post-scene - same silent-toolset disease
+// as the initiation bug). While she is flagged naked with no scene running, remind her the Put_On_Clothes
+// action exists. Persists every normal turn until she redresses (PutOnClothes clears is_naked).
+if (isset($GLOBALS['HERIKA_PERS']) && function_exists('getIntimacyForActor')) {
+    $__rdx = getIntimacyForActor($actorName);
+    if (!empty($__rdx['is_naked']) && (int)($__rdx['level'] ?? 0) < 1 && empty($__rdx['sex_started'])
+        && (int)($__rdx['intensity_tier'] ?? 0) < 3
+        && (!function_exists('isNpcSlave') || !isNpcSlave($actorName))) {
+        $__rdP = function_exists('getGlobalPrompt') ? trim((string)getGlobalPrompt('redress_nudge')) : '';
+        if ($__rdP === '') {
+            $__rdP = "You are still undressed and the intimate moment has passed. When it feels natural - the talk winds down, you move to leave, someone could walk in - get dressed again by calling the Put_On_Clothes action. Do not stay naked through ordinary conversation unless you have a reason to.";
+        }
+        $__rdP = str_replace(['#PLAYER_NAME#', '#NPC_NAME#'], [$GLOBALS['PLAYER_NAME'] ?? 'your companion', $actorName], $__rdP);
+        $GLOBALS['HERIKA_PERS'] .= "\n\n<redress_reminder>\n" . $__rdP . "\n</redress_reminder>";
+        error_log("[AIAGENTNSFW] REDRESS NUDGE injected for {$actorName} (naked, no scene running)");
+    }
+}
+
 if (function_exists('aiagentNsfwReconcileActorRuntimeAfterRollback')) {
     aiagentNsfwReconcileActorRuntimeAfterRollback($actorName, $GLOBALS["gameRequest"][2] ?? null);
 }

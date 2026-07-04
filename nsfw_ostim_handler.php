@@ -1039,7 +1039,7 @@ class NsfwOstimHandler {
             updateIntimacyForActor($unpaidProstituteActor, $nonpaymentIntimacy);
             if (function_exists('aiagentNsfwSceneStopRetryDue') && aiagentNsfwSceneStopRetryDue($nonpaymentIntimacy)
                 && function_exists('aiagentNsfwQueuePlayerSceneStop')
-                && aiagentNsfwQueuePlayerSceneStop($unpaidProstituteActor, 'ExtCmdStopScene')) {
+                && aiagentNsfwQueuePlayerSceneStop($unpaidProstituteActor, aiagentNsfwSceneExitCommand($nonpaymentIntimacy))) {
                 $nonpaymentIntimacy = getIntimacyForActor($unpaidProstituteActor);
                 if (function_exists('aiagentNsfwMarkSceneStopQueued')) {
                     aiagentNsfwMarkSceneStopQueued($nonpaymentIntimacy);
@@ -2881,7 +2881,7 @@ class NsfwOstimHandler {
                     $intimacyStatus['request_scene_stop'] = true;
                     if ((!function_exists('aiagentNsfwSceneStopRetryDue') || aiagentNsfwSceneStopRetryDue($intimacyStatus))
                         && function_exists('aiagentNsfwQueuePlayerSceneStop')
-                        && aiagentNsfwQueuePlayerSceneStop($actor, 'ExtCmdStopScene')) {
+                        && aiagentNsfwQueuePlayerSceneStop($actor, aiagentNsfwSceneExitCommand($intimacyStatus))) {
                         if (function_exists('aiagentNsfwMarkSceneStopQueued')) {
                             aiagentNsfwMarkSceneStopQueued($intimacyStatus);
                         } else {

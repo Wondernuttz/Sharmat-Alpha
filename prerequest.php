@@ -1465,7 +1465,7 @@ if (!isSexDisposalEnabled() && !$isPillowTalkMode) {
                     $scenePhase = "rejected";
                     if (function_exists('aiagentNsfwSceneStopRetryDue') && aiagentNsfwSceneStopRetryDue($intimacyStatus)
                         && function_exists('aiagentNsfwQueuePlayerSceneStop')
-                        && aiagentNsfwQueuePlayerSceneStop($actorName, 'ExtCmdStopScene')) {
+                        && aiagentNsfwQueuePlayerSceneStop($actorName, aiagentNsfwSceneExitCommand($intimacyStatus))) {
                         if (function_exists('aiagentNsfwMarkSceneStopQueued')) {
                             aiagentNsfwMarkSceneStopQueued($intimacyStatus);
                         } else {
@@ -1544,7 +1544,7 @@ if ($scenePhase === "tier_prompt"
         ], true);
         $rtStopRetryDue = function_exists('aiagentNsfwSceneStopRetryDue') ? aiagentNsfwSceneStopRetryDue($intimacyStatus) : empty($intimacyStatus["stop_command_sent"]);
         if (!$rtLocked && $rtIsSceneEvent && $rtStopRetryDue) {
-            if (function_exists('aiagentNsfwQueuePlayerSceneStop') && aiagentNsfwQueuePlayerSceneStop($actorName, 'ExtCmdStopScene')) {
+            if (function_exists('aiagentNsfwQueuePlayerSceneStop') && aiagentNsfwQueuePlayerSceneStop($actorName, aiagentNsfwSceneExitCommand($intimacyStatus))) {
                 if (function_exists('aiagentNsfwMarkSceneStopQueued')) {
                     aiagentNsfwMarkSceneStopQueued($intimacyStatus);
                 } else {
@@ -1656,7 +1656,7 @@ if ($scenePhase === "rejected") {
         $intimacyStatus["request_scene_stop"] = !$reinfLocked;  // exit-locked: refusal stands, no mechanical stop
         $reinfStopRetryDue = function_exists('aiagentNsfwSceneStopRetryDue') ? aiagentNsfwSceneStopRetryDue($intimacyStatus) : empty($intimacyStatus["stop_command_sent"]);
         if (!$reinfLocked && $isForcedSceneEvent && $reinfStopRetryDue) {
-            if (function_exists('aiagentNsfwQueuePlayerSceneStop') && aiagentNsfwQueuePlayerSceneStop($actorName, 'ExtCmdStopScene')) {
+            if (function_exists('aiagentNsfwQueuePlayerSceneStop') && aiagentNsfwQueuePlayerSceneStop($actorName, aiagentNsfwSceneExitCommand($intimacyStatus))) {
                 if (function_exists('aiagentNsfwMarkSceneStopQueued')) {
                     aiagentNsfwMarkSceneStopQueued($intimacyStatus);
                 } else {
@@ -2010,7 +2010,7 @@ if ($scenePhase === "affection") {
 	                $scenePhase = "rejected";
 	                if (function_exists('aiagentNsfwSceneStopRetryDue') && aiagentNsfwSceneStopRetryDue($intimacyStatus)
 	                    && function_exists('aiagentNsfwQueuePlayerSceneStop')
-	                    && aiagentNsfwQueuePlayerSceneStop($actorName, 'ExtCmdStopScene')) {
+	                    && aiagentNsfwQueuePlayerSceneStop($actorName, aiagentNsfwSceneExitCommand($intimacyStatus))) {
 	                    if (function_exists('aiagentNsfwMarkSceneStopQueued')) {
 	                        aiagentNsfwMarkSceneStopQueued($intimacyStatus);
 	                    } else {

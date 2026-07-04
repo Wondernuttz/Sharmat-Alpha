@@ -110,6 +110,12 @@ function nsfwSceneIntensityTier($tags = [], $sceneName = '', $sceneId = null) {
         'creampie','cumshot','facial','bukkake','squirting','squirt','gangbang','dp','groping','masturbating','fingered','blowjobs'
     ];
     foreach ($explicitTags as $t) { if (in_array($t, $tagSet, true)) return 3; }
+    // Explicit act in the NAME forces tier 3 (scene audit 2026-07-04): several pack scenes carry only an
+    // 'idle' tag while the pose is a handjob/cunnilingus/grind (MLC table series, OA3PP HJ/fellatio) -
+    // they classified tier 0 and blipped the idle/decision machinery mid-act.
+    foreach (['cunnilingus','fellatio','blowjob','handjob','footjob','boobjob','titfuck','fingering','masturbat','doggy','missionary','cowgirl','sixtynine','deepthroat','grind','hj'] as $kw) {
+        if (strpos($name, $kw) !== false) return 3;
+    }
     // Romantic (tier 2): STRICTLY chaste kiss/cuddle only. Any explicit/ambiguous tag already returned 3 above; mood words (loving/sensual/foreplay/spooning) are intentionally NOT here so anything sexual stays tier 3.
     $romanticTags = ['kissing','kiss','frenchkissing','frenchkiss','neckkissing','neckkiss','makingout','makeout',
         'cuddling','cuddle','snuggling','snuggle','caressing','caress','nuzzling','nuzzle'];

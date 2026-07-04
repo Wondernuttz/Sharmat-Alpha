@@ -142,6 +142,138 @@ bool Function StartSoloScene(Actor akActor, string sceneAct = "") global
 EndFunction
 
 ; ============================================================
+; PUBLIC ENTRY - GROUP scene (fresh threesome+ in one call). actors[] may be oversized; count says how
+; many leading slots are real. If any member is already in a live OStim scene, everyone merges into it
+; (stop + restart with the combined roster). Returns true if a scene is running with the group.
+; ============================================================
+bool Function StartGroupScene(Actor[] actors, int count, string sceneAct = "") global
+    if actors.Length < 1 || count < 2
+        return false
+    endif
+    ; compact to an exact-size, None-free array (engine APIs expect clean rosters)
+    if count > 5
+        count = 5
+    endif
+    Actor[] group = PapyrusUtil.ActorArray(0)
+    int i = 0
+    while i < count
+        if actors[i] != None && group.Find(actors[i]) < 0
+            group = PapyrusUtil.PushActor(group, actors[i])
+        endif
+        i += 1
+    endwhile
+    if group.Length < 2
+        return false
+    endif
+    if HasOStim()
+        int liveThread = -1
+        i = 0
+        while i < group.Length && liveThread < 0
+            liveThread = OActor.GetSceneID(group[i])
+            i += 1
+        endwhile
+        if liveThread >= 0
+            Actor[] combined = OThread.GetActors(liveThread)
+            i = 0
+            while i < group.Length
+                if combined.Find(group[i]) < 0 && combined.Length < 5
+                    combined = PapyrusUtil.PushActor(combined, group[i])
+                endif
+                i += 1
+            endwhile
+            OThread.Stop(liveThread)
+            int guard = 0
+            while OThread.IsRunning(liveThread) && guard < 50
+                Utility.Wait(0.2)
+                guard += 1
+            endwhile
+            Debug.Trace("[CHIM-NSFW SceneEngine] OStim: group merge into thread " + liveThread + " -> " + combined.Length + " actors")
+            return StartOStimScene(combined, sceneAct) >= 0
+        endif
+        Debug.Trace("[CHIM-NSFW SceneEngine] OStim: fresh group scene with " + group.Length + " actors, act=" + sceneAct)
+        return StartOStimScene(group, sceneAct) >= 0
+    endif
+    SexLabFramework slf = GetSexLab()
+    if slf != None
+        Debug.Trace("[CHIM-NSFW SceneEngine] SexLab: fresh group scene with " + group.Length + " actors, act=" + sceneAct)
+        return StartSexLabScene(slf, group, sceneAct)
+    endif
+    Debug.Trace("[CHIM-NSFW SceneEngine] No OStim or SexLab detected (group)")
+    return false
+EndFunction
+
+; ============================================================
+; PUBLIC ENTRY - one actor LEAVES their running scene; the remaining actors continue. Neither engine has a
+; remove-actor API, so this is stop + restart minus the leaver. A couple scene simply ends (nobody remains
+; to continue). Returns true if the leaver is out (whether or not a scene continues).
+; ============================================================
+bool Function LeaveScene(Actor akLeaver) global
+    if akLeaver == None
+        return false
+    endif
+    if HasOStim()
+        int tid = OActor.GetSceneID(akLeaver)
+        if tid < 0
+            return false
+        endif
+        Actor[] current = OThread.GetActors(tid)
+        OThread.Stop(tid)
+        if current.Length <= 2
+            return true ; couple scene: leaving ends it
+        endif
+        int guard = 0
+        while OThread.IsRunning(tid) && guard < 50
+            Utility.Wait(0.2)
+            guard += 1
+        endwhile
+        Actor[] rest = PapyrusUtil.ActorArray(0)
+        int i = 0
+        while i < current.Length
+            if current[i] != None && current[i] != akLeaver
+                rest = PapyrusUtil.PushActor(rest, current[i])
+            endif
+            i += 1
+        endwhile
+        if rest.Length < 2
+            return true
+        endif
+        Debug.Trace("[CHIM-NSFW SceneEngine] OStim: " + akLeaver.GetDisplayName() + " left; restarting with " + rest.Length + " actors")
+        return StartOStimScene(rest, "") >= 0
+    endif
+    SexLabFramework slf = GetSexLab()
+    if slf != None
+        int cid = slf.FindActorController(akLeaver)
+        if cid < 0
+            return false
+        endif
+        sslThreadController ctrl = slf.GetController(cid)
+        if ctrl == None
+            return false
+        endif
+        Actor[] currentS = ctrl.Positions
+        ctrl.EndAnimation(true)
+        if currentS.Length <= 2
+            return true
+        endif
+        Utility.Wait(1.0)
+        Actor[] restS = PapyrusUtil.ActorArray(0)
+        int j = 0
+        while j < currentS.Length
+            if currentS[j] != None && currentS[j] != akLeaver
+                restS = PapyrusUtil.PushActor(restS, currentS[j])
+            endif
+            j += 1
+        endwhile
+        if restS.Length < 2
+            return true
+        endif
+        Debug.Trace("[CHIM-NSFW SceneEngine] SexLab: " + akLeaver.GetDisplayName() + " left; restarting with " + restS.Length + " actors")
+        return StartSexLabScene(slf, restS, "")
+    endif
+    return false
+EndFunction
+
+; ============================================================
 ; OSTIM
 ; ============================================================
 bool Function StartOrJoinOStim(Actor akSpeaker, Actor akTarget, bool bAllowJoin, string sceneAct = "") global

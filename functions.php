@@ -1114,7 +1114,8 @@ $GLOBALS["FUNCSERV"]["ExtCmdRefuseSex"]=function() {
         updateIntimacyForActor($npcName, $intimacyStatus);
         $stopQueued = false;
         if ($stopRetryDue && function_exists('aiagentNsfwQueuePlayerSceneStop')) {
-            $stopQueued = aiagentNsfwQueuePlayerSceneStop($npcName, 'ExtCmdStopScene');
+            // Group scene: the refuser LEAVES, the others continue (ExtCmdLeaveScene). Couple: full stop.
+            $stopQueued = aiagentNsfwQueuePlayerSceneStop($npcName, aiagentNsfwSceneExitCommand($intimacyStatus));
             if ($stopQueued) {
                 if (function_exists('aiagentNsfwMarkSceneStopQueued')) { aiagentNsfwMarkSceneStopQueued($intimacyStatus); }
                 else { $intimacyStatus["stop_command_sent"] = true; }
