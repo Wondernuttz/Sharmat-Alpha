@@ -2001,13 +2001,17 @@ function getDrunkStageForActor($actorName) {
     // Consume-only mode (default): a drink counts only via the inventory-backed Consume path -
     // a real item is used and the drink animation plays. Drink/Toast are then social flavor,
     // so the model cannot intoxicate anyone by narrating drinks that never happened.
-    $actionRegex = (function_exists('_getNsfwSetting') && !_getNsfwSetting('DRUNK_REQUIRE_CONSUME_ACTION', true))
-        ? '^(Consume|Drink|Toast)$' : '^Consume$';
+    // Consume must name an actual ALCOHOL item: without the filter, feeding an NPC bread
+    // counted as a drink and kept "sober her up with food" NPCs drunk forever.
+    $alcoholRegex = $GLOBALS["db"]->escape('(\male\M|mead|wine|sujamma|shein|matze|\mflin\M|brandy|bloodwine|honningbrew|black-briar|dragon.?s breath|velvet lechance|white-gold tower|cliff racer|spirits|whiskey|rum|liquor|firebrand)');
+    $legacyLoose = (function_exists('_getNsfwSetting') && !_getNsfwSetting('DRUNK_REQUIRE_CONSUME_ACTION', true));
+    $drinkWhere = "((action ~* '^Consume$' AND fullcall ~* '{$alcoholRegex}')"
+        . ($legacyLoose ? " OR action ~* '^(Drink|Toast)$'" : "") . ")";
     $rows = $GLOBALS["db"]->fetchAll(
         "SELECT gamets FROM public.actions_issued
          WHERE actorname = '{$actorE}'
            AND gamets > {$minGamets} AND gamets <= {$currentGamets}
-           AND action ~* '{$actionRegex}'
+           AND {$drinkWhere}
            AND fullcall !~* '{$hardDrugRegex}'
          ORDER BY gamets ASC"
     );

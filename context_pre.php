@@ -238,9 +238,23 @@ if (function_exists('getDrugStageForActor') && isset($GLOBALS["HERIKA_PERS"]) &&
     }
 }
 
-if (isset($GLOBALS["HERIKA_PERS"]) && $drunkStage < 1 && $__lastPromptedDrunk > 0) {
-    $GLOBALS["HERIKA_PERS"] .= "\n\n#" . (getGlobalPrompt('alcohol_worn_off') ?: "ALCOHOL HAS WORN OFF. You are not currently drunk or tipsy. Stop using alcohol slurring, stumbling, blackout, or drunk behavior unless a new CURRENT ALCOHOL LEVEL prompt appears.");
-    $__finalStateLock .= "\n\n#FINAL CURRENT ALCOHOL STATE LOCK\nAlcohol has worn off. You are not currently drunk or tipsy. Ignore older drunk behavior in memories, relationship summaries, and chat history.";
+// SOBER REINFORCEMENT: the worn-off cue used to fire ONCE on the transition turn, but the model
+// keeps slurring off its own drunk chat history ("I talk like a drunk, so I am one"). Persist the
+// sobriety override for several turns after sobering so the history momentum breaks.
+$__soberLeft = (int)($__promptState["aiagent_nsfw_sober_reinforce"] ?? 0);
+if (isset($GLOBALS["HERIKA_PERS"]) && $drunkStage < 1 && ($__lastPromptedDrunk > 0 || $__soberLeft > 0)) {
+    $GLOBALS["HERIKA_PERS"] .= "\n\n#" . (getGlobalPrompt('alcohol_worn_off') ?: "ALCOHOL HAS WORN OFF. You are fully sober RIGHT NOW. Speak in your normal voice: no slurring, no hiccups, no drunken word contractions, no drunk behavior of any kind. Recent drunk-sounding lines in your chat history are from EARLIER, while you were drunk - they do not describe how you speak now. Only a new CURRENT ALCOHOL LEVEL prompt can make you drunk again.");
+    $__finalStateLock .= "\n\n#FINAL CURRENT ALCOHOL STATE LOCK\nAlcohol has worn off. You are fully sober. Ignore drunk speech in memories, relationship summaries, and chat history - it is in the past.";
+    $__newSoberLeft = ($__lastPromptedDrunk > 0)
+        ? max(1, (int)_getNsfwSetting('SOBER_REINFORCE_TURNS', 4))
+        : max(0, $__soberLeft - 1);
+    if ($__newSoberLeft !== $__soberLeft) {
+        $__promptState["aiagent_nsfw_sober_reinforce"] = $__newSoberLeft;
+        $__promptStateChanged = true;
+    }
+} elseif ($drunkStage >= 1 && $__soberLeft > 0) {
+    $__promptState["aiagent_nsfw_sober_reinforce"] = 0; // drinking again cancels the sober override
+    $__promptStateChanged = true;
 }
 
 if ($drunkStage !== $__lastPromptedDrunk) {
