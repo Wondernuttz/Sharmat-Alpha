@@ -1800,9 +1800,23 @@ $GLOBALS["FUNCSERV"]["ExtCmdCollectPayment"]=function() {
     }
 
     if ($paymentAmount <= 0) {
-        error_log("[TakeGold] Invalid amount in " . ($gameRequest[3] ?? '') . " - coaching model to retry with the agreed number");
-        // Coach instead of silently ignoring - a weak model just repeats the same broken call. No gold
-        // is guessed for her: SHE must restate the agreed price and call again with it.
+        // Discounts can legitimately reach 100% (devoted/bonded tiers = FREE): a zero from a
+        // waived-tier client is correct - no charge, the service gate is already open via the waiver.
+        // She must never be coached to demand gold from someone she gives herself to freely.
+        if (function_exists('aiagentNsfwProstitutePaymentWaived') && aiagentNsfwProstitutePaymentWaived($npcName)) {
+            if (!$isFuncret) { $gameRequest[3] = "ExtCmdNoOp@free_service_no_payment_needed"; }
+            $GLOBALS["HERIKA_PERSONALITY"] .= "\n<payment_error>No payment is needed - at your bond with this client, your service is freely given. Do not collect gold; simply proceed.</payment_error>";
+            error_log("[TakeGold] Zero amount from WAIVED tier for {$npcName} - free service, no charge, no Papyrus call");
+            $GLOBALS["AVOID_LLM_CALL"] = false;
+            return;
+        }
+        error_log("[TakeGold] BLOCKED zero/invalid amount in " . ($gameRequest[3] ?? '') . " - command neutralized, coaching model to retry with the agreed number");
+        // A zero NEVER reaches the game: neutralize the command (unregistered = the game drops it), so
+        // Papyrus can never run a 0-gold payment. No gold is guessed for her either - the price is
+        // negotiated, so SHE must restate the agreed number and call again with it.
+        if (!$isFuncret) {
+            $gameRequest[3] = "ExtCmdNoOp@blocked_zero_payment";
+        }
         $GLOBALS["HERIKA_PERSONALITY"] .= "\n<payment_error>Your TakeGold call carried no gold amount, so NO payment was taken. Call TakeGold again with the amount parameter set to the price you and the client AGREED on, as a number (for example: amount 100). If no price was agreed yet, state your price first. Do not provide the service until TakeGold succeeds.</payment_error>";
         $GLOBALS["AVOID_LLM_CALL"] = false;
         return;
