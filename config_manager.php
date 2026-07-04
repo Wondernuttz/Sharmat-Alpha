@@ -1003,6 +1003,8 @@ SQL;
                 'NPC_SEX_COOLDOWN_HOURS' => isset($_POST['NPC_SEX_COOLDOWN_HOURS']) ? intval($_POST['NPC_SEX_COOLDOWN_HOURS']) : 9,
                 'NSFW_SCENE_CALL_MIN_AFFINITY' => isset($_POST['NSFW_SCENE_CALL_MIN_AFFINITY']) ? max(0, min(100, intval($_POST['NSFW_SCENE_CALL_MIN_AFFINITY']))) : 56,
                 'INSTANT_CRUSH_ON_AFFECTION' => isset($_POST['INSTANT_CRUSH_ON_AFFECTION']) ? filter_var($_POST['INSTANT_CRUSH_ON_AFFECTION'], FILTER_VALIDATE_BOOLEAN) : true,
+                'NSFW_COMBAT_BLOCK_ENABLED' => isset($_POST['NSFW_COMBAT_BLOCK_ENABLED']) ? filter_var($_POST['NSFW_COMBAT_BLOCK_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
+                'NSFW_COMBAT_BLOCK_WINDOW_SECONDS' => isset($_POST['NSFW_COMBAT_BLOCK_WINDOW_SECONDS']) ? max(5, min(300, intval($_POST['NSFW_COMBAT_BLOCK_WINDOW_SECONDS']))) : 45,
                 'NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS' => isset($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']))) : 30,
                 'GENERIC_GLOSSARY' => $_POST['GENERIC_GLOSSARY'] ?? '',
                 'TRACK_DRUNK_STATUS' => isset($_POST['TRACK_DRUNK_STATUS']) ? filter_var($_POST['TRACK_DRUNK_STATUS'], FILTER_VALIDATE_BOOLEAN) : false,
@@ -7016,6 +7018,9 @@ PROMPT;
                         if (drunkReqConsumeEl) drunkReqConsumeEl.checked = data.data.DRUNK_REQUIRE_CONSUME_ACTION !== undefined ? data.data.DRUNK_REQUIRE_CONSUME_ACTION : true;
                         const instantCrushEl = document.getElementById('instantCrushOnAffection');
                         if (instantCrushEl) instantCrushEl.checked = data.data.INSTANT_CRUSH_ON_AFFECTION !== undefined ? data.data.INSTANT_CRUSH_ON_AFFECTION : true;
+                        const combatBlockEl = document.getElementById('nsfwCombatBlockEnabled');
+                        if (combatBlockEl) combatBlockEl.checked = data.data.NSFW_COMBAT_BLOCK_ENABLED !== undefined ? data.data.NSFW_COMBAT_BLOCK_ENABLED : true;
+                        elSet('nsfwCombatBlockWindow', 'value', data.data.NSFW_COMBAT_BLOCK_WINDOW_SECONDS !== undefined ? data.data.NSFW_COMBAT_BLOCK_WINDOW_SECONDS : 45);
                         const drunkWin = data.data.DRUNK_WINDOW_HOURS !== undefined ? data.data.DRUNK_WINDOW_HOURS : 12;
                         elSet('drunkWindowHours', 'value', drunkWin);
                         elSet('drunkWindowHoursValue', 'textContent', drunkWin + ' game hours');
@@ -7367,6 +7372,8 @@ PROMPT;
             fdSet('TRACK_DRUNK_STATUS', 'trackDrunkStatus', 'checked');
             fdSet('DRUNK_REQUIRE_CONSUME_ACTION', 'drunkRequireConsume', 'checked');
             fdSet('INSTANT_CRUSH_ON_AFFECTION', 'instantCrushOnAffection', 'checked');
+            if (document.getElementById('nsfwCombatBlockEnabled')) fdSet('NSFW_COMBAT_BLOCK_ENABLED', 'nsfwCombatBlockEnabled', 'checked');
+            if (document.getElementById('nsfwCombatBlockWindow')) fdSet('NSFW_COMBAT_BLOCK_WINDOW_SECONDS', 'nsfwCombatBlockWindow', 'value');
             fdSet('DRUNK_WINDOW_HOURS', 'drunkWindowHours', 'value');
             fdSet('TRACK_FERTILITY_INFO', 'trackFertilityInfo', 'checked');
             fdSet('CHILD_PROTECTION_FRAME', 'childProtectionFrame', 'value');

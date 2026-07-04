@@ -2568,3 +2568,23 @@ function aiagentNsfwArousalNum($key, $default) {
     $v = _getNsfwSetting($key, $default);
     return is_numeric($v) ? (float)$v : (float)$default;
 }
+
+// CONFLICT DETECTION: live combat around the PLAYER right now? The newest beings-in-range report
+// carries game-stamped state suffixes ("(in combat)" / "(hostile)"). Freshness-gated by wall clock
+// so a stale row from a previous play session can never block affection.
+function aiagentNsfwPlayerConflictActive() {
+    static $cached = null;
+    if ($cached !== null) return $cached;
+    $cached = false;
+    if (empty($GLOBALS["db"]) || !_getNsfwSetting('NSFW_COMBAT_BLOCK_ENABLED', true)) return $cached;
+    $win = (int)_getNsfwSetting('NSFW_COMBAT_BLOCK_WINDOW_SECONDS', 45);
+    if ($win <= 0) return $cached;
+    try {
+        $row = $GLOBALS["db"]->fetchOne("SELECT data, localts FROM eventlog WHERE type='infonpc_close' ORDER BY rowid DESC LIMIT 1");
+        if ($row && (time() - (int)($row['localts'] ?? 0)) <= $win
+            && preg_match('/\((?:in combat|hostile)\)/i', (string)($row['data'] ?? ''))) {
+            $cached = true;
+        }
+    } catch (Exception $e) {}
+    return $cached;
+}

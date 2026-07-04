@@ -53,6 +53,32 @@ if ($actorName !== "" && isset($GLOBALS["ENABLED_FUNCTIONS"]) && is_array($GLOBA
 }
 
 // ============================================================
+// COMBAT BLOCK (user directive 2026-07-04): live conflict around the player - no affection or
+// scene-starting toward the PLAYER until the fighting stops (tester died mid hand-hold while
+// charging bandits). Player lanes only: NPC<->NPC scene routes are untouched. Exits (RefuseSex/
+// EndSexScene) and redressing stay available. Same triple strip as above or the model can still
+// pick the tool from the enum.
+if ($actorName !== "" && isset($GLOBALS["ENABLED_FUNCTIONS"]) && is_array($GLOBALS["ENABLED_FUNCTIONS"])
+    && strcasecmp($actorName, "The Narrator") !== 0 && strcasecmp($actorName, "(actor)") !== 0
+    && function_exists('aiagentNsfwPlayerConflictActive') && aiagentNsfwPlayerConflictActive()) {
+    $cbIntimacy = function_exists('getIntimacyForActor') ? getIntimacyForActor($actorName) : [];
+    if (empty($cbIntimacy["is_npc_scene"])) {
+        $cbStrip = ["ExtCmdHug","ExtCmdHoldHands","ExtCmdKiss","ExtCmdStartSex","ExtCmdStartBlowJob","ExtCmdStartAnalSex","ExtCmdStartMassage","ExtCmdStartThreesome","ExtCmdStartHandJobSex","ExtCmdStartTitfuck","ExtCmdStartSelfMasturbation","ExtCmdSexCommand","ExtCmdAcceptSex","ExtCmdRemoveClothes","ExtCmdDrinkBloodSex"];
+        $GLOBALS["ENABLED_FUNCTIONS"] = array_values(array_filter((array)$GLOBALS["ENABLED_FUNCTIONS"], function ($f) use ($cbStrip) { return !in_array($f, $cbStrip, true); }));
+        if (isset($GLOBALS["FUNC_LIST"]) && is_array($GLOBALS["FUNC_LIST"]) && function_exists('getFunctionCodeName')) {
+            $GLOBALS["FUNC_LIST"] = array_values(array_filter($GLOBALS["FUNC_LIST"], function ($n) use ($cbStrip) { return !in_array(getFunctionCodeName($n), $cbStrip, true); }));
+            if (isset($GLOBALS["responseTemplate"]["action"])) {
+                $GLOBALS["responseTemplate"]["action"] = implode("|", $GLOBALS["FUNC_LIST"]);
+            }
+            if (isset($GLOBALS["structuredOutputTemplate"]["json_schema"]["schema"]["properties"]["action"]["enum"])) {
+                $GLOBALS["structuredOutputTemplate"]["json_schema"]["schema"]["properties"]["action"]["enum"] = array_values($GLOBALS["FUNC_LIST"]);
+            }
+        }
+        error_log("[AIAGENTNSFW] COMBAT BLOCK (context_pre): live conflict near player - affection/scene tools stripped for {$actorName}");
+    }
+}
+
+// ============================================================
 // CHILD PROTECTION (Phase 1): for any NPC flagged as a child by HARD signals (is_child flag, child
 // race, vanilla child-name blocklist), prepend an in-world "you are a child" frame to the character
 // block so the model never reads an adult's attention, gifts, or kindness as romance. Default-on;

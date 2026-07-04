@@ -109,6 +109,19 @@
                     <p class="legend">When an NPC chooses affection (hug, kiss, hand-holding) or agrees to intimacy with you, their relationship type flips to crush automatically - actions speak louder than words. Requires Fond+ affinity; slaves and prostitutes are excluded; locked relationship cards are never touched. Default: on.</p>
                 </div>
 
+                <div class="settings-checkbox-group">
+                    <label for="nsfwCombatBlockEnabled">
+                        <input type="checkbox" id="nsfwCombatBlockEnabled" name="NSFW_COMBAT_BLOCK_ENABLED" checked>
+                        <span>Combat Blocks Affection &amp; Scene Calls</span>
+                    </label>
+                    <p class="legend">While there is live conflict around you (anyone nearby in combat or hostile), NPCs cannot start affection (hug, kiss, hand-holding) or call sex scenes with you - no more dying mid hand-hold while bandits beat on you. Player-directed only: NPC-to-NPC scenes are unaffected, and exit tools stay available. Default: on.</p>
+                    <div style="margin-top: 6px;">
+                        <label style="color: #9988BB; font-size: 12px;">Conflict window (seconds)</label>
+                        <input type="number" id="nsfwCombatBlockWindow" name="NSFW_COMBAT_BLOCK_WINDOW_SECONDS" min="5" max="300" step="5" value="45" style="width: 80px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">How recent the combat report must be to count as live. Default: 45.</p>
+                    </div>
+                </div>
+
                 <div class="settings-slider-group">
                     <span class="slider-title">Player Scene-Call Cooldown (Global)</span>
                     <div class="slider-container">
