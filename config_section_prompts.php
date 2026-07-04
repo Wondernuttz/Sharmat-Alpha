@@ -446,6 +446,11 @@
                             <label>Romantic (tier 2 - intimate tension, non-explicit)</label>
                             <textarea id="promptRomanticScene" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">Respond romantically and intimately, with emotional tension, but keep it non-explicit. Do not treat this as active sex unless the scene escalates.</textarea>
                         </div>
+                        <div class="form-group">
+                            <label>Mid-Scene Breather (idle stage AFTER sex already started)</label>
+                            <textarea id="promptSceneBreather" class="auto-resize" style="min-height: 60px; width: 100%; resize: none; overflow: hidden;">A quiet pause in your encounter with #PRIMARY_PARTNER# - a breather between acts, still close, still undressed, still in the moment. The encounter is STILL UNDERWAY and consent was already given. Do NOT restart introductions, do NOT ask whether to begin, do NOT treat this as a new scene. React with afterglow, closeness, teasing, or anticipation of what comes next.</textarea>
+                            <p class="legend">Animation packs use idle/holding stages BETWEEN sex acts. Once sex has happened in the current scene, those stages get this pause framing instead of the Standing/Intro or Affectionate prompts - so partners never restart the negotiation mid-encounter.</p>
+                        </div>
                     </div>
 
                     <!-- 1e. Profanity Level Definitions -->

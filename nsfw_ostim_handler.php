@@ -29,6 +29,18 @@ class NsfwOstimHandler {
         error_log("[AIAGENTNSFW] Suppressing historic context for current standing/intro request: " . $reason);
     }
 
+    // Has real sex ALREADY happened in this scene thread? had_sex_in_scene survives the tier<=2
+    // de-escalation clears (sex_started is deliberately dropped on breather beats) and resets on
+    // every new scene start - so it is the honest "we are between acts, not before them" signal.
+    private static function sceneSexAlreadyUnderway($orderedActorList) {
+        foreach ((array)$orderedActorList as $suActor) {
+            if ($suActor === ($GLOBALS["PLAYER_NAME"] ?? '')) { continue; }
+            $suIx = getIntimacyForActor($suActor);
+            if (!empty($suIx['sex_started']) || !empty($suIx['had_sex_in_scene'])) { return true; }
+        }
+        return false;
+    }
+
     private static function sceneUnpaidOrRefusedProstituteName($orderedActorList) {
         if (!is_array($orderedActorList) || empty($orderedActorList)) {
             return "";
@@ -1064,6 +1076,26 @@ class NsfwOstimHandler {
             unset($GLOBALS["AIAGENTNSFW_SCENE_CUE_OVERRIDE"]);
             unset($GLOBALS["AIAGENTNSFW_SCENE_PLAYER_REQUEST_OVERRIDE"]);
             error_log("[AIAGENTNSFW] Injected nonpayment refusal prompt for unpaid prostitute scene escalation: {$unpaidProstituteActor}");
+        } else if ($sceneTier <= 2 && self::sceneSexAlreadyUnderway($orderedActorList)) {
+            // MID-SCENE BREATHER (tester report 2026-07-04): packs use idle/holding stages BETWEEN acts.
+            // Sex already happened in THIS thread - re-injecting the standing "nothing has happened yet,
+            // decide whether to accept" framing made partners restart the negotiation mid-encounter.
+            // Keep the encounter alive: quiet pause, consent stands, no re-introductions.
+            $brPartners = array_filter($orderedActorList, function($a) { return $a !== $GLOBALS["PLAYER_NAME"]; });
+            $brPartnerStr = implode(" and ", $brPartners);
+            $brText = trim((string)getGlobalPrompt('scene_breather'));
+            if ($brText === '') {
+                $brText = "A quiet pause in your encounter with #PRIMARY_PARTNER# - a breather between acts, still close, still undressed, still in the moment. The encounter is STILL UNDERWAY and consent was already given. Do NOT restart introductions, do NOT ask whether to begin, do NOT treat this as a new scene. React with afterglow, closeness, teasing, or anticipation of what comes next.";
+            }
+            $brText = str_replace(['#PRIMARY_PARTNER#', '#NPC_NAME#', '#PLAYER_NAME#'], [$brPartnerStr, $brPartnerStr, $GLOBALS["PLAYER_NAME"] ?? "the player"], $brText);
+            $brPrompt = "<scene_breather_prompt>\n"
+                . "<scene_behavior>\n{$brText}\n</scene_behavior>\n"
+                . "<current_scene_description>\n{$cleanedSceneDesc}\n</current_scene_description>\n"
+                . "</scene_breather_prompt>";
+            $GLOBALS["gameRequest"][3] = $brPrompt;
+            $GLOBALS["AIAGENTNSFW_SCENE_CUE_OVERRIDE"] = $brPrompt . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
+            $GLOBALS["AIAGENTNSFW_SCENE_PLAYER_REQUEST_OVERRIDE"] = "";
+            error_log("[AIAGENTNSFW] MID-SCENE BREATHER (tier {$sceneTier}, sex already underway) - injected pause context for $brPartnerStr");
         } else if ($sceneTier === 0) {
             // TIER 0 idle/standing is a presence beat only. Do not let the generic sex-scene cue
             // or the OStim animation text imply touch before the scene actually escalates.

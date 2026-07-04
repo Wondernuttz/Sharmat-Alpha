@@ -2939,6 +2939,7 @@ PROMPT;
 
                 // Scene phase prompts (standing/affection/romantic courtship phases)
                 'standing_scene' => $_POST['standing_scene'] ?? '',
+                'scene_breather' => $_POST['scene_breather'] ?? '',
                 'affection_scene' => $_POST['affection_scene'] ?? '',
                 'romantic_scene' => $_POST['romantic_scene'] ?? '',
 
@@ -3253,6 +3254,7 @@ PROMPT;
 
             // Scene phase prompts (standing/affection/romantic courtship phases)
             'standing_scene' => 'This is a standing/intro scene with #PRIMARY_PARTNER#. Nothing physical has happened yet: no touching, kissing, hugging, undressing, sex, pleasure, friction, penetration, or moaning. React only to presence, eye contact, anticipation, refusal, or conversation. Do not claim contact unless the current scene description or player dialogue explicitly says it happened.',
+            'scene_breather' => 'A quiet pause in your encounter with #PRIMARY_PARTNER# - a breather between acts, still close, still undressed, still in the moment. The encounter is STILL UNDERWAY and consent was already given. Do NOT restart introductions, do NOT ask whether to begin, do NOT treat this as a new scene. React with afterglow, closeness, teasing, or anticipation of what comes next.',
             'affection_scene' => 'Respond warmly and tenderly, as friends or loved ones. This is affectionate and non-sexual. Do not treat this as active sex unless the scene escalates.',
             'romantic_scene' => 'Respond romantically and intimately, with emotional tension, but keep it non-explicit. Do not treat this as active sex unless the scene escalates.',
 
@@ -10508,6 +10510,7 @@ PROMPT;
 
         // Scene phase prompts (standing/affection/romantic courtship phases)
         standing_scene: 'This is a standing/intro scene with #PRIMARY_PARTNER#. Nothing physical has happened yet: no touching, kissing, hugging, undressing, sex, pleasure, friction, penetration, or moaning. React only to presence, eye contact, anticipation, refusal, or conversation. Do not claim contact unless the current scene description or player dialogue explicitly says it happened.',
+        scene_breather: 'A quiet pause in your encounter with #PRIMARY_PARTNER# - a breather between acts, still close, still undressed, still in the moment. The encounter is STILL UNDERWAY and consent was already given. Do NOT restart introductions, do NOT ask whether to begin, do NOT treat this as a new scene. React with afterglow, closeness, teasing, or anticipation of what comes next.',
         affection_scene: 'Respond warmly and tenderly, as friends or loved ones. This is affectionate and non-sexual. Do not treat this as active sex unless the scene escalates.',
         romantic_scene: 'Respond romantically and intimately, with emotional tension, but keep it non-explicit. Do not treat this as active sex unless the scene escalates.',
 
@@ -10875,6 +10878,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
 
                     // Scene phase prompts (standing/affection/romantic)
                     setPromptValue('promptStandingScene', s.standing_scene, 'standing_scene');
+                    setPromptValue('promptSceneBreather', s.scene_breather, 'scene_breather');
                     setPromptValue('promptAffectionScene', s.affection_scene, 'affection_scene');
                     setPromptValue('promptRomanticScene', s.romantic_scene, 'romantic_scene');
 
@@ -11178,6 +11182,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
 
         // Scene phase prompts (standing/affection/romantic)
         formData.append('standing_scene', getVal('promptStandingScene'));
+        formData.append('scene_breather', getVal('promptSceneBreather'));
         formData.append('affection_scene', getVal('promptAffectionScene'));
         formData.append('romantic_scene', getVal('promptRomanticScene'));
 
@@ -11449,6 +11454,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
 
         // Scene phase prompts (standing/affection/romantic)
         resetVal('promptStandingScene', 'standing_scene');
+        resetVal('promptSceneBreather', 'scene_breather');
         resetVal('promptAffectionScene', 'affection_scene');
         resetVal('promptRomanticScene', 'romantic_scene');
 
