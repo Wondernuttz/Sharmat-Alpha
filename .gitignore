@@ -3,3 +3,5 @@ character_map.json
 backups/
 *.bak
 *.backup-*
+
+bake_defaults.php
