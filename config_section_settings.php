@@ -119,6 +119,14 @@
                 </div>
 
                 <div class="settings-checkbox-group">
+                    <label for="nsfwAffectionLegacyAnims">
+                        <input type="checkbox" id="nsfwAffectionLegacyAnims" name="NSFW_AFFECTION_LEGACY_ANIMS">
+                        <span>Use Legacy Hug/Kiss Animations</span>
+                    </label>
+                    <p class="legend">Off (default): hugs and kisses use persistent OStim scenes with proper actor alignment (better in VR, and they can flow into escalation). On: hugs and kisses use the old lightweight paired-idle animations instead. Hand-holding always uses OStim (it has no legacy animation). Requires the current SHARMAT mod scripts.</p>
+                </div>
+
+                <div class="settings-checkbox-group">
                     <label for="nsfwCombatBlockEnabled">
                         <input type="checkbox" id="nsfwCombatBlockEnabled" name="NSFW_COMBAT_BLOCK_ENABLED" checked>
                         <span>Combat Blocks Affection &amp; Scene Calls</span>

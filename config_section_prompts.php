@@ -1670,6 +1670,11 @@
                             <textarea id="promptRedressNudge" class="auto-resize" style="min-height: 64px; width: 100%; resize: none; overflow: hidden;">You are still undressed and the intimate moment has passed. When it feels natural - the talk winds down, you move to leave, someone could walk in - get dressed again by calling the Put_On_Clothes action. Do not stay naked through ordinary conversation unless you have a reason to.</textarea>
                             <p class="legend">Fires on normal turns while the NPC is flagged naked with no scene running, until she redresses. Slaves are excluded (the slavery lane owns their dress state).</p>
                         </div>
+                        <div class="form-group">
+                            <label>NPC-to-NPC Scene Autonomy (initiate with another NPC)</label>
+                            <textarea id="promptNpcSceneAutonomyNudge" class="auto-resize" style="min-height: 64px; width: 100%; resize: none; overflow: hidden;">Others are here besides #PLAYER_NAME#. If you are genuinely close to another person present - and in the kind of relationship where intimacy fits - you may start intimacy with THEM instead of #PLAYER_NAME#, on your own initiative, by naming that person as the target of the scene action. Only do so when it truly fits your bond with them.</textarea>
+                            <p class="legend">Fires for an NPC who already holds the sex-initiation tools (player-eligible, or a prostitute) when another NPC is present, so she can start a scene with THAT NPC. The server still validates the two NPCs' affinity + rel type (prostitute bypasses; slaves are player-only). Requires the current SHARMAT mod scripts.</p>
+                        </div>
                     </div>
 
                     <!-- 2e. Masturbation -->

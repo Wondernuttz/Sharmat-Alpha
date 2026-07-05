@@ -2054,6 +2054,48 @@ $GLOBALS["action_post_process_fnct_ex"][]=function($actions) {
         }
     }
 
+    // NPC-to-NPC INITIATION GATE (user directive 2026-07-05): after target resolution, drop any sex-scene
+    // START whose speaker is an NPC and whose target is ANOTHER NPC unless A->B is eligible (affinity + rel
+    // type; prostitute A bypasses, slave A is player-only). Player-directed scenes are NEVER touched (empty
+    // target defaults to the player downstream; player named in a threesome CSV counts as player-directed).
+    $__nnSpeaker = trim((string)($GLOBALS["HERIKA_NAME"] ?? ""));
+    $__nnPlayer  = trim((string)($GLOBALS["PLAYER_NAME"] ?? ""));
+    if ($__nnSpeaker !== "" && function_exists('aiagentNsfwNpcToNpcSexEligible')) {
+        $__nnStarts = ["ExtCmdStartSex","ExtCmdStartBlowJob","ExtCmdStartAnalSex","ExtCmdStartThreesome","ExtCmdStartTitfuck","ExtCmdStartHandJobSex","ExtCmdStartHandjobSex","ExtCmdStartMassage","ExtCmdDrinkBloodSex"];
+        foreach ($actions as $__nnN => $__nnAction) {
+            $__nnP = explode("|", $__nnAction);
+            if (!isset($__nnP[2])) { continue; }
+            $__nnCT = explode("@", $__nnP[2]);
+            if (!in_array($__nnCT[0], $__nnStarts, true)) { continue; }
+            $__nnTgt = trim((string)($__nnCT[1] ?? ""));
+            if ($__nnTgt === "" || strcasecmp($__nnTgt, $__nnSpeaker) === 0) { continue; }               // empty/self
+            if ($__nnPlayer !== "" && stripos($__nnTgt, $__nnPlayer) !== false) { continue; }            // player-directed (incl. threesome CSV)
+            $__nnFirst = trim(explode(",", $__nnTgt)[0]);                                                 // first named partner drives eligibility
+            if ($__nnFirst === "" || ($__nnPlayer !== "" && strcasecmp($__nnFirst, $__nnPlayer) === 0)) { continue; }
+            if (!aiagentNsfwNpcToNpcSexEligible($__nnSpeaker, $__nnFirst)) {
+                error_log("[AIAGENTNSFW] NPC-NPC sex BLOCKED: {$__nnSpeaker} not eligible to start with {$__nnFirst} (affinity/rel-type gate)");
+                unset($actions[$__nnN]);
+            } else {
+                error_log("[AIAGENTNSFW] NPC-NPC sex ALLOWED: {$__nnSpeaker} -> {$__nnFirst} (affinity/rel-type gate passed)");
+            }
+        }
+        $actions = array_values($actions);
+    }
+
+    // AFFECTION LEGACY-ANIM FLAG (user directive 2026-07-05): when the opt-out is ON, tag Kiss/Hug with a
+    // trailing @legacy token so the mod script uses the lightweight legacy animation instead of a persistent
+    // OStim scene. Default OFF = OStim (shipped behavior). HoldHands is always OStim (no legacy anim exists).
+    if (function_exists('_getNsfwSetting') && _getNsfwSetting('NSFW_AFFECTION_LEGACY_ANIMS', false)) {
+        foreach ($actions as $__laN => $__laAction) {
+            $__laP = explode("|", $__laAction);
+            if (!isset($__laP[2])) { continue; }
+            $__laCmd = explode("@", $__laP[2])[0];
+            if (($__laCmd === "ExtCmdKiss" || $__laCmd === "ExtCmdHug") && stripos($__laP[2], "@legacy") === false) {
+                $actions[$__laN] = $__laP[0] . "|" . $__laP[1] . "|" . $__laP[2] . "@legacy";
+            }
+        }
+    }
+
     return $actions;
 };
 
@@ -2289,6 +2331,15 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             error_log("[AIAGENTNSFW] Unpaid prostitute level-0: core functions preserved, NSFW tools added for " . $npcName);
         }
 
+        // ORIENTATION AFFECTION GATE (user directive 2026-07-05): tier-1/2 affection tools (Kiss/Hug/HoldHands)
+        // require the NPC's sexual orientation to allow the player's gender. Slaves (compliance lane) and
+        // prostitutes (transactional lane) bypass. Fails OPEN on unknown/missing data - only an explicit
+        // mismatch or an asexual NPC blocks. Sex stays gated by rel-type eligibility (which needs crush/romantic,
+        // itself now orientation-gated at crush formation), so orientation flows into sex transitively.
+        $affectionOrientationOk = $isSlave || $isProstitute
+            || !function_exists('aiagentNsfwOrientationAllowsPlayer')
+            || aiagentNsfwOrientationAllowsPlayer($npcName);
+
         if ($sexDisposalEnabled && !$isProstitute) {
             // Arousal gating enabled, but only AFTER the relationship/model gate.
             // Before AcceptSex, the model can only accept/refuse or use affection actions.
@@ -2299,12 +2350,12 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             // Sticky refusal also blocks re-initiating sex acts until the scene ends.
             if (!$isSlave && !empty($intimacyStatus["refused_until_scene_end"])) { $_consentedFns = false; }
 
-            if ($affinity >= 56 || $isSlave) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; } // affection needs Fond+
+            if (($affinity >= 56 && $affectionOrientationOk) || $isSlave) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; } // affection needs Fond+ and orientation match
             if ($_consentedFns && $affinity >= 56 && (!function_exists('aiagentNsfwRelTypeSexEligible') || aiagentNsfwRelTypeSexEligible($relGateNpc ?? ($GLOBALS['HERIKA_NAME'] ?? '')))) {
                 $GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY'] = true; // context_pre injects the initiation nudge (OStim audit fix 1)
-            } elseif ($affinity >= 56) {
-                // Fond+ but rel type not eligible: the courtship lane. She holds the affection
-                // tools; chosen affection flips her to crush, which opens the full gate.
+            } elseif ($affinity >= 56 && $affectionOrientationOk) {
+                // Fond+ AND orientation-compatible but rel type not eligible: the courtship lane. She holds the
+                // affection tools; chosen affection flips her to crush, which opens the full gate.
                 $GLOBALS['AIAGENTNSFW_AFFECTION_AUTONOMY'] = true;
             }
             if ($_consentedFns) {
@@ -2336,7 +2387,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             // initiators only unlock once she has consented (AcceptSex / slave / paid prostitute). Until then
             // the model gets only Kiss + Accept/Refuse - so it CANNOT blow past the relationship gate by
             // calling StartSex directly. Marriage/affair/normal all require the explicit AcceptSex.
-            if ($affinity >= 56 || $isSlave) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; }
+            if (($affinity >= 56 && $affectionOrientationOk) || $isSlave) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; }
             if ($isProstitute) {
                 // Prostitutes: OStim sex acts gated on the service being covered (paid/free), NOT accepted_sex.
                 $_consentedFns = $prostituteServiceUnlocked || $isSlave || $npcSceneGateDisabled || $skoomaBargain;
@@ -2364,10 +2415,10 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             }
         }
 
-        // Affection needs Fond (56); below that no hugs or hand-holding (slaves keep theirs -
-        // the slavery lane owns compliance). Was unconditional, so hostile/stranger NPCs could
-        // call hand-holding, blipping OStim idles and the sex-ask machinery.
-        if ($affinity >= 56 || $isSlave) {
+        // Affection needs Fond (56) AND orientation compatibility; below that no hugs or hand-holding (slaves
+        // keep theirs - the slavery lane owns compliance; prostitutes bypass orientation via $affectionOrientationOk).
+        // Was unconditional, so hostile/stranger NPCs could call hand-holding, blipping OStim idles and the sex-ask machinery.
+        if (($affinity >= 56 && $affectionOrientationOk) || $isSlave) {
             $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHug";
             $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHoldHands";
         }
@@ -2640,6 +2691,10 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
 	    $fallbackSkoomaBargain = !$fallbackIsSlaveActor && function_exists('getDrugStageForActor') && (int)getDrugStageForActor($fallbackNpcName, 'skooma') >= 3;
 	    $fallbackSceneCallMin = (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56);
 	    $fallbackIsUnpaidProstitute = $fallbackIsProstitute && empty($fallbackIntimacy["payment_confirmed"]) && !$fallbackSkoomaBargain; // L3 skooma overrides payment
+	    // Orientation affection gate (parity with the main route); slaves/prostitutes bypass, fails open.
+	    $fallbackAffectionOrientationOk = $fallbackIsSlaveActor || $fallbackIsProstitute
+	        || !function_exists('aiagentNsfwOrientationAllowsPlayer')
+	        || aiagentNsfwOrientationAllowsPlayer($fallbackNpcName);
 
 	    if ($fallbackIsUnpaidProstitute) {
 	        // ADDITIVE: keep all core CHIM functions; only suppress the redundant core gold-grab.
@@ -2655,7 +2710,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
 	        error_log("[AIAGENTNSFW] Fallback function route - unpaid prostitute locked to negotiation/payment tools for " . $fallbackNpcName);
 	    } else {
 	        $fallbackAffinity = function_exists('getNpcAffinity') ? (int)getNpcAffinity($fallbackNpcName) : 0;
-	        if ($fallbackAffinity >= 56 || $fallbackIsSlaveActor) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; } // affection needs Fond+
+	        if (($fallbackAffinity >= 56 && $fallbackAffectionOrientationOk) || $fallbackIsSlaveActor) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; } // affection needs Fond+ and orientation match
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdRemoveClothes";
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartMassage";
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartSelfMasturbation";
@@ -2664,7 +2719,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartAnalSex";
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartThreesome";
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartTitfuck";
-	        if ($fallbackAffinity >= 56 || $fallbackIsSlaveActor) {
+	        if (($fallbackAffinity >= 56 && $fallbackAffectionOrientationOk) || $fallbackIsSlaveActor) {
 	            $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHug";
 	            $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHoldHands";
 	        }

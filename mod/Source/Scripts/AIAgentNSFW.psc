@@ -1901,7 +1901,8 @@ Event CommandManager(String npcname,String  command, String parameter)
 	endif
 	
 	if (command=="ExtCmdRemoveClothes")
-	
+
+		StoreWornClothes(npc) ; record her outfit so PutOnClothes restores exactly what she was wearing
 		Int modIndex = Game.GetModByName("_GSPoses.esp")
 		;FastRemoveClothes(npc)
 		if modIndex != 255
@@ -1920,16 +1921,18 @@ Event CommandManager(String npcname,String  command, String parameter)
 	endif
 	
 	if (command=="ExtCmdPutOnClothes")
-		
-		
-		
-		npc.EquipItem(GetBestArmorForSlot(npc, 0x00000004), false, true) ; Body
-		npc.EquipItem(GetBestArmorForSlot(npc, 0x00000008), false, true) ; Hands
-		npc.EquipItem(GetBestArmorForSlot(npc, 0x00000010), false, true) ; Forearms
-		npc.EquipItem(GetBestArmorForSlot(npc, 0x00000020), false, true) ; Feet
-		npc.EquipItem(GetBestArmorForSlot(npc, 0x00000040), false, true) ; Calves
-		npc.EquipItem(GetBestArmorForSlot(npc, 0x00000080), false, true) ; Shield
-	
+
+		; Restore the exact outfit recorded at undress; if none was recorded (e.g. OStim undressed her, not
+		; our RemoveClothes), fall back to the best-armor-per-slot search (now slot-mask bitwise, so it works).
+		if !RestoreWornClothes(npc)
+			npc.EquipItem(GetBestArmorForSlot(npc, 0x00000004), false, true) ; Body
+			npc.EquipItem(GetBestArmorForSlot(npc, 0x00000008), false, true) ; Hands
+			npc.EquipItem(GetBestArmorForSlot(npc, 0x00000010), false, true) ; Forearms
+			npc.EquipItem(GetBestArmorForSlot(npc, 0x00000020), false, true) ; Feet
+			npc.EquipItem(GetBestArmorForSlot(npc, 0x00000040), false, true) ; Calves
+			npc.EquipItem(GetBestArmorForSlot(npc, 0x00000080), false, true) ; Shield
+		endif
+
 		AIAgentFunctions.logMessageForActor("command@ExtCmdPutOnClothes@@"+npcname+" puts on clothes and armor","funcret",npcname)
 
 	
@@ -1938,6 +1941,15 @@ Event CommandManager(String npcname,String  command, String parameter)
 
 		Actor kissedActor=None
 		bool IsPlayerInvolved=false
+
+		; LEGACY-ANIM OPT-OUT (2026-07-05): the server appends @legacy to the parameter when the user has the
+		; "Use Legacy Hug/Kiss Animations" setting on. Strip it off the target and take the legacy branch below.
+		bool bKissLegacy = false
+		int __kissLegIdx = StringUtil.Find(parameter, "@legacy")
+		if __kissLegIdx != -1
+			bKissLegacy = true
+			parameter = StringUtil.Substring(parameter, 0, __kissLegIdx)
+		endif
 
 		Package doNothing = Game.GetForm(0x654e2) as Package ; Package Travelto
 		ImageSpaceModifier FadeToBlack = Game.GetForm(0x000f756d) as ImageSpaceModifier
@@ -2001,7 +2013,7 @@ Event CommandManager(String npcname,String  command, String parameter)
 		; owns alignment on VR and desktop; the model or the player escalates or ends it (the
 		; hold-hands -> kiss -> sex path is the SceneEngine shift). Legacy path only without OStim.
 		; ============================================
-		if AIAgentNSFWSceneEngine.HasOStim()
+		if AIAgentNSFWSceneEngine.HasOStim() && !bKissLegacy
 			npc.EquipItem(GetBestArmorForSlot(npc, 0x00000080), false, true) ; restore the legacy prep unequip
 			if AIAgentNSFWSceneEngine.StartOrJoinScene(npc, kissedActor, true, "kiss")
 				AIAgentFunctions.logMessage(npcname+" kisses "+parameter,"ext_nsfw_action")
@@ -2292,6 +2304,13 @@ Event CommandManager(String npcname,String  command, String parameter)
 	
 	if (command=="ExtCmdHug")
 
+		; LEGACY-ANIM OPT-OUT (2026-07-05): strip the server's @legacy token and take the legacy branch below.
+		bool bHugLegacy = false
+		int __hugLegIdx = StringUtil.Find(parameter, "@legacy")
+		if __hugLegIdx != -1
+			bHugLegacy = true
+			parameter = StringUtil.Substring(parameter, 0, __hugLegIdx)
+		endif
 
 		string result = GetPlayerConsent(npc.GetDisplayName(), "wants to hug you. Allow?")
 		if result == "No, thanks"
@@ -2320,8 +2339,8 @@ Event CommandManager(String npcname,String  command, String parameter)
 		; VR actor alignment properly through its scene system.
 		; ============================================
 		; PERSISTENT AFFECTION SCENE (2026-07-04): see ExtCmdKiss - persistent OStim scene via
-		; SceneEngine, no Wait+Stop blip. Legacy paired-idle path only without OStim.
-		if AIAgentNSFWSceneEngine.HasOStim()
+		; SceneEngine, no Wait+Stop blip. Legacy paired-idle path only without OStim or when opted out.
+		if AIAgentNSFWSceneEngine.HasOStim() && !bHugLegacy
 			AIAgentAIMind.ResetPackages(npc)
 			if AIAgentNSFWSceneEngine.StartOrJoinScene(npc, receiver, true, "hug")
 				AIAgentFunctions.logMessage(npcname+" hugs "+parameter,"ext_nsfw_action")
@@ -4251,8 +4270,10 @@ EndEvent
         If (itemForm.GetType() == 26) ; ARMO - Armor
             Armor armorItem = itemForm as Armor
             
-            ; Check if armor fits the slot mask
-            If (armorItem.GetSlotMask() == aiSlotMask)
+            ; Check if armor OCCUPIES the slot (fix 2026-07-05: was == exact match, which failed for the common
+            ; multi-slot armor - a body+forearms+calves cuirass never equals a single-slot 0x04 query - so
+            ; PutOnClothes silently re-equipped nothing. Bitwise so any armor covering this slot bit qualifies.)
+            If (Math.LogicalAnd(armorItem.GetSlotMask(), aiSlotMask) != 0)
                 Float armorRating = armorItem.GetArmorRating()
                 Debug.Trace("[CHIM NSFW] Checking "+itemForm.GetName()+ " "+itemForm.GetType());
                 ; Compare with current best
@@ -4267,6 +4288,40 @@ EndEvent
     EndWhile
     
     Return bestArmor
+EndFunction
+
+; DRESS/UNDRESS store+restore (fix 2026-07-05): record the EXACT armor she was wearing before undressing, so
+; PutOnClothes re-equips what she actually had on instead of guessing the best-rated armor per slot. Avoids the
+; slot-mask matching problem entirely and puts her back in her own outfit.
+Function StoreWornClothes(Actor npc)
+    StorageUtil.FormListClear(npc, "chim_stored_clothes")
+    Form[] equippedItems = PO3_SKSEFunctions.AddAllEquippedItemsToArray(npc)
+    Int i = 0
+    While (i < equippedItems.Length)
+        Armor a = equippedItems[i] as Armor
+        If (a != None)
+            StorageUtil.FormListAdd(npc, "chim_stored_clothes", a)
+        EndIf
+        i += 1
+    EndWhile
+EndFunction
+
+; Returns true if a recorded outfit was restored; false if nothing was recorded (caller should fall back).
+Bool Function RestoreWornClothes(Actor npc)
+    Int c = StorageUtil.FormListCount(npc, "chim_stored_clothes")
+    If (c <= 0)
+        Return false
+    EndIf
+    Int i = 0
+    While (i < c)
+        Form f = StorageUtil.FormListGet(npc, "chim_stored_clothes", i)
+        If (f != None)
+            npc.EquipItem(f, false, true)
+        EndIf
+        i += 1
+    EndWhile
+    StorageUtil.FormListClear(npc, "chim_stored_clothes")
+    Return true
 EndFunction
 
 Weapon Function GetBestWeapon(Actor akActor)

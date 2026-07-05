@@ -1006,6 +1006,7 @@ SQL;
                 'NSFW_AFFAIR_MIN_AFFINITY' => isset($_POST['NSFW_AFFAIR_MIN_AFFINITY']) ? max(0, min(100, intval($_POST['NSFW_AFFAIR_MIN_AFFINITY']))) : 56,
                 'NSFW_COMBAT_BLOCK_ENABLED' => isset($_POST['NSFW_COMBAT_BLOCK_ENABLED']) ? filter_var($_POST['NSFW_COMBAT_BLOCK_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_COMBAT_BLOCK_WINDOW_SECONDS' => isset($_POST['NSFW_COMBAT_BLOCK_WINDOW_SECONDS']) ? max(5, min(300, intval($_POST['NSFW_COMBAT_BLOCK_WINDOW_SECONDS']))) : 45,
+                'NSFW_AFFECTION_LEGACY_ANIMS' => isset($_POST['NSFW_AFFECTION_LEGACY_ANIMS']) ? filter_var($_POST['NSFW_AFFECTION_LEGACY_ANIMS'], FILTER_VALIDATE_BOOLEAN) : false,
                 'NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS' => isset($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']))) : 30,
                 'GENERIC_GLOSSARY' => $_POST['GENERIC_GLOSSARY'] ?? '',
                 'TRACK_DRUNK_STATUS' => isset($_POST['TRACK_DRUNK_STATUS']) ? filter_var($_POST['TRACK_DRUNK_STATUS'], FILTER_VALIDATE_BOOLEAN) : false,
@@ -3070,6 +3071,7 @@ PROMPT;
                 'arousal_recep_bonded' => $_POST['arousal_recep_bonded'] ?? '',
                 'arousal_recep_courtship' => $_POST['arousal_recep_courtship'] ?? '',
                 'redress_nudge' => $_POST['redress_nudge'] ?? '',
+                'npc_scene_autonomy_nudge' => $_POST['npc_scene_autonomy_nudge'] ?? '',
 
                 // Price Templates (budget/standard/luxury) - stored as JSON objects
                 'price_template_budget' => isset($_POST['price_template_budget']) ? json_decode($_POST['price_template_budget'], true) : null,
@@ -3209,6 +3211,7 @@ PROMPT;
             'arousal_recep_bonded' => 'You and #PLAYER_NAME# are bonded - your desire for them lives close to the surface. A look, a touch, a low word can light you up, and you are open about wanting them. You warm fast and you make it known, in your own voice, without waiting to be coaxed.',
             'arousal_recep_courtship' => 'You have grown fond of #PLAYER_NAME#, and there is a flutter you have not named yet. Their warmth affects you more than you let on - you might blush, linger, or lose your words a little. Nothing beyond affection is on the table; let the feeling build at its own pace.',
             'redress_nudge' => 'You are still undressed and the intimate moment has passed. When it feels natural - the talk winds down, you move to leave, someone could walk in - get dressed again by calling the Put_On_Clothes action. Do not stay naked through ordinary conversation unless you have a reason to.',
+            'npc_scene_autonomy_nudge' => 'Others are here besides #PLAYER_NAME#. If you are genuinely close to another person present - and in the kind of relationship where intimacy fits - you may start intimacy with THEM instead of #PLAYER_NAME#, on your own initiative, by naming that person as the target of the scene action. Only do so when it truly fits your bond with them.',
 
             // Section 2A: Marriage (Spouse + Spouse) Tier Prompts (11 tiers)
             'marriage_spouse_hostile' => 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -3343,7 +3346,7 @@ PROMPT;
             // Drug/alcohol worn-off state-cleared prompts (Drugs & Alcohol tab)
             'skooma_worn_off' => "SKOOMA HAS WORN OFF. You are not currently on skooma and are not currently in skooma withdrawal. Stop using skooma speech, cravings, speed, jitter, euphoria, or crash behavior unless a new CURRENT SKOOMA STATE prompt appears.",
             'sap_worn_off' => "SLEEPING TREE SAP HAS WORN OFF. You are no longer dazed, dreamy, or paralyzed by sap. Stop using sap speech or sap body-state behavior unless a new CURRENT SLEEPING TREE SAP STATE prompt appears.",
-            'alcohol_worn_off' => "ALCOHOL HAS WORN OFF. You are not currently drunk or tipsy. Stop using alcohol slurring, stumbling, blackout, or drunk behavior unless a new CURRENT ALCOHOL LEVEL prompt appears.",
+            'alcohol_worn_off' => "You are fully sober right now - speak in your normal, clear voice. No slurring, no hiccups, no 'hic', no drunken word contractions, no giggling to cover clumsiness, no drunk behavior of any kind. Any drunk-sounding lines in your chat history OR in your speech-style profile are from EARLIER, while you were drunk - they do NOT describe how you speak now. Only a new CURRENT ALCOHOL LEVEL prompt can make you drunk again.",
 
             // Section 5: Fertility & Pregnancy (FMR)
             'fmr_pregnant_t1' => "First trimester - You recently discovered you're pregnant. Morning sickness, mood swings, fatigue. The reality is setting in.",
@@ -7030,6 +7033,8 @@ PROMPT;
                             const afT = afV>=91?'Bonded':(afV>=76?'Devoted':(afV>=56?'Fond':(afV>=31?'Friendly':(afV>=6?'Acquaintance':'Neutral'))));
                             elSet('affairMinAffinityValue', 'textContent', afV + ' (' + afT + ')');
                         }
+                        const affLegacyEl = document.getElementById('nsfwAffectionLegacyAnims');
+                        if (affLegacyEl) affLegacyEl.checked = data.data.NSFW_AFFECTION_LEGACY_ANIMS === true || data.data.NSFW_AFFECTION_LEGACY_ANIMS === '1';
                         const combatBlockEl = document.getElementById('nsfwCombatBlockEnabled');
                         if (combatBlockEl) combatBlockEl.checked = data.data.NSFW_COMBAT_BLOCK_ENABLED !== undefined ? data.data.NSFW_COMBAT_BLOCK_ENABLED : true;
                         elSet('nsfwCombatBlockWindow', 'value', data.data.NSFW_COMBAT_BLOCK_WINDOW_SECONDS !== undefined ? data.data.NSFW_COMBAT_BLOCK_WINDOW_SECONDS : 45);
@@ -7385,6 +7390,7 @@ PROMPT;
             fdSet('DRUNK_REQUIRE_CONSUME_ACTION', 'drunkRequireConsume', 'checked');
             fdSet('INSTANT_CRUSH_ON_AFFECTION', 'instantCrushOnAffection', 'checked');
             if (document.getElementById('affairMinAffinity')) fdSet('NSFW_AFFAIR_MIN_AFFINITY', 'affairMinAffinity', 'value');
+            if (document.getElementById('nsfwAffectionLegacyAnims')) fdSet('NSFW_AFFECTION_LEGACY_ANIMS', 'nsfwAffectionLegacyAnims', 'checked');
             if (document.getElementById('nsfwCombatBlockEnabled')) fdSet('NSFW_COMBAT_BLOCK_ENABLED', 'nsfwCombatBlockEnabled', 'checked');
             if (document.getElementById('nsfwCombatBlockWindow')) fdSet('NSFW_COMBAT_BLOCK_WINDOW_SECONDS', 'nsfwCombatBlockWindow', 'value');
             fdSet('DRUNK_WINDOW_HOURS', 'drunkWindowHours', 'value');
@@ -10463,6 +10469,7 @@ PROMPT;
         arousal_recep_bonded: 'You and #PLAYER_NAME# are bonded - your desire for them lives close to the surface. A look, a touch, a low word can light you up, and you are open about wanting them. You warm fast and you make it known, in your own voice, without waiting to be coaxed.',
         arousal_recep_courtship: 'You have grown fond of #PLAYER_NAME#, and there is a flutter you have not named yet. Their warmth affects you more than you let on - you might blush, linger, or lose your words a little. Nothing beyond affection is on the table; let the feeling build at its own pace.',
         redress_nudge: 'You are still undressed and the intimate moment has passed. When it feels natural - the talk winds down, you move to leave, someone could walk in - get dressed again by calling the Put_On_Clothes action. Do not stay naked through ordinary conversation unless you have a reason to.',
+        npc_scene_autonomy_nudge: 'Others are here besides #PLAYER_NAME#. If you are genuinely close to another person present - and in the kind of relationship where intimacy fits - you may start intimacy with THEM instead of #PLAYER_NAME#, on your own initiative, by naming that person as the target of the scene action. Only do so when it truly fits your bond with them.',
 
         // SECTION 2A: Marriage spouse prompts (11 tiers)
         marriage_spouse_hostile: 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -10603,7 +10610,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         // Drug/alcohol worn-off state-cleared prompts (Drugs & Alcohol tab)
         skooma_worn_off: 'SKOOMA HAS WORN OFF. You are not currently on skooma and are not currently in skooma withdrawal. Stop using skooma speech, cravings, speed, jitter, euphoria, or crash behavior unless a new CURRENT SKOOMA STATE prompt appears.',
         sap_worn_off: 'SLEEPING TREE SAP HAS WORN OFF. You are no longer dazed, dreamy, or paralyzed by sap. Stop using sap speech or sap body-state behavior unless a new CURRENT SLEEPING TREE SAP STATE prompt appears.',
-        alcohol_worn_off: 'ALCOHOL HAS WORN OFF. You are not currently drunk or tipsy. Stop using alcohol slurring, stumbling, blackout, or drunk behavior unless a new CURRENT ALCOHOL LEVEL prompt appears.',
+        alcohol_worn_off: 'You are fully sober right now - speak in your normal, clear voice. No slurring, no hiccups, no \'hic\', no drunken word contractions, no giggling to cover clumsiness, no drunk behavior of any kind. Any drunk-sounding lines in your chat history OR in your speech-style profile are from EARLIER, while you were drunk - they do NOT describe how you speak now. Only a new CURRENT ALCOHOL LEVEL prompt can make you drunk again.',
 
         // SECTION 2C: NPC-to-NPC Scenes (scene resolver fills #PRIMARY_PARTNER# per active thread)
         npc_global_context: 'This is an NPC-to-NPC scene. #NPC_NAME# is the speaking NPC and #PRIMARY_PARTNER# is their scene partner. The player is not the scene partner unless #PLAYER_NAME# is explicitly listed as a participant. Use this NPC\'s own profile, relationship state, marriage or affair context, intoxication, speech style, and unlocked kinks.',
@@ -10803,6 +10810,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     setPromptValue('promptArousalRecepBonded', s.arousal_recep_bonded, 'arousal_recep_bonded');
                     setPromptValue('promptArousalRecepCourtship', s.arousal_recep_courtship, 'arousal_recep_courtship');
                     setPromptValue('promptRedressNudge', s.redress_nudge, 'redress_nudge');
+                    setPromptValue('promptNpcSceneAutonomyNudge', s.npc_scene_autonomy_nudge, 'npc_scene_autonomy_nudge');
                     if (s.arousal_gating_threshold !== undefined) {
                         document.getElementById('arousalGatingThreshold').value = s.arousal_gating_threshold;
                         document.getElementById('arousalGatingThresholdValue').textContent = s.arousal_gating_threshold;
@@ -11107,6 +11115,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('arousal_recep_bonded', getVal('promptArousalRecepBonded'));
         formData.append('arousal_recep_courtship', getVal('promptArousalRecepCourtship'));
         formData.append('redress_nudge', getVal('promptRedressNudge'));
+        formData.append('npc_scene_autonomy_nudge', getVal('promptNpcSceneAutonomyNudge'));
         formData.append('arousal_gating_threshold', document.getElementById('arousalGatingThreshold').value);
 
         // Devices & Wearables (Devious Devices)
@@ -11393,6 +11402,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         resetVal('promptArousalRecepBonded', 'arousal_recep_bonded');
         resetVal('promptArousalRecepCourtship', 'arousal_recep_courtship');
         resetVal('promptRedressNudge', 'redress_nudge');
+        resetVal('promptNpcSceneAutonomyNudge', 'npc_scene_autonomy_nudge');
         document.getElementById('arousalGatingThreshold').value = 10;
         document.getElementById('arousalGatingThresholdValue').textContent = '10';
 

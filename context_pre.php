@@ -155,6 +155,31 @@ if (!empty($GLOBALS['AIAGENTNSFW_AFFECTION_AUTONOMY']) && isset($GLOBALS['HERIKA
     }
 }
 
+// NPC-TO-NPC SCENE AUTONOMY (user directive 2026-07-05): an NPC who ALREADY holds the sex-initiation toolset
+// (player-eligible autonomy, or a prostitute) may point it at ANOTHER nearby NPC instead of the player - the
+// server validates A->B eligibility (affinity + rel type; prostitute bypass; slave player-only) when she calls
+// it. Without this cue the model never thinks to target another NPC. Normal turns only, and only when someone
+// else is actually present. UI-editable key npc_scene_autonomy_nudge.
+if (isset($GLOBALS['HERIKA_PERS'])
+    && (!empty($GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY']) || (function_exists('isProstitute') && isProstitute($actorName)))
+    && (!function_exists('isNpcSlave') || !isNpcSlave($actorName))) {
+    $__nnPeople = (string)($GLOBALS['CACHE_PEOPLE'] ?? '');
+    $__nnPlayerNm = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
+    $__nnOthers = array_filter(array_map('trim', explode('|', $__nnPeople)), function($p) use ($actorName, $__nnPlayerNm) {
+        return $p !== '' && strcasecmp($p, $actorName) !== 0 && ($__nnPlayerNm === '' || strcasecmp($p, $__nnPlayerNm) !== 0);
+    });
+    $__nnx = function_exists('getIntimacyForActor') ? getIntimacyForActor($actorName) : [];
+    if (!empty($__nnOthers) && (int)($__nnx['level'] ?? 0) < 1 && empty($__nnx['sex_started']) && (int)($__nnx['intensity_tier'] ?? 0) < 3) {
+        $__nnNudge = function_exists('getGlobalPrompt') ? trim((string)getGlobalPrompt('npc_scene_autonomy_nudge')) : '';
+        if ($__nnNudge === '') {
+            $__nnNudge = "Others are here besides #PLAYER_NAME#. If you are genuinely close to another person present - and in the kind of relationship where intimacy fits - you may start intimacy with THEM instead of #PLAYER_NAME#, on your own initiative, by naming that person as the target of the scene action. Only do so when it truly fits your bond with them.";
+        }
+        $__nnNudge = str_replace(['#PLAYER_NAME#', '#NPC_NAME#'], [$__nnPlayerNm !== '' ? $__nnPlayerNm : 'the player', $actorName], $__nnNudge);
+        $GLOBALS['HERIKA_PERS'] .= "\n\n<npc_scene_autonomy>\n" . $__nnNudge . "\n</npc_scene_autonomy>";
+        error_log("[AIAGENTNSFW] NPC-SCENE AUTONOMY NUDGE injected for {$actorName} (" . count($__nnOthers) . " other(s) present)");
+    }
+}
+
 // AROUSAL RECEPTIVENESS (arousal enabled only): colors HOW arousal builds in conversation by relationship
 // depth - flavor only, gates unchanged. Fond/Devoted/Bonded by affinity; courtship variant when the type
 // is not yet sex-eligible. Slaves/prostitutes excluded (their lanes don't run on arousal). Normal turns only.
@@ -344,12 +369,19 @@ if (function_exists('getDrugStageForActor') && isset($GLOBALS["HERIKA_PERS"]) &&
 // keeps slurring off its own drunk chat history ("I talk like a drunk, so I am one"). Persist the
 // sobriety override for several turns after sobering so the history momentum breaks.
 $__soberLeft = (int)($__promptState["aiagent_nsfw_sober_reinforce"] ?? 0);
-if (isset($GLOBALS["HERIKA_PERS"]) && $drunkStage < 1 && ($__lastPromptedDrunk > 0 || $__soberLeft > 0)) {
-    $GLOBALS["HERIKA_PERS"] .= "\n\n#" . (getGlobalPrompt('alcohol_worn_off') ?: "ALCOHOL HAS WORN OFF. You are fully sober RIGHT NOW. Speak in your normal voice: no slurring, no hiccups, no drunken word contractions, no drunk behavior of any kind. Recent drunk-sounding lines in your chat history are from EARLIER, while you were drunk - they do not describe how you speak now. Only a new CURRENT ALCOHOL LEVEL prompt can make you drunk again.");
-    $__finalStateLock .= "\n\n#FINAL CURRENT ALCOHOL STATE LOCK\nAlcohol has worn off. You are fully sober. Ignore drunk speech in memories, relationship summaries, and chat history - it is in the past.";
-    $__newSoberLeft = ($__lastPromptedDrunk > 0)
-        ? max(1, (int)_getNsfwSetting('SOBER_REINFORCE_TURNS', 4))
-        : max(0, $__soberLeft - 1);
+// SELF-TERMINATING (fix 2026-07-05): the real permadrunk driver is CHIM core baking drunk slur into the
+// PERSISTED speech-style profile - so she keeps SOUNDING drunk after the stage is 0, and the core mood
+// classifier re-tags her 'drunk' off her own lines. A blind N-turn box can expire while she is still slurring.
+// Instead, fire the sober override while she still sounds drunk (lastMood drunk/tipsy at stage 0) and RE-ARM
+// the counter until she genuinely sobers in voice; then it winds down. Also enter on mood-still-drunk alone so
+// a profile-baked-drunk NPC with no live drink row is still counter-pressured.
+$__moodStillDrunk = ($_lastMood === "drunk" || $_lastMood === "tipsy");
+if (isset($GLOBALS["HERIKA_PERS"]) && $drunkStage < 1 && ($__lastPromptedDrunk > 0 || $__soberLeft > 0 || $__moodStillDrunk)) {
+    $GLOBALS["HERIKA_PERS"] .= "\n\n#" . (getGlobalPrompt('alcohol_worn_off') ?: "You are fully sober right now - speak in your normal, clear voice. No slurring, no hiccups, no 'hic', no drunken word contractions, no giggling to cover clumsiness, no drunk behavior of any kind. Any drunk-sounding lines in your chat history OR in your speech-style profile are from EARLIER, while you were drunk - they do NOT describe how you speak now. Only a new CURRENT ALCOHOL LEVEL prompt can make you drunk again.");
+    $__finalStateLock .= "\n\n#FINAL CURRENT ALCOHOL STATE LOCK\nAlcohol has worn off. You are fully sober. Ignore drunk speech in memories, relationship summaries, your speech-style profile, and chat history - it is in the past.";
+    $__newSoberLeft = ($__lastPromptedDrunk > 0 || $__moodStillDrunk)
+        ? max(1, (int)_getNsfwSetting('SOBER_REINFORCE_TURNS', 4))   // just sobered OR still sounding drunk -> (re)arm
+        : max(0, $__soberLeft - 1);                                   // genuinely sober in voice -> wind down
     if ($__newSoberLeft !== $__soberLeft) {
         $__promptState["aiagent_nsfw_sober_reinforce"] = $__newSoberLeft;
         $__promptStateChanged = true;

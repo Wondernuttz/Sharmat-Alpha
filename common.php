@@ -2027,6 +2027,12 @@ function aiagentNsfwInstantCrush($actorName, $trigger, $rawTarget = '') {
         $rels = RelationshipManager::normalizeRelationshipMap($ext['relationships'] ?? []);
         $aff = (int)($rels['Player']['aff'] ?? 0);
         if ($aff < 56) { return; } // same fond floor as the eval-path romance gate
+        // ORIENTATION (user directive 2026-07-05): a crush only forms if the NPC's orientation allows the
+        // player's gender. Fails open (unknown/bi/pan -> allowed); only explicit mismatch/asexual blocks.
+        if (function_exists('aiagentNsfwOrientationAllowsPlayer') && !aiagentNsfwOrientationAllowsPlayer($actorName)) {
+            error_log("[AIAGENTNSFW] Instant crush blocked - orientation does not allow the player for {$actorName}");
+            return;
+        }
         $type = strtolower((string)($rels['Player']['type'] ?? 'neutral'));
         if (in_array($type, ['romantic', 'crush', 'admirer', 'obsessed', 'infatuated', 'lover'], true)) { return; }
 
@@ -2579,6 +2585,75 @@ function _getNsfwSetting($key, $default = null) {
 function aiagentNsfwArousalNum($key, $default) {
     $v = _getNsfwSetting($key, $default);
     return is_numeric($v) ? (float)$v : (float)$default;
+}
+
+// May NPC A START a sex scene with NPC B? (user directive 2026-07-05: allow NPC<->NPC scenes if affinity +
+// rel type are high enough). Prostitute A bypasses (services anyone). Slave A is PLAYER-ONLY (cannot initiate
+// NPC<->NPC). Otherwise A->B must clear the SAME standard as the player gate: affinity >= scene-call floor AND
+// A's rel TYPE toward B is one of the UI-checked eligible types (unless the rel-type gate is disabled in UI).
+// Fails CLOSED for a normal NPC pair with no qualifying bond (strangers default to neutral/0). This is the
+// OUTBOUND-initiation gate only; it does NOT revive the removed inbound isNpcAffinityGatingEnabled toggle.
+function aiagentNsfwNpcToNpcSexEligible($npcA, $npcB) {
+    $npcA = trim((string)$npcA); $npcB = trim((string)$npcB);
+    if ($npcA === '' || $npcB === '' || strcasecmp($npcA, $npcB) === 0) { return false; }
+    if (function_exists('isNpcSlave') && isNpcSlave($npcA)) { return false; }        // slave A: player-only
+    if (function_exists('isProstitute') && isProstitute($npcA)) { return true; }     // prostitute A: anyone
+    if (!class_exists('RelationshipManager')) { return false; }
+    $rel = null;
+    try { $rel = RelationshipManager::getRelationship($npcA, $npcB); } catch (Exception $e) { return false; }
+    if (!is_array($rel)) { return false; }
+    $aff  = (int)($rel['aff'] ?? 0);
+    $type = strtolower(trim((string)($rel['type'] ?? '')));
+    $floor = (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56);
+    if ($aff < $floor) { return false; }
+    // Rel-type eligibility from the SAME UI grid the player gate reads
+    $eligible = null;
+    try {
+        $row = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
+        if ($row && !empty($row['value'])) {
+            $cfg = json_decode($row['value'], true);
+            if (is_array($cfg)) {
+                if (array_key_exists('enabled', $cfg) && !$cfg['enabled']) { return true; } // UI gate off -> affinity alone
+                if (is_array($cfg['eligible_types'] ?? null)) { $eligible = array_map('strtolower', $cfg['eligible_types']); }
+            }
+        }
+    } catch (Exception $e) { return true; } // config unreadable -> affinity already passed, don't hard-block
+    if (empty($eligible)) { return true; }  // nothing configured eligible -> type gate effectively off
+    return in_array($type, $eligible, true);
+}
+
+// Does this NPC's sexual orientation ALLOW attraction to the player's gender? (user directive 2026-07-05)
+// Gates tier-1/2 affection tools and crush formation. FAILS OPEN: returns true for match / bisexual /
+// pansexual / unknown-orientation / unknown-gender / any error - only an EXPLICIT mismatch (straight NPC +
+// same-gender player, or gay NPC + opposite-gender player) or an ASEXUAL NPC returns false. Mirrors the
+// flavor-only NsfwRelationship::checkOrientationMatch logic, promoted here to a real gate.
+function aiagentNsfwOrientationAllowsPlayer($npcName) {
+    try {
+        require_once __DIR__ . "/nsfw_data.php";
+        $ext = NsfwNpcData::get($npcName);
+        $orientation = strtolower(trim((string)($ext['sexual_orientation'] ?? '')));
+        if ($orientation === '' || $orientation === 'bisexual' || $orientation === 'pansexual') { return true; }
+        if ($orientation === 'asexual') { return false; }
+        // Player gender
+        $playerGender = 'male';
+        if (isset($GLOBALS['PLAYER_SEX'])) { $playerGender = ((int)$GLOBALS['PLAYER_SEX'] === 1) ? 'female' : 'male'; }
+        elseif (isset($GLOBALS['PLAYER_GENDER'])) { $playerGender = strtolower((string)$GLOBALS['PLAYER_GENDER']); }
+        // NPC gender: core_npc_master.gender preferred, then nsfw profile sex
+        $npcGender = '';
+        if (class_exists('NpcMaster')) {
+            $nd = (new NpcMaster())->getByName($npcName);
+            if (!empty($nd['gender'])) { $npcGender = strtolower((string)$nd['gender']); }
+        }
+        if ($npcGender === '' && isset($ext['sex'])) {
+            $npcGender = ((int)$ext['sex'] === 1 || strtolower((string)$ext['sex']) === 'female') ? 'female' : 'male';
+        }
+        if ($npcGender === '') { return true; } // unknown gender -> do not block
+        if ($orientation === 'heterosexual' || $orientation === 'straight') { return $npcGender !== $playerGender; }
+        if ($orientation === 'homosexual' || $orientation === 'gay' || $orientation === 'lesbian') { return $npcGender === $playerGender; }
+        return true; // unknown orientation label -> do not block
+    } catch (Throwable $t) {
+        return true; // never block affection on an error
+    }
 }
 
 // CONFLICT DETECTION: live combat around the PLAYER right now? The newest beings-in-range report
