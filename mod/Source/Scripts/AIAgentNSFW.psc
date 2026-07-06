@@ -2312,22 +2312,36 @@ Event CommandManager(String npcname,String  command, String parameter)
 			parameter = StringUtil.Substring(parameter, 0, __hugLegIdx)
 		endif
 
-		string result = GetPlayerConsent(npc.GetDisplayName(), "wants to hug you. Allow?")
-		if result == "No, thanks"
-			AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Player refused to hug","funcret",npcname)
-			return;
+		; NPC-NPC AFFECTION TARGET (2026-07-06): receiver was HARDCODED to the player, so a hug aimed at
+		; another NPC hugged the PLAYER instead (tester log: NPC hug misdirect). Resolve the named target
+		; the same way ExtCmdKiss does; consent popup only when the PLAYER is the receiver.
+		Actor receiver = Game.GetPlayer()
+		bool bHugPlayerReceiver = true
+		if parameter != "" && parameter != "player" && parameter != "Player" && StringUtil.Find(parameter, Game.GetPlayer().GetDisplayName()) == -1
+			Actor namedHugTarget = AIAgentFunctions.getAgentByName(parameter)
+			if namedHugTarget == None
+				AIAgentFunctions.requestMessageForActor("command@ExtCmdHug@"+parameter+"@error. target nout found;"+parameter+"","funcret",npcname)
+				return
+			endif
+			receiver = namedHugTarget
+			bHugPlayerReceiver = false
 		endif
 
+		if bHugPlayerReceiver
+			string result = GetPlayerConsent(npc.GetDisplayName(), "wants to hug you. Allow?")
+			if result == "No, thanks"
+				AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Player refused to hug","funcret",npcname)
+				return;
+			endif
+		endif
 
-
-		Actor receiver=Game.GetPlayer();
 		if (npc.GetSitState()==3 || npc.GetSitState()==2) ; Dont use feature if player is not sitting, or is on a mount
 			Debug.SendAnimationEvent(npc, "IdleForceDefaultState")
 		endif
 		;npc.StartVampireFeed(Game.GetPlayer())
 
 		if (npc.GetDistance(receiver)>512)
-			AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Player is too far away to hug","funcret",npcname)
+			AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Hug target is too far away","funcret",npcname)
 			return;
 		endif
 
@@ -2392,8 +2406,10 @@ Event CommandManager(String npcname,String  command, String parameter)
 
 			Idle hugIdle=Game.GetForm(0x0f4699) as Idle
 			;int CameraState=Game.GetCameraState();
-			Game.ForceThirdPerson();
-			npc.PlayIdleWithTarget(hugIdle,Game.GetPlayer())
+			if bHugPlayerReceiver
+				Game.ForceThirdPerson(); only yank the camera when the PLAYER is being hugged
+			endif
+			npc.PlayIdleWithTarget(hugIdle,receiver)
 			npc.SetDontMove(true)
 			Wait(5)
 			npc.SetDontMove(false)
@@ -2417,20 +2433,34 @@ Event CommandManager(String npcname,String  command, String parameter)
 	
 	if (command=="ExtCmdHoldHands")
 
-
-		string result = GetPlayerConsent(npc.GetDisplayName(), "wants to hold your hand. Allow?")
-		if result == "No, thanks"
-			AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Player refused to hold hands","funcret",npcname)
-			return;
+		; NPC-NPC AFFECTION TARGET (2026-07-06): same fix as ExtCmdHug - receiver was hardcoded to the
+		; player, so hand-holding aimed at another NPC grabbed the PLAYER instead. Kiss-style resolution.
+		Actor receiver = Game.GetPlayer()
+		bool bHHPlayerReceiver = true
+		if parameter != "" && parameter != "player" && parameter != "Player" && StringUtil.Find(parameter, Game.GetPlayer().GetDisplayName()) == -1
+			Actor namedHHTarget = AIAgentFunctions.getAgentByName(parameter)
+			if namedHHTarget == None
+				AIAgentFunctions.requestMessageForActor("command@ExtCmdHoldHands@"+parameter+"@error. target nout found;"+parameter+"","funcret",npcname)
+				return
+			endif
+			receiver = namedHHTarget
+			bHHPlayerReceiver = false
 		endif
 
-		Actor receiver=Game.GetPlayer();
+		if bHHPlayerReceiver
+			string result = GetPlayerConsent(npc.GetDisplayName(), "wants to hold your hand. Allow?")
+			if result == "No, thanks"
+				AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Player refused to hold hands","funcret",npcname)
+				return;
+			endif
+		endif
+
 		if (npc.GetSitState()==3 || npc.GetSitState()==2)
 			Debug.SendAnimationEvent(npc, "IdleForceDefaultState")
 		endif
 
 		if (npc.GetDistance(receiver)>512)
-			AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Player is too far away to hold hands","funcret",npcname)
+			AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Hand-holding target is too far away","funcret",npcname)
 			return
 		endif
 

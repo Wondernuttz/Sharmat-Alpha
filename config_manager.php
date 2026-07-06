@@ -1008,6 +1008,7 @@ SQL;
                 'NSFW_COMBAT_BLOCK_WINDOW_SECONDS' => isset($_POST['NSFW_COMBAT_BLOCK_WINDOW_SECONDS']) ? max(5, min(300, intval($_POST['NSFW_COMBAT_BLOCK_WINDOW_SECONDS']))) : 45,
                 'NSFW_AFFECTION_LEGACY_ANIMS' => isset($_POST['NSFW_AFFECTION_LEGACY_ANIMS']) ? filter_var($_POST['NSFW_AFFECTION_LEGACY_ANIMS'], FILTER_VALIDATE_BOOLEAN) : false,
                 'NSFW_GAZE_ENABLED' => isset($_POST['NSFW_GAZE_ENABLED']) ? filter_var($_POST['NSFW_GAZE_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
+                'NSFW_VR_TOUCH_ENABLED' => isset($_POST['NSFW_VR_TOUCH_ENABLED']) ? filter_var($_POST['NSFW_VR_TOUCH_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_GAZE_COOLDOWN_SECONDS' => isset($_POST['NSFW_GAZE_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_GAZE_COOLDOWN_SECONDS']))) : 25,
                 'NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS' => isset($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']))) : 30,
                 'GENERIC_GLOSSARY' => $_POST['GENERIC_GLOSSARY'] ?? '',
@@ -7049,6 +7050,8 @@ PROMPT;
                         if (affLegacyEl) affLegacyEl.checked = data.data.NSFW_AFFECTION_LEGACY_ANIMS === true || data.data.NSFW_AFFECTION_LEGACY_ANIMS === '1';
                         const gazeEnabledEl = document.getElementById('nsfwGazeEnabled');
                         if (gazeEnabledEl) gazeEnabledEl.checked = data.data.NSFW_GAZE_ENABLED !== false;
+                        const vrTouchEl = document.getElementById('nsfwVrTouchEnabled');
+                        if (vrTouchEl) vrTouchEl.checked = data.data.NSFW_VR_TOUCH_ENABLED !== false;
                         elSet('nsfwGazeCooldown', 'value', data.data.NSFW_GAZE_COOLDOWN_SECONDS !== undefined ? data.data.NSFW_GAZE_COOLDOWN_SECONDS : 25);
                         const combatBlockEl = document.getElementById('nsfwCombatBlockEnabled');
                         if (combatBlockEl) combatBlockEl.checked = data.data.NSFW_COMBAT_BLOCK_ENABLED !== undefined ? data.data.NSFW_COMBAT_BLOCK_ENABLED : true;
@@ -7407,6 +7410,7 @@ PROMPT;
             if (document.getElementById('affairMinAffinity')) fdSet('NSFW_AFFAIR_MIN_AFFINITY', 'affairMinAffinity', 'value');
             if (document.getElementById('nsfwAffectionLegacyAnims')) fdSet('NSFW_AFFECTION_LEGACY_ANIMS', 'nsfwAffectionLegacyAnims', 'checked');
             if (document.getElementById('nsfwGazeEnabled')) fdSet('NSFW_GAZE_ENABLED', 'nsfwGazeEnabled', 'checked');
+            if (document.getElementById('nsfwVrTouchEnabled')) fdSet('NSFW_VR_TOUCH_ENABLED', 'nsfwVrTouchEnabled', 'checked');
             if (document.getElementById('nsfwGazeCooldown')) fdSet('NSFW_GAZE_COOLDOWN_SECONDS', 'nsfwGazeCooldown', 'value');
             if (document.getElementById('nsfwCombatBlockEnabled')) fdSet('NSFW_COMBAT_BLOCK_ENABLED', 'nsfwCombatBlockEnabled', 'checked');
             if (document.getElementById('nsfwCombatBlockWindow')) fdSet('NSFW_COMBAT_BLOCK_WINDOW_SECONDS', 'nsfwCombatBlockWindow', 'value');

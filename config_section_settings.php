@@ -119,6 +119,14 @@
                 </div>
 
                 <div class="settings-checkbox-group">
+                    <label for="nsfwVrTouchEnabled">
+                        <input type="checkbox" id="nsfwVrTouchEnabled" name="NSFW_VR_TOUCH_ENABLED" checked>
+                        <span>VR Touch Reactions (CBPC contact)</span>
+                    </label>
+                    <p class="legend">NPCs react when your VR hands actually touch them (CBPC collision events from the plugin). Turn this OFF if you play flatscreen/2D - without VR hands these events can misfire - or if your collision setup triggers through worn armor. Gaze reactions are separate and stay on.</p>
+                </div>
+
+                <div class="settings-checkbox-group">
                     <label for="nsfwGazeEnabled">
                         <input type="checkbox" id="nsfwGazeEnabled" name="NSFW_GAZE_ENABLED" checked>
                         <span>Gaze Reactions (staring)</span>

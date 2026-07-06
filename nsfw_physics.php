@@ -770,6 +770,14 @@ class NsfwPhysics {
 
         $action = $parts[2]; // touch, grab, release
 
+        // VR TOUCH TOGGLE (2026-07-06): flat/2D players get phantom CBPC contact events (no VR hands),
+        // and some setups fire collisions through worn armor. This kills the CONTACT lanes only -
+        // gaze is crosshair-based and works fine in 2D, so it stays on its own NSFW_GAZE_ENABLED switch.
+        if (in_array($action, ['touch', 'grab', 'spank', 'release'], true)
+            && function_exists('_getNsfwSetting') && !_getNsfwSetting('NSFW_VR_TOUCH_ENABLED', true)) {
+            return null;
+        }
+
         $result = null;
 
         // Route to appropriate handler
