@@ -90,6 +90,8 @@
         handleSharmatCheckUpdate();
     } elseif ($action === 'sharmatRunUpdate') {
         handleSharmatRunUpdate();
+    } elseif ($action === 'sharmatDownloadMod') {
+        handleSharmatDownloadMod();
     } elseif ($action === 'loadGlobalStyles') {
         handleLoadGlobalStyles();
     } elseif ($action === 'loadGlobalStyle') {
@@ -966,7 +968,10 @@ SQL;
 
             $copied = 0;
             $failed = [];
-            $skipTop = ['mod', '.git', '.github', '.gitignore'];
+            // 2026-07-06: 'mod' is no longer skipped - the updater now syncs the repo's game-mod folder
+            // onto the server so the "Download Game Mod" button always serves the version matching the
+            // installed server code. The game still never loads from here; testers install the download.
+            $skipTop = ['.git', '.github', '.gitignore'];
             $preserve = ['conf/conf.php', 'cmd/conf/conf.php'];
             _sharmatUpdateSync($srcRoot, $extDir, '', $skipTop, $preserve, $copied, $failed);
 
@@ -986,6 +991,72 @@ SQL;
         } catch (Exception $e) {
             echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
+        exit;
+    }
+
+    // Serve the game-side mod (esp/pex/seq/source) as an installable zip. The updater now syncs the
+    // repo's mod/ folder onto the server, so this download matches the installed server version -
+    // testers grab it here instead of navigating GitHub. Zip root = the mod contents, so the zip
+    // installs directly as a mod in MO2/Vortex. If the local mod/ has not been synced yet (updaters
+    // older than 2026-07-06 skipped it), fall back to pulling the mod/ subtree straight from GitHub.
+    function _sharmatZipModDir($modDir, $tmpZip) {
+        $za = new ZipArchive();
+        if ($za->open($tmpZip, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) { return 0; }
+        $added = 0;
+        $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($modDir, FilesystemIterator::SKIP_DOTS));
+        foreach ($it as $file) {
+            if (!$file->isFile()) { continue; }
+            $rel = str_replace('\\', '/', substr($file->getPathname(), strlen($modDir) + 1));
+            if (preg_match('/\.bak|meta\.ini$/i', $rel)) { continue; }   // never ship editor/backup junk
+            $za->addFile($file->getPathname(), $rel);
+            $added++;
+        }
+        $za->close();
+        return $added;
+    }
+
+    function handleSharmatDownloadMod() {
+        @set_time_limit(120);
+        while (ob_get_level()) { @ob_end_clean(); }
+        $tmpZip = tempnam(sys_get_temp_dir(), 'sharmat_modzip') . '.zip';
+        $added = 0;
+        $modDir = __DIR__ . '/mod';
+        if (is_dir($modDir)) {
+            $added = _sharmatZipModDir($modDir, $tmpZip);
+        }
+        if ($added === 0) {
+            // Local mod/ not synced yet - pull the repo zipball and re-pack just its mod/ subtree.
+            try {
+                list($zcode, $zipBody) = _sharmatUpdateHttpGet('https://api.github.com/repos/Wondernuttz/Sharmat-Alpha/zipball/main');
+                if ($zcode === 200 && strlen($zipBody) > 1000) {
+                    $tmpSrc = tempnam(sys_get_temp_dir(), 'sharmat_modsrc') . '.zip';
+                    file_put_contents($tmpSrc, $zipBody);
+                    $extractDir = sys_get_temp_dir() . '/sharmat_moddl_' . getmypid();
+                    $za = new ZipArchive();
+                    if ($za->open($tmpSrc) === true) {
+                        $za->extractTo($extractDir);
+                        $za->close();
+                        @unlink($tmpSrc);
+                        $roots = glob($extractDir . '/*', GLOB_ONLYDIR);
+                        if (!empty($roots) && is_dir($roots[0] . '/mod')) {
+                            $added = _sharmatZipModDir($roots[0] . '/mod', $tmpZip);
+                        }
+                    }
+                }
+            } catch (Exception $e) { /* fall through to the 404 below */ }
+        }
+        if ($added === 0) {
+            @unlink($tmpZip);
+            header('HTTP/1.1 404 Not Found');
+            header('Content-Type: text/plain');
+            echo "Game mod files not available yet. Press Update Now first, then try again.";
+            exit;
+        }
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="SHARMAT-GameMod.zip"');
+        header('Content-Length: ' . filesize($tmpZip));
+        readfile($tmpZip);
+        @unlink($tmpZip);
         exit;
     }
 
