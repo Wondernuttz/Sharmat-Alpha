@@ -119,6 +119,19 @@
                 </div>
 
                 <div class="settings-checkbox-group">
+                    <label for="nsfwGazeEnabled">
+                        <input type="checkbox" id="nsfwGazeEnabled" name="NSFW_GAZE_ENABLED" checked>
+                        <span>Gaze Reactions (staring)</span>
+                    </label>
+                    <p class="legend">When the plugin detects you staring at an NPC for a while, they react in character based on your relationship - a stranger gets uncomfortable, a lover finds it charged. Staring at the chest/butt/crotch (male player, female NPC) gets a lewd reaction; eyes-gazing works for any pairing. Requires the current SHARMAT AIAgent.dll. Reaction wording is on the Prompts tab (Gaze Reactions).</p>
+                    <div style="margin-top: 6px;">
+                        <label style="color: #9988BB; font-size: 12px;">Reaction cooldown (seconds)</label>
+                        <input type="number" id="nsfwGazeCooldown" name="NSFW_GAZE_COOLDOWN_SECONDS" min="0" max="600" step="5" value="25" style="width: 80px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                        <p class="legend">Minimum seconds between gaze reactions from the same NPC. Default: 25.</p>
+                    </div>
+                </div>
+
+                <div class="settings-checkbox-group">
                     <label for="nsfwAffectionLegacyAnims">
                         <input type="checkbox" id="nsfwAffectionLegacyAnims" name="NSFW_AFFECTION_LEGACY_ANIMS">
                         <span>Use Legacy Hug/Kiss Animations</span>

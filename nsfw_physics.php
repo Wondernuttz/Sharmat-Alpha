@@ -690,6 +690,72 @@ class NsfwPhysics {
     }
 
     /**
+     * GAZE (2026-07-05): the Sharmat.cpp DLL detects the player staring at an NPC's body region/eyes and
+     * emits {actor}^{region}^gaze^false^^{seconds}^{playerSex}. This turns it into an in-character reaction
+     * modulated by relationship. Self-contained: injects into HERIKA_PERSONALITY, no scene state, no tools.
+     * Regions: eyes | tits | ass | crotch | person. The DLL already gates lewd regions to male-player->female-NPC.
+     */
+    private static function handleGaze($parts) {
+        $actorName = trim((string)($parts[0] ?? ''));
+        $region    = strtolower(trim((string)($parts[1] ?? 'person')));
+        if ($actorName === '' || !isset($GLOBALS["HERIKA_PERSONALITY"])) { return; }
+        if (function_exists('_getNsfwSetting') && !_getNsfwSetting('NSFW_GAZE_ENABLED', true)) { return; }
+
+        require_once __DIR__ . '/common.php';
+        // Never react to staring DURING an active scene (you are supposed to look then), and never for children.
+        if (function_exists('getIntimacyForActor')) {
+            $ix = getIntimacyForActor($actorName);
+            if ((int)($ix['level'] ?? 0) >= 1 || !empty($ix['sex_started']) || (int)($ix['intensity_tier'] ?? 0) >= 3) { return; }
+        }
+        if (function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($actorName)) { return; }
+
+        // Server-side per-actor cooldown (on top of the DLL's) so reactions do not spam.
+        $cd = function_exists('_getNsfwSetting') ? (int)_getNsfwSetting('NSFW_GAZE_COOLDOWN_SECONDS', 25) : 25;
+        $cdFile = sys_get_temp_dir() . '/nsfw_gaze_' . md5(strtolower($actorName)) . '.txt';
+        if ($cd > 0 && is_file($cdFile) && (time() - (int)@file_get_contents($cdFile)) < $cd) { return; }
+
+        $affinity  = function_exists('getNpcAffinity') ? (int)getNpcAffinity($actorName) : 0;
+        $tierLabel = class_exists('RelationshipManager') ? RelationshipManager::getTierLabel($affinity) : 'Neutral';
+        $playerName = $GLOBALS["PLAYER_NAME"] ?? 'Player';
+
+        $validRegions = ['eyes', 'tits', 'ass', 'crotch', 'person'];
+        if (!in_array($region, $validRegions, true)) { $region = 'person'; }
+
+        $prompts = self::loadPromptSettings();
+        $prompt  = trim((string)($prompts["gaze_{$region}"] ?? ''));
+        if ($prompt === '') { $prompt = self::defaultGazePrompt($region); }   // fresh-install fallback
+        if ($prompt === '') { $prompt = self::defaultGazePrompt('person'); }
+        if ($prompt === '') { return; }
+
+        $prompt = strtr($prompt, [
+            '#PLAYER_NAME#' => $playerName,
+            '#NPC_NAME#'    => $actorName,
+            '#TIER#'        => $tierLabel,
+            '#AFFINITY#'    => (string)$affinity,
+        ]);
+        $GLOBALS["HERIKA_PERSONALITY"] .= "\n<gaze_reaction>\n" . $prompt . "\n</gaze_reaction>";
+        @file_put_contents($cdFile, (string)time());
+        error_log("[AIAGENTNSFW] GAZE reaction injected for {$actorName}: region={$region} tier={$tierLabel}");
+    }
+
+    // Fresh-install fallbacks; the UI-editable gaze_* prompt keys override these.
+    private static function defaultGazePrompt($region) {
+        switch ($region) {
+            case 'eyes':
+                return "#PLAYER_NAME# has been gazing into your eyes for a long moment. React the way YOUR feelings for them (#TIER#) dictate: a stranger or someone you dislike finds the staring intense or unsettling; a friend finds it curious, warm, or a little flustering; if you love or desire #PLAYER_NAME#, this is a charged, tender, romantic moment. Respond in character - do not start a scene.";
+            case 'tits':
+                return "#PLAYER_NAME# has been openly staring at your chest. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or calls it out sharply; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or lean into it. Do NOT start a scene - just react to being ogled.";
+            case 'ass':
+                return "#PLAYER_NAME# has been openly staring at your backside. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or snaps at them; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or playful about it. Do NOT start a scene - just react to being ogled.";
+            case 'crotch':
+                return "#PLAYER_NAME#'s eyes have been fixed below your waist. React per how you feel about them (#TIER#): a stranger or someone you dislike is very uncomfortable, offended, or confronts them; a friend is flustered or awkwardly amused; if you desire #PLAYER_NAME#, you might be bold, teasing, or invite the attention. Do NOT start a scene - just react.";
+            case 'person':
+            default:
+                return "#PLAYER_NAME# has been staring at you for a while now. React the way your feelings for them (#TIER#) dictate: unsettling or rude from a stranger you distrust, warm or curious from a friend, charged and intimate if you love or desire them. Respond in character - do not start a scene.";
+        }
+    }
+
+    /**
      * Process raw physics event from PSC
      * Returns metadata for processInfoPhysics() to handle tier prompts
      */
@@ -717,6 +783,9 @@ class NsfwPhysics {
             case 'spank':
                 $result = self::handleSpank($parts);
                 break;
+            case 'gaze':
+                self::handleGaze($parts);   // self-contained: injects its own reaction, no contact/tier machinery
+                return null;
             case 'release':
                 $result = self::handleRelease($parts);
                 break;

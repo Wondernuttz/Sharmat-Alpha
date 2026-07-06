@@ -1641,6 +1641,12 @@ function nsfw_default_prompt_overrides() {
         'arousal_recep_courtship' => "You have grown fond of #PLAYER_NAME#, and there is a flutter you have not named yet. Their warmth affects you more than you let on - you might blush, linger, or lose your words a little. Nothing beyond affection is on the table; let the feeling build at its own pace.",
         'redress_nudge' => "You are still undressed and the intimate moment has passed. When it feels natural - the talk winds down, you move to leave, someone could walk in - get dressed again by calling the Put_On_Clothes action. Do not stay naked through ordinary conversation unless you have a reason to.",
         'npc_scene_autonomy_nudge' => "Others are here besides #PLAYER_NAME#. If you are genuinely close to another person present - and in the kind of relationship where intimacy fits - you may start intimacy with THEM instead of #PLAYER_NAME#, on your own initiative, by naming that person as the target of the scene action. Only do so when it truly fits your bond with them.",
+        // Gaze reactions (Sharmat.cpp DLL detects the player staring); relationship-adaptive via #TIER#
+        'gaze_eyes' => "#PLAYER_NAME# has been gazing into your eyes for a long moment. React the way YOUR feelings for them (#TIER#) dictate: a stranger or someone you dislike finds the staring intense or unsettling; a friend finds it curious, warm, or a little flustering; if you love or desire #PLAYER_NAME#, this is a charged, tender, romantic moment. Respond in character - do not start a scene.",
+        'gaze_tits' => "#PLAYER_NAME# has been openly staring at your chest. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or calls it out sharply; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or lean into it. Do NOT start a scene - just react to being ogled.",
+        'gaze_ass' => "#PLAYER_NAME# has been openly staring at your backside. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or snaps at them; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or playful about it. Do NOT start a scene - just react to being ogled.",
+        'gaze_crotch' => "#PLAYER_NAME#'s eyes have been fixed below your waist. React per how you feel about them (#TIER#): a stranger or someone you dislike is very uncomfortable, offended, or confronts them; a friend is flustered or awkwardly amused; if you desire #PLAYER_NAME#, you might be bold, teasing, or invite the attention. Do NOT start a scene - just react.",
+        'gaze_person' => "#PLAYER_NAME# has been staring at you for a while now. React the way your feelings for them (#TIER#) dictate: unsettling or rude from a stranger you distrust, warm or curious from a friend, charged and intimate if you love or desire them. Respond in character - do not start a scene.",
         'scene_breather' => "A quiet pause in your encounter with #PRIMARY_PARTNER# - a breather between acts, still close, still undressed, still in the moment. The encounter is STILL UNDERWAY and consent was already given. Do NOT restart introductions, do NOT ask whether to begin, do NOT treat this as a new scene. React with afterglow, closeness, teasing, or anticipation of what comes next.",
         'whiskey_dick' => "#PLAYER_NAME# is too drunk to perform and the scene has stalled. React as #NPC_NAME# according to your relationship, personality, and current mood. You may be disappointed, amused, annoyed, sympathetic, or teasing. Keep it in-character and do not continue the sex act.",
         'marriage_spouse_hostile' => 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -1881,7 +1887,7 @@ function nsfw_auto_init() {
     if (!isset($GLOBALS['db'])) return;
 
     try {
-        $seedVersion = '20260705214';
+        $seedVersion = '20260706837';
         $seedFlag = $GLOBALS['db']->fetchOne(
             "SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_seed_version'"
         );

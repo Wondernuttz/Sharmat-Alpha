@@ -1677,6 +1677,35 @@
                         </div>
                     </div>
 
+                    <div class="card" style="margin-bottom: 20px;">
+                        <h3 class="section-header" style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                            <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> Gaze Reactions
+                        </h3>
+                        <p style="color: #9988BB; font-size: 11px; margin-bottom: 10px;">
+                            Fired when the SHARMAT plugin detects the player staring at an NPC for a while (Settings tab: enable + dwell/cooldown). Each is relationship-adaptive - use <code>#TIER#</code> so the model reacts differently to a stranger vs a lover, plus <code>#PLAYER_NAME#</code> / <code>#NPC_NAME#</code> / <code>#AFFINITY#</code>. The lewd regions (chest/butt/crotch) only fire for a male player looking at a female NPC. Requires the current SHARMAT AIAgent.dll.
+                        </p>
+                        <div class="form-group">
+                            <label>Staring into her eyes</label>
+                            <textarea id="promptGazeEyes" class="auto-resize" style="min-height: 56px; width: 100%; resize: none; overflow: hidden;">You have caught #PLAYER_NAME# gazing into your eyes for a long moment. React the way YOUR feelings for them (#TIER#) dictate: a stranger or someone you dislike finds the staring intense or unsettling; a friend finds it curious, warm, or a little flustering; if you love or desire #PLAYER_NAME#, this is a charged, tender, romantic moment. Respond in character - do not start a scene.</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Staring at her chest</label>
+                            <textarea id="promptGazeTits" class="auto-resize" style="min-height: 56px; width: 100%; resize: none; overflow: hidden;">You have caught #PLAYER_NAME# openly staring at your chest. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or calls it out sharply; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or lean into it. Do NOT start a scene - just react to being ogled.</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Staring at her backside</label>
+                            <textarea id="promptGazeAss" class="auto-resize" style="min-height: 56px; width: 100%; resize: none; overflow: hidden;">You have caught #PLAYER_NAME# openly staring at your backside. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or snaps at them; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or playful about it. Do NOT start a scene - just react to being ogled.</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Staring below the waist</label>
+                            <textarea id="promptGazeCrotch" class="auto-resize" style="min-height: 56px; width: 100%; resize: none; overflow: hidden;">You have caught #PLAYER_NAME# with their eyes fixed below your waist. React per how you feel about them (#TIER#): a stranger or someone you dislike is very uncomfortable, offended, or confronts them; a friend is flustered or awkwardly amused; if you desire #PLAYER_NAME#, you might be bold, teasing, or invite the attention. Do NOT start a scene - just react.</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>General staring (any pairing)</label>
+                            <textarea id="promptGazePerson" class="auto-resize" style="min-height: 56px; width: 100%; resize: none; overflow: hidden;">You have noticed #PLAYER_NAME# staring at you for a while now. React the way your feelings for them (#TIER#) dictate: unsettling or rude from a stranger you distrust, warm or curious from a friend, charged and intimate if you love or desire them. Respond in character - do not start a scene.</textarea>
+                        </div>
+                    </div>
+
                     <!-- 2e. Masturbation -->
                     <div class="card" style="margin-bottom: 20px;">
                         <h3 class="section-header" style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">

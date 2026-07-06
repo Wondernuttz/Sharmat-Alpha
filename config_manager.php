@@ -1007,6 +1007,8 @@ SQL;
                 'NSFW_COMBAT_BLOCK_ENABLED' => isset($_POST['NSFW_COMBAT_BLOCK_ENABLED']) ? filter_var($_POST['NSFW_COMBAT_BLOCK_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_COMBAT_BLOCK_WINDOW_SECONDS' => isset($_POST['NSFW_COMBAT_BLOCK_WINDOW_SECONDS']) ? max(5, min(300, intval($_POST['NSFW_COMBAT_BLOCK_WINDOW_SECONDS']))) : 45,
                 'NSFW_AFFECTION_LEGACY_ANIMS' => isset($_POST['NSFW_AFFECTION_LEGACY_ANIMS']) ? filter_var($_POST['NSFW_AFFECTION_LEGACY_ANIMS'], FILTER_VALIDATE_BOOLEAN) : false,
+                'NSFW_GAZE_ENABLED' => isset($_POST['NSFW_GAZE_ENABLED']) ? filter_var($_POST['NSFW_GAZE_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
+                'NSFW_GAZE_COOLDOWN_SECONDS' => isset($_POST['NSFW_GAZE_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_GAZE_COOLDOWN_SECONDS']))) : 25,
                 'NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS' => isset($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']))) : 30,
                 'GENERIC_GLOSSARY' => $_POST['GENERIC_GLOSSARY'] ?? '',
                 'TRACK_DRUNK_STATUS' => isset($_POST['TRACK_DRUNK_STATUS']) ? filter_var($_POST['TRACK_DRUNK_STATUS'], FILTER_VALIDATE_BOOLEAN) : false,
@@ -3072,6 +3074,11 @@ PROMPT;
                 'arousal_recep_courtship' => $_POST['arousal_recep_courtship'] ?? '',
                 'redress_nudge' => $_POST['redress_nudge'] ?? '',
                 'npc_scene_autonomy_nudge' => $_POST['npc_scene_autonomy_nudge'] ?? '',
+                'gaze_eyes' => $_POST['gaze_eyes'] ?? '',
+                'gaze_tits' => $_POST['gaze_tits'] ?? '',
+                'gaze_ass' => $_POST['gaze_ass'] ?? '',
+                'gaze_crotch' => $_POST['gaze_crotch'] ?? '',
+                'gaze_person' => $_POST['gaze_person'] ?? '',
 
                 // Price Templates (budget/standard/luxury) - stored as JSON objects
                 'price_template_budget' => isset($_POST['price_template_budget']) ? json_decode($_POST['price_template_budget'], true) : null,
@@ -3212,6 +3219,11 @@ PROMPT;
             'arousal_recep_courtship' => 'You have grown fond of #PLAYER_NAME#, and there is a flutter you have not named yet. Their warmth affects you more than you let on - you might blush, linger, or lose your words a little. Nothing beyond affection is on the table; let the feeling build at its own pace.',
             'redress_nudge' => 'You are still undressed and the intimate moment has passed. When it feels natural - the talk winds down, you move to leave, someone could walk in - get dressed again by calling the Put_On_Clothes action. Do not stay naked through ordinary conversation unless you have a reason to.',
             'npc_scene_autonomy_nudge' => 'Others are here besides #PLAYER_NAME#. If you are genuinely close to another person present - and in the kind of relationship where intimacy fits - you may start intimacy with THEM instead of #PLAYER_NAME#, on your own initiative, by naming that person as the target of the scene action. Only do so when it truly fits your bond with them.',
+            'gaze_eyes' => 'You have caught #PLAYER_NAME# gazing into your eyes for a long moment. React the way YOUR feelings for them (#TIER#) dictate: a stranger or someone you dislike finds the staring intense or unsettling; a friend finds it curious, warm, or a little flustering; if you love or desire #PLAYER_NAME#, this is a charged, tender, romantic moment. Respond in character - do not start a scene.',
+            'gaze_tits' => 'You have caught #PLAYER_NAME# openly staring at your chest. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or calls it out sharply; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or lean into it. Do NOT start a scene - just react to being ogled.',
+            'gaze_ass' => 'You have caught #PLAYER_NAME# openly staring at your backside. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or snaps at them; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or playful about it. Do NOT start a scene - just react to being ogled.',
+            'gaze_crotch' => 'You have caught #PLAYER_NAME# with their eyes fixed below your waist. React per how you feel about them (#TIER#): a stranger or someone you dislike is very uncomfortable, offended, or confronts them; a friend is flustered or awkwardly amused; if you desire #PLAYER_NAME#, you might be bold, teasing, or invite the attention. Do NOT start a scene - just react.',
+            'gaze_person' => 'You have noticed #PLAYER_NAME# staring at you for a while now. React the way your feelings for them (#TIER#) dictate: unsettling or rude from a stranger you distrust, warm or curious from a friend, charged and intimate if you love or desire them. Respond in character - do not start a scene.',
 
             // Section 2A: Marriage (Spouse + Spouse) Tier Prompts (11 tiers)
             'marriage_spouse_hostile' => 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -7035,6 +7047,9 @@ PROMPT;
                         }
                         const affLegacyEl = document.getElementById('nsfwAffectionLegacyAnims');
                         if (affLegacyEl) affLegacyEl.checked = data.data.NSFW_AFFECTION_LEGACY_ANIMS === true || data.data.NSFW_AFFECTION_LEGACY_ANIMS === '1';
+                        const gazeEnabledEl = document.getElementById('nsfwGazeEnabled');
+                        if (gazeEnabledEl) gazeEnabledEl.checked = data.data.NSFW_GAZE_ENABLED !== false;
+                        elSet('nsfwGazeCooldown', 'value', data.data.NSFW_GAZE_COOLDOWN_SECONDS !== undefined ? data.data.NSFW_GAZE_COOLDOWN_SECONDS : 25);
                         const combatBlockEl = document.getElementById('nsfwCombatBlockEnabled');
                         if (combatBlockEl) combatBlockEl.checked = data.data.NSFW_COMBAT_BLOCK_ENABLED !== undefined ? data.data.NSFW_COMBAT_BLOCK_ENABLED : true;
                         elSet('nsfwCombatBlockWindow', 'value', data.data.NSFW_COMBAT_BLOCK_WINDOW_SECONDS !== undefined ? data.data.NSFW_COMBAT_BLOCK_WINDOW_SECONDS : 45);
@@ -7391,6 +7406,8 @@ PROMPT;
             fdSet('INSTANT_CRUSH_ON_AFFECTION', 'instantCrushOnAffection', 'checked');
             if (document.getElementById('affairMinAffinity')) fdSet('NSFW_AFFAIR_MIN_AFFINITY', 'affairMinAffinity', 'value');
             if (document.getElementById('nsfwAffectionLegacyAnims')) fdSet('NSFW_AFFECTION_LEGACY_ANIMS', 'nsfwAffectionLegacyAnims', 'checked');
+            if (document.getElementById('nsfwGazeEnabled')) fdSet('NSFW_GAZE_ENABLED', 'nsfwGazeEnabled', 'checked');
+            if (document.getElementById('nsfwGazeCooldown')) fdSet('NSFW_GAZE_COOLDOWN_SECONDS', 'nsfwGazeCooldown', 'value');
             if (document.getElementById('nsfwCombatBlockEnabled')) fdSet('NSFW_COMBAT_BLOCK_ENABLED', 'nsfwCombatBlockEnabled', 'checked');
             if (document.getElementById('nsfwCombatBlockWindow')) fdSet('NSFW_COMBAT_BLOCK_WINDOW_SECONDS', 'nsfwCombatBlockWindow', 'value');
             fdSet('DRUNK_WINDOW_HOURS', 'drunkWindowHours', 'value');
@@ -10470,6 +10487,11 @@ PROMPT;
         arousal_recep_courtship: 'You have grown fond of #PLAYER_NAME#, and there is a flutter you have not named yet. Their warmth affects you more than you let on - you might blush, linger, or lose your words a little. Nothing beyond affection is on the table; let the feeling build at its own pace.',
         redress_nudge: 'You are still undressed and the intimate moment has passed. When it feels natural - the talk winds down, you move to leave, someone could walk in - get dressed again by calling the Put_On_Clothes action. Do not stay naked through ordinary conversation unless you have a reason to.',
         npc_scene_autonomy_nudge: 'Others are here besides #PLAYER_NAME#. If you are genuinely close to another person present - and in the kind of relationship where intimacy fits - you may start intimacy with THEM instead of #PLAYER_NAME#, on your own initiative, by naming that person as the target of the scene action. Only do so when it truly fits your bond with them.',
+        gaze_eyes: 'You have caught #PLAYER_NAME# gazing into your eyes for a long moment. React the way YOUR feelings for them (#TIER#) dictate: a stranger or someone you dislike finds the staring intense or unsettling; a friend finds it curious, warm, or a little flustering; if you love or desire #PLAYER_NAME#, this is a charged, tender, romantic moment. Respond in character - do not start a scene.',
+        gaze_tits: 'You have caught #PLAYER_NAME# openly staring at your chest. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or calls it out sharply; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or lean into it. Do NOT start a scene - just react to being ogled.',
+        gaze_ass: 'You have caught #PLAYER_NAME# openly staring at your backside. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or snaps at them; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or playful about it. Do NOT start a scene - just react to being ogled.',
+        gaze_crotch: 'You have caught #PLAYER_NAME# with their eyes fixed below your waist. React per how you feel about them (#TIER#): a stranger or someone you dislike is very uncomfortable, offended, or confronts them; a friend is flustered or awkwardly amused; if you desire #PLAYER_NAME#, you might be bold, teasing, or invite the attention. Do NOT start a scene - just react.',
+        gaze_person: 'You have noticed #PLAYER_NAME# staring at you for a while now. React the way your feelings for them (#TIER#) dictate: unsettling or rude from a stranger you distrust, warm or curious from a friend, charged and intimate if you love or desire them. Respond in character - do not start a scene.',
 
         // SECTION 2A: Marriage spouse prompts (11 tiers)
         marriage_spouse_hostile: 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -10811,6 +10833,11 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     setPromptValue('promptArousalRecepCourtship', s.arousal_recep_courtship, 'arousal_recep_courtship');
                     setPromptValue('promptRedressNudge', s.redress_nudge, 'redress_nudge');
                     setPromptValue('promptNpcSceneAutonomyNudge', s.npc_scene_autonomy_nudge, 'npc_scene_autonomy_nudge');
+                    setPromptValue('promptGazeEyes', s.gaze_eyes, 'gaze_eyes');
+                    setPromptValue('promptGazeTits', s.gaze_tits, 'gaze_tits');
+                    setPromptValue('promptGazeAss', s.gaze_ass, 'gaze_ass');
+                    setPromptValue('promptGazeCrotch', s.gaze_crotch, 'gaze_crotch');
+                    setPromptValue('promptGazePerson', s.gaze_person, 'gaze_person');
                     if (s.arousal_gating_threshold !== undefined) {
                         document.getElementById('arousalGatingThreshold').value = s.arousal_gating_threshold;
                         document.getElementById('arousalGatingThresholdValue').textContent = s.arousal_gating_threshold;
@@ -11116,6 +11143,11 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('arousal_recep_courtship', getVal('promptArousalRecepCourtship'));
         formData.append('redress_nudge', getVal('promptRedressNudge'));
         formData.append('npc_scene_autonomy_nudge', getVal('promptNpcSceneAutonomyNudge'));
+        formData.append('gaze_eyes', getVal('promptGazeEyes'));
+        formData.append('gaze_tits', getVal('promptGazeTits'));
+        formData.append('gaze_ass', getVal('promptGazeAss'));
+        formData.append('gaze_crotch', getVal('promptGazeCrotch'));
+        formData.append('gaze_person', getVal('promptGazePerson'));
         formData.append('arousal_gating_threshold', document.getElementById('arousalGatingThreshold').value);
 
         // Devices & Wearables (Devious Devices)
@@ -11403,6 +11435,11 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         resetVal('promptArousalRecepCourtship', 'arousal_recep_courtship');
         resetVal('promptRedressNudge', 'redress_nudge');
         resetVal('promptNpcSceneAutonomyNudge', 'npc_scene_autonomy_nudge');
+        resetVal('promptGazeEyes', 'gaze_eyes');
+        resetVal('promptGazeTits', 'gaze_tits');
+        resetVal('promptGazeAss', 'gaze_ass');
+        resetVal('promptGazeCrotch', 'gaze_crotch');
+        resetVal('promptGazePerson', 'gaze_person');
         document.getElementById('arousalGatingThreshold').value = 10;
         document.getElementById('arousalGatingThresholdValue').textContent = '10';
 
