@@ -971,6 +971,16 @@ if (isset($GLOBALS["gameRequest"])) {
         }
     }
 
+    // SILENT MARKER PURGE (2026-07-06): core main.php logs EVERY incoming request into the eventlog
+    // (people-scoped), including these machine-only markers - and they are fully consumed right here
+    // at arrival (profile flags / tmp state). Left in the eventlog, they leak into people-scoped
+    // context and DIARY builds: a tester's diary called a non-vampire NPC a vampire because the diary
+    // model read a raw "VAMPIRE^Name^0" row as if it were lore. Purge prior rows on every request;
+    // the current request's row is inserted after preprocessing and gets swept on the next one.
+    try {
+        $GLOBALS["db"]->delete("eventlog", "type in ('ext_nsfw_vampire','ext_nsfw_physics_raw','ext_nsfw_player_drink','ext_nsfw_devices')");
+    } catch (Exception $e) { /* non-fatal */ }
+
     // BACKLOG FIX — Scene end early detection.
     // preprocessing.php runs BEFORE the semaphore (main.php:181 vs semaphore at main.php:221).
     // When chatnf_sl_end arrives, chatnf_sl events from the scene are already PAST preprocessing
