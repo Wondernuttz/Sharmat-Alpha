@@ -99,6 +99,31 @@ if (isset($GLOBALS["ENABLED_FUNCTIONS"]) && is_array($GLOBALS["ENABLED_FUNCTIONS
 }
 
 // ============================================================
+// SELF-DIRECTED TARGET ROUTING (tester report 2026-07-06): some CHIM cores DROP a structured-route
+// tool call whose target field is empty ("Missing required parameter(s) for ExtCmdPutOnClothes:
+// target" - she says "let me get dressed" and nothing happens). Our defs make target optional, but
+// we cannot patch every install's core - so teach the model to never send an empty target: for
+// self-directed actions the target is their OWN name. The Papyrus handlers act on the speaking NPC
+// and ignore the parameter for these commands, so a self-name target is harmless on every core.
+// ============================================================
+if (isset($GLOBALS["ENABLED_FUNCTIONS"]) && is_array($GLOBALS["ENABLED_FUNCTIONS"])
+    && (in_array('ExtCmdPutOnClothes', $GLOBALS["ENABLED_FUNCTIONS"], true)
+        || in_array('ExtCmdRemoveClothes', $GLOBALS["ENABLED_FUNCTIONS"], true)
+        || in_array('ExtCmdStartSelfMasturbation', $GLOBALS["ENABLED_FUNCTIONS"], true))) {
+    $__sdHint = " IMPORTANT: target must NEVER be empty. For self-directed actions (Put_On_Clothes, Remove_Clothes, Start_Self_Masturbation) put YOUR OWN character name in target.";
+    if (isset($GLOBALS["structuredOutputTemplate"]["json_schema"]["schema"]["properties"]["target"])
+        && strpos((string)($GLOBALS["structuredOutputTemplate"]["json_schema"]["schema"]["properties"]["target"]["description"] ?? ''), 'self-directed actions') === false) {
+        $GLOBALS["structuredOutputTemplate"]["json_schema"]["schema"]["properties"]["target"]["description"] =
+            (string)($GLOBALS["structuredOutputTemplate"]["json_schema"]["schema"]["properties"]["target"]["description"] ?? '') . $__sdHint;
+    }
+    if (isset($GLOBALS["responseTemplate"]["target"]) && is_string($GLOBALS["responseTemplate"]["target"])
+        && strpos($GLOBALS["responseTemplate"]["target"], 'self-directed actions') === false) {
+        $GLOBALS["responseTemplate"]["target"] .= $__sdHint;
+    }
+    error_log("[AIAGENTNSFW] Self-directed target-routing hint installed for {$actorName}");
+}
+
+// ============================================================
 // CHILD PROTECTION (Phase 1): for any NPC flagged as a child by HARD signals (is_child flag, child
 // race, vanilla child-name blocklist), prepend an in-world "you are a child" frame to the character
 // block so the model never reads an adult's attention, gifts, or kindness as romance. Default-on;

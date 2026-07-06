@@ -725,10 +725,12 @@ $GLOBALS["FUNCTIONS"][] =
         "properties" => [
             "target" => [
                 "type" => "string",
-                "description" => "Target NPC, Actor, or being",
+                // self-directed: requiring a target made strict cores DROP the call when the model
+                // (correctly) sent none - same disease as the PutOnClothes redress drop.
+                "description" => "Keep it blank",
             ]
         ],
-        "required" => ["target"],
+        "required" => [],
     ]
 ]
 ;
