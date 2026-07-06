@@ -1630,7 +1630,7 @@ function nsfw_default_prompt_overrides() {
         // Drug/alcohol "worn off" state-cleared prompts (Drugs & Alcohol tab). Previously hardcoded.
         'skooma_worn_off' => "SKOOMA HAS WORN OFF. You are not currently on skooma and are not currently in skooma withdrawal. Stop using skooma speech, cravings, speed, jitter, euphoria, or crash behavior unless a new CURRENT SKOOMA STATE prompt appears.",
         'sap_worn_off' => "SLEEPING TREE SAP HAS WORN OFF. You are no longer dazed, dreamy, or paralyzed by sap. Stop using sap speech or sap body-state behavior unless a new CURRENT SLEEPING TREE SAP STATE prompt appears.",
-        'alcohol_worn_off' => "You are fully sober right now - speak in your normal, clear voice. No slurring, no hiccups, no 'hic', no drunken word contractions, no giggling to cover clumsiness, no drunk behavior of any kind. Any drunk-sounding lines in your chat history OR in your speech-style profile are from EARLIER, while you were drunk - they do NOT describe how you speak now. Only a new CURRENT ALCOHOL LEVEL prompt can make you drunk again.",
+        'alcohol_worn_off' => "You are fully sober right now - speak in your normal, clear voice. No slurring, no hiccups, no 'hic', no drunken word contractions, no giggling to cover clumsiness, no drunk behavior of any kind. Any drunk-sounding lines in your chat history OR in your speech-style profile are from EARLIER, while you were drunk - they do NOT describe how you speak now. Only a new CURRENT ALCOHOL LEVEL prompt can make you drunk again. Your reported mood must NOT be drunk or tipsy anymore - you are sober now, so set your mood to one that genuinely fits the moment (neutral, happy, and the like) instead.",
         'intimacy_autonomy_nudge' => "Your bond with #PLAYER_NAME# allows intimacy, and you have your own desires and initiative. When the moment feels right to YOU - privacy, affection, flirtation - you may initiate: start with affection actions (Give_Hug, Kiss, Hold_Hands) or begin intimacy yourself with the scene actions (Make_Love and the others you hold). Initiating is your choice as much as theirs; do not always wait to be asked.",
         'affection_autonomy_nudge' => "You have grown genuinely fond of #PLAYER_NAME#. When a moment feels right to YOU - warmth, gratitude, quiet closeness - you may express affection on your own: a hug, a kiss, holding hands (Give_Hug, Kiss, Hold_Hands). Nothing beyond affection is on the table or expected; let whatever this is grow naturally.",
         // Arousal system prompts (arousal refactor 2026-07-03)
@@ -1887,7 +1887,7 @@ function nsfw_auto_init() {
     if (!isset($GLOBALS['db'])) return;
 
     try {
-        $seedVersion = '20260706837';
+        $seedVersion = '20260706436';
         $seedFlag = $GLOBALS['db']->fetchOne(
             "SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_seed_version'"
         );

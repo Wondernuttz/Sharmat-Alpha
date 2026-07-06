@@ -1905,7 +1905,7 @@ EXAMPLE SPEECH FORMAT: WHOOOOOOOOOOAAAAA.......IMMA..........YEAH..........isit?
                             <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> Worn-Off / State-Cleared Prompts
                         </h3>
                         <p style="color: #9988BB; font-size: 11px; margin-bottom: 10px;">
-                            Injected once when a substance wears off, telling the model to stop acting intoxicated. Leave a field blank to fall back to the built-in default.
+                            Injected when a substance wears off (and, for alcohol, re-armed for a few turns while the character still sounds drunk), telling the model to stop acting intoxicated. The Alcohol Worn Off prompt also tells the model to drop the drunk / tipsy emote mood, so the character's animation, facial expression, and TTS voice go back to sober too - not just the words. Leave a field blank to fall back to the built-in default.
                         </p>
                         <div class="form-group">
                             <label>Skooma Worn Off</label>
@@ -1917,7 +1917,7 @@ EXAMPLE SPEECH FORMAT: WHOOOOOOOOOOAAAAA.......IMMA..........YEAH..........isit?
                         </div>
                         <div class="form-group">
                             <label>Alcohol Worn Off</label>
-                            <textarea id="promptAlcoholWornOff" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">ALCOHOL HAS WORN OFF. You are not currently drunk or tipsy. Stop using alcohol slurring, stumbling, blackout, or drunk behavior unless a new CURRENT ALCOHOL LEVEL prompt appears.</textarea>
+                            <textarea id="promptAlcoholWornOff" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">ALCOHOL HAS WORN OFF. You are not currently drunk or tipsy. Stop using alcohol slurring, stumbling, blackout, or drunk behavior unless a new CURRENT ALCOHOL LEVEL prompt appears. Your reported mood must NOT be drunk or tipsy anymore - set your mood to one that genuinely fits the moment (neutral, happy, and the like) instead.</textarea>
                         </div>
                     </div>
 
