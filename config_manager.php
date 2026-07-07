@@ -1080,6 +1080,8 @@ SQL;
                 'NSFW_AFFECTION_LEGACY_ANIMS' => isset($_POST['NSFW_AFFECTION_LEGACY_ANIMS']) ? filter_var($_POST['NSFW_AFFECTION_LEGACY_ANIMS'], FILTER_VALIDATE_BOOLEAN) : false,
                 'NSFW_GAZE_ENABLED' => isset($_POST['NSFW_GAZE_ENABLED']) ? filter_var($_POST['NSFW_GAZE_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_VR_TOUCH_ENABLED' => isset($_POST['NSFW_VR_TOUCH_ENABLED']) ? filter_var($_POST['NSFW_VR_TOUCH_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
+                'NSFW_FERTILITY_ENABLED' => isset($_POST['NSFW_FERTILITY_ENABLED']) ? filter_var($_POST['NSFW_FERTILITY_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
+                'NSFW_FERTILITY_EVENT_WINDOW_SECONDS' => isset($_POST['NSFW_FERTILITY_EVENT_WINDOW_SECONDS']) ? max(60, min(21600, intval($_POST['NSFW_FERTILITY_EVENT_WINDOW_SECONDS']))) : 1800,
                 'NSFW_GAZE_COOLDOWN_SECONDS' => isset($_POST['NSFW_GAZE_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_GAZE_COOLDOWN_SECONDS']))) : 25,
                 'NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS' => isset($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']))) : 30,
                 'GENERIC_GLOSSARY' => $_POST['GENERIC_GLOSSARY'] ?? '',
@@ -3151,6 +3153,21 @@ PROMPT;
                 'gaze_ass' => $_POST['gaze_ass'] ?? '',
                 'gaze_crotch' => $_POST['gaze_crotch'] ?? '',
                 'gaze_person' => $_POST['gaze_person'] ?? '',
+                'fertility_tri1' => $_POST['fertility_tri1'] ?? '',
+                'fertility_tri2' => $_POST['fertility_tri2'] ?? '',
+                'fertility_tri3' => $_POST['fertility_tri3'] ?? '',
+                'fertility_fullterm' => $_POST['fertility_fullterm'] ?? '',
+                'fertility_recovery' => $_POST['fertility_recovery'] ?? '',
+                'fertility_cycle_menses' => $_POST['fertility_cycle_menses'] ?? '',
+                'fertility_cycle_ovulation' => $_POST['fertility_cycle_ovulation'] ?? '',
+                'fertility_cycle_pms' => $_POST['fertility_cycle_pms'] ?? '',
+                'fertility_stress' => $_POST['fertility_stress'] ?? '',
+                'fertility_stress_substance' => $_POST['fertility_stress_substance'] ?? '',
+                'fertility_relief' => $_POST['fertility_relief'] ?? '',
+                'fertility_loss_baby' => $_POST['fertility_loss_baby'] ?? '',
+                'fertility_miscarriage' => $_POST['fertility_miscarriage'] ?? '',
+                'fertility_conception' => $_POST['fertility_conception'] ?? '',
+                'fertility_labor' => $_POST['fertility_labor'] ?? '',
 
                 // Price Templates (budget/standard/luxury) - stored as JSON objects
                 'price_template_budget' => isset($_POST['price_template_budget']) ? json_decode($_POST['price_template_budget'], true) : null,
@@ -3296,6 +3313,21 @@ PROMPT;
             'gaze_ass' => 'You have caught #PLAYER_NAME# openly staring at your backside. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or snaps at them; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or playful about it. Do NOT start a scene - just react to being ogled.',
             'gaze_crotch' => 'You have caught #PLAYER_NAME# with their eyes fixed below your waist. React per how you feel about them (#TIER#): a stranger or someone you dislike is very uncomfortable, offended, or confronts them; a friend is flustered or awkwardly amused; if you desire #PLAYER_NAME#, you might be bold, teasing, or invite the attention. Do NOT start a scene - just react.',
             'gaze_person' => 'You have noticed #PLAYER_NAME# staring at you for a while now. React the way your feelings for them (#TIER#) dictate: unsettling or rude from a stranger you distrust, warm or curious from a friend, charged and intimate if you love or desire them. Respond in character - do not start a scene.',
+            'fertility_tri1' => '#NPC_NAME# is newly pregnant (first trimester). Let it color you: waves of nausea, odd cravings, sudden tiredness, moods that swing without warning. Be private or open about it per your nature, and do not announce it every line.',
+            'fertility_tri2' => '#NPC_NAME# is visibly pregnant (second trimester). The bump shows and people notice. You feel steadier than the early weeks - protective of your belly, hungry, warm, sometimes glowing and sometimes aching. It shapes how you move and what you risk.',
+            'fertility_tri3' => '#NPC_NAME# is heavily pregnant (third trimester). Everything is effort: standing, walking, sleeping. You are protective, tired, and done with foolishness, but the child kicks and it is real now. Birth is coming soon and it is on your mind.',
+            'fertility_fullterm' => '#NPC_NAME# is full term - the baby could come at ANY moment. You feel enormous and restless, and your mind keeps returning to where and with whom the birth will happen. Treat danger and long journeys accordingly.',
+            'fertility_recovery' => '#NPC_NAME# recently gave birth and is still recovering. Sore, exhausted, emotional, and fiercely attached to the newborn. Keep intimacy off the table unless YOU clearly choose otherwise; your body is still healing.',
+            'fertility_cycle_menses' => '#NPC_NAME# is menstruating. Low energy, cramps, shorter patience than usual. It is private - reference it only obliquely unless you are close to the person you are speaking with.',
+            'fertility_cycle_ovulation' => '#NPC_NAME# is at the fertile peak of her cycle. There is a warmth and pull in you that sharpens attraction toward people you ALREADY desire. It does not create desire where none exists, and it never overrides your judgment or consent.',
+            'fertility_cycle_pms' => '#NPC_NAME# is in the premenstrual days: irritable edges, low patience, feelings close to the surface. Small annoyances land harder than they should.',
+            'fertility_stress' => 'URGENT: the baby #NPC_NAME# carries is in danger RIGHT NOW - cause: #CAUSE#. React with real alarm in character: protect the child, get out of the hazard, demand help from those present. This overrides small talk.',
+            'fertility_stress_substance' => '#NPC_NAME# has taken #CAUSE# while carrying a child, and she can feel it reaching the baby. Guilt, defiance, or denial - whichever fits you - but the weight of it is in your words. Anyone close to you would be right to be alarmed.',
+            'fertility_relief' => 'The danger to the baby has passed (#CAUSE# resolved). Relief washes through #NPC_NAME# - shaken, grateful, checking on the child, thanking whoever helped.',
+            'fertility_loss_baby' => '#NPC_NAME# has lost her baby - cause: #CAUSE#. This is raw grief. Speak from inside it: shock, sorrow, anger at the cause or at herself. Do not be cheerful. Let it shadow your words.',
+            'fertility_miscarriage' => '#NPC_NAME# has suffered a miscarriage (#CAUSE#). The grief is fresh and physical. React per your nature - withdrawn, weeping, stone-faced - but it colors everything you say right now.',
+            'fertility_conception' => 'Something has changed in #NPC_NAME# - a new life has just begun in her, fathered by #FATHER_NAME#. She may not consciously know yet, so play only the earliest hints: a strange flutter, an unplaceable feeling. If she has reason to suspect, joy or dread per her situation.',
+            'fertility_labor' => '#NPC_NAME# is in labor or has JUST given birth. Contractions or a newborn in her arms - urgency, exhaustion, overwhelming feeling. If the child is still coming, demand help, a bed, a healer; if the child is here, she is flooded with emotion and needs rest.',
 
             // Section 2A: Marriage (Spouse + Spouse) Tier Prompts (11 tiers)
             'marriage_spouse_hostile' => 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -5887,6 +5919,7 @@ PROMPT;
             <button class="tab-button active" onclick="switchTab('scenes')">Scenes<span style="margin: 0 8px;"></span>Manager</button>
             <button class="tab-button" onclick="switchTab('speakstyles')">NPC<span style="margin: 0 8px;"></span>Settings</button>
             <button class="tab-button" onclick="switchTab('prompts')">Prompts</button>
+            <button class="tab-button" onclick="switchTab('fertility')">Fertility</button>
             <button class="tab-button" onclick="switchTab('settings')">Settings</button>
             <button class="tab-button" onclick="switchTab('logs')">Sharmat<span style="margin: 0 8px;"></span>Logs</button>
             <button class="tab-button" onclick="switchTab('info')">Info</button>
@@ -5900,6 +5933,8 @@ PROMPT;
         </div>
 
 <?php include __DIR__ . '/config_section_prompts.php'; ?>
+
+<?php include __DIR__ . '/config_section_fertility.php'; ?>
 
 <?php include __DIR__ . '/config_section_logs.php'; ?>
 
@@ -7123,6 +7158,9 @@ PROMPT;
                         if (gazeEnabledEl) gazeEnabledEl.checked = data.data.NSFW_GAZE_ENABLED !== false;
                         const vrTouchEl = document.getElementById('nsfwVrTouchEnabled');
                         if (vrTouchEl) vrTouchEl.checked = data.data.NSFW_VR_TOUCH_ENABLED !== false;
+                        const fertEnabledEl = document.getElementById('nsfwFertilityEnabled');
+                        if (fertEnabledEl) fertEnabledEl.checked = data.data.NSFW_FERTILITY_ENABLED !== false;
+                        elSet('nsfwFertilityEventWindow', 'value', data.data.NSFW_FERTILITY_EVENT_WINDOW_SECONDS !== undefined ? data.data.NSFW_FERTILITY_EVENT_WINDOW_SECONDS : 1800);
                         elSet('nsfwGazeCooldown', 'value', data.data.NSFW_GAZE_COOLDOWN_SECONDS !== undefined ? data.data.NSFW_GAZE_COOLDOWN_SECONDS : 25);
                         const combatBlockEl = document.getElementById('nsfwCombatBlockEnabled');
                         if (combatBlockEl) combatBlockEl.checked = data.data.NSFW_COMBAT_BLOCK_ENABLED !== undefined ? data.data.NSFW_COMBAT_BLOCK_ENABLED : true;
@@ -7482,6 +7520,8 @@ PROMPT;
             if (document.getElementById('nsfwAffectionLegacyAnims')) fdSet('NSFW_AFFECTION_LEGACY_ANIMS', 'nsfwAffectionLegacyAnims', 'checked');
             if (document.getElementById('nsfwGazeEnabled')) fdSet('NSFW_GAZE_ENABLED', 'nsfwGazeEnabled', 'checked');
             if (document.getElementById('nsfwVrTouchEnabled')) fdSet('NSFW_VR_TOUCH_ENABLED', 'nsfwVrTouchEnabled', 'checked');
+            if (document.getElementById('nsfwFertilityEnabled')) fdSet('NSFW_FERTILITY_ENABLED', 'nsfwFertilityEnabled', 'checked');
+            if (document.getElementById('nsfwFertilityEventWindow')) fdSet('NSFW_FERTILITY_EVENT_WINDOW_SECONDS', 'nsfwFertilityEventWindow', 'value');
             if (document.getElementById('nsfwGazeCooldown')) fdSet('NSFW_GAZE_COOLDOWN_SECONDS', 'nsfwGazeCooldown', 'value');
             if (document.getElementById('nsfwCombatBlockEnabled')) fdSet('NSFW_COMBAT_BLOCK_ENABLED', 'nsfwCombatBlockEnabled', 'checked');
             if (document.getElementById('nsfwCombatBlockWindow')) fdSet('NSFW_COMBAT_BLOCK_WINDOW_SECONDS', 'nsfwCombatBlockWindow', 'value');
@@ -10567,6 +10607,21 @@ PROMPT;
         gaze_ass: 'You have caught #PLAYER_NAME# openly staring at your backside. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or snaps at them; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or playful about it. Do NOT start a scene - just react to being ogled.',
         gaze_crotch: 'You have caught #PLAYER_NAME# with their eyes fixed below your waist. React per how you feel about them (#TIER#): a stranger or someone you dislike is very uncomfortable, offended, or confronts them; a friend is flustered or awkwardly amused; if you desire #PLAYER_NAME#, you might be bold, teasing, or invite the attention. Do NOT start a scene - just react.',
         gaze_person: 'You have noticed #PLAYER_NAME# staring at you for a while now. React the way your feelings for them (#TIER#) dictate: unsettling or rude from a stranger you distrust, warm or curious from a friend, charged and intimate if you love or desire them. Respond in character - do not start a scene.',
+        fertility_tri1: '#NPC_NAME# is newly pregnant (first trimester). Let it color you: waves of nausea, odd cravings, sudden tiredness, moods that swing without warning. Be private or open about it per your nature, and do not announce it every line.',
+        fertility_tri2: '#NPC_NAME# is visibly pregnant (second trimester). The bump shows and people notice. You feel steadier than the early weeks - protective of your belly, hungry, warm, sometimes glowing and sometimes aching. It shapes how you move and what you risk.',
+        fertility_tri3: '#NPC_NAME# is heavily pregnant (third trimester). Everything is effort: standing, walking, sleeping. You are protective, tired, and done with foolishness, but the child kicks and it is real now. Birth is coming soon and it is on your mind.',
+        fertility_fullterm: '#NPC_NAME# is full term - the baby could come at ANY moment. You feel enormous and restless, and your mind keeps returning to where and with whom the birth will happen. Treat danger and long journeys accordingly.',
+        fertility_recovery: '#NPC_NAME# recently gave birth and is still recovering. Sore, exhausted, emotional, and fiercely attached to the newborn. Keep intimacy off the table unless YOU clearly choose otherwise; your body is still healing.',
+        fertility_cycle_menses: '#NPC_NAME# is menstruating. Low energy, cramps, shorter patience than usual. It is private - reference it only obliquely unless you are close to the person you are speaking with.',
+        fertility_cycle_ovulation: '#NPC_NAME# is at the fertile peak of her cycle. There is a warmth and pull in you that sharpens attraction toward people you ALREADY desire. It does not create desire where none exists, and it never overrides your judgment or consent.',
+        fertility_cycle_pms: '#NPC_NAME# is in the premenstrual days: irritable edges, low patience, feelings close to the surface. Small annoyances land harder than they should.',
+        fertility_stress: 'URGENT: the baby #NPC_NAME# carries is in danger RIGHT NOW - cause: #CAUSE#. React with real alarm in character: protect the child, get out of the hazard, demand help from those present. This overrides small talk.',
+        fertility_stress_substance: '#NPC_NAME# has taken #CAUSE# while carrying a child, and she can feel it reaching the baby. Guilt, defiance, or denial - whichever fits you - but the weight of it is in your words. Anyone close to you would be right to be alarmed.',
+        fertility_relief: 'The danger to the baby has passed (#CAUSE# resolved). Relief washes through #NPC_NAME# - shaken, grateful, checking on the child, thanking whoever helped.',
+        fertility_loss_baby: '#NPC_NAME# has lost her baby - cause: #CAUSE#. This is raw grief. Speak from inside it: shock, sorrow, anger at the cause or at herself. Do not be cheerful. Let it shadow your words.',
+        fertility_miscarriage: '#NPC_NAME# has suffered a miscarriage (#CAUSE#). The grief is fresh and physical. React per your nature - withdrawn, weeping, stone-faced - but it colors everything you say right now.',
+        fertility_conception: 'Something has changed in #NPC_NAME# - a new life has just begun in her, fathered by #FATHER_NAME#. She may not consciously know yet, so play only the earliest hints: a strange flutter, an unplaceable feeling. If she has reason to suspect, joy or dread per her situation.',
+        fertility_labor: '#NPC_NAME# is in labor or has JUST given birth. Contractions or a newborn in her arms - urgency, exhaustion, overwhelming feeling. If the child is still coming, demand help, a bed, a healer; if the child is here, she is flooded with emotion and needs rest.',
 
         // SECTION 2A: Marriage spouse prompts (11 tiers)
         marriage_spouse_hostile: 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -10913,6 +10968,21 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     setPromptValue('promptGazeAss', s.gaze_ass, 'gaze_ass');
                     setPromptValue('promptGazeCrotch', s.gaze_crotch, 'gaze_crotch');
                     setPromptValue('promptGazePerson', s.gaze_person, 'gaze_person');
+                    setPromptValue('promptFertilityTri1', s.fertility_tri1, 'fertility_tri1');
+                    setPromptValue('promptFertilityTri2', s.fertility_tri2, 'fertility_tri2');
+                    setPromptValue('promptFertilityTri3', s.fertility_tri3, 'fertility_tri3');
+                    setPromptValue('promptFertilityFullterm', s.fertility_fullterm, 'fertility_fullterm');
+                    setPromptValue('promptFertilityRecovery', s.fertility_recovery, 'fertility_recovery');
+                    setPromptValue('promptFertilityCycleMenses', s.fertility_cycle_menses, 'fertility_cycle_menses');
+                    setPromptValue('promptFertilityCycleOvulation', s.fertility_cycle_ovulation, 'fertility_cycle_ovulation');
+                    setPromptValue('promptFertilityCyclePms', s.fertility_cycle_pms, 'fertility_cycle_pms');
+                    setPromptValue('promptFertilityStress', s.fertility_stress, 'fertility_stress');
+                    setPromptValue('promptFertilityStressSubstance', s.fertility_stress_substance, 'fertility_stress_substance');
+                    setPromptValue('promptFertilityRelief', s.fertility_relief, 'fertility_relief');
+                    setPromptValue('promptFertilityLossBaby', s.fertility_loss_baby, 'fertility_loss_baby');
+                    setPromptValue('promptFertilityMiscarriage', s.fertility_miscarriage, 'fertility_miscarriage');
+                    setPromptValue('promptFertilityConception', s.fertility_conception, 'fertility_conception');
+                    setPromptValue('promptFertilityLabor', s.fertility_labor, 'fertility_labor');
                     if (s.arousal_gating_threshold !== undefined) {
                         document.getElementById('arousalGatingThreshold').value = s.arousal_gating_threshold;
                         document.getElementById('arousalGatingThresholdValue').textContent = s.arousal_gating_threshold;
@@ -11223,6 +11293,21 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('gaze_ass', getVal('promptGazeAss'));
         formData.append('gaze_crotch', getVal('promptGazeCrotch'));
         formData.append('gaze_person', getVal('promptGazePerson'));
+        formData.append('fertility_tri1', getVal('promptFertilityTri1'));
+        formData.append('fertility_tri2', getVal('promptFertilityTri2'));
+        formData.append('fertility_tri3', getVal('promptFertilityTri3'));
+        formData.append('fertility_fullterm', getVal('promptFertilityFullterm'));
+        formData.append('fertility_recovery', getVal('promptFertilityRecovery'));
+        formData.append('fertility_cycle_menses', getVal('promptFertilityCycleMenses'));
+        formData.append('fertility_cycle_ovulation', getVal('promptFertilityCycleOvulation'));
+        formData.append('fertility_cycle_pms', getVal('promptFertilityCyclePms'));
+        formData.append('fertility_stress', getVal('promptFertilityStress'));
+        formData.append('fertility_stress_substance', getVal('promptFertilityStressSubstance'));
+        formData.append('fertility_relief', getVal('promptFertilityRelief'));
+        formData.append('fertility_loss_baby', getVal('promptFertilityLossBaby'));
+        formData.append('fertility_miscarriage', getVal('promptFertilityMiscarriage'));
+        formData.append('fertility_conception', getVal('promptFertilityConception'));
+        formData.append('fertility_labor', getVal('promptFertilityLabor'));
         formData.append('arousal_gating_threshold', document.getElementById('arousalGatingThreshold').value);
 
         // Devices & Wearables (Devious Devices)
@@ -11515,6 +11600,21 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         resetVal('promptGazeAss', 'gaze_ass');
         resetVal('promptGazeCrotch', 'gaze_crotch');
         resetVal('promptGazePerson', 'gaze_person');
+        resetVal('promptFertilityTri1', 'fertility_tri1');
+        resetVal('promptFertilityTri2', 'fertility_tri2');
+        resetVal('promptFertilityTri3', 'fertility_tri3');
+        resetVal('promptFertilityFullterm', 'fertility_fullterm');
+        resetVal('promptFertilityRecovery', 'fertility_recovery');
+        resetVal('promptFertilityCycleMenses', 'fertility_cycle_menses');
+        resetVal('promptFertilityCycleOvulation', 'fertility_cycle_ovulation');
+        resetVal('promptFertilityCyclePms', 'fertility_cycle_pms');
+        resetVal('promptFertilityStress', 'fertility_stress');
+        resetVal('promptFertilityStressSubstance', 'fertility_stress_substance');
+        resetVal('promptFertilityRelief', 'fertility_relief');
+        resetVal('promptFertilityLossBaby', 'fertility_loss_baby');
+        resetVal('promptFertilityMiscarriage', 'fertility_miscarriage');
+        resetVal('promptFertilityConception', 'fertility_conception');
+        resetVal('promptFertilityLabor', 'fertility_labor');
         document.getElementById('arousalGatingThreshold').value = 10;
         document.getElementById('arousalGatingThresholdValue').textContent = '10';
 

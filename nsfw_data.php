@@ -1647,6 +1647,23 @@ function nsfw_default_prompt_overrides() {
         'gaze_ass' => "#PLAYER_NAME# has been openly staring at your backside. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or snaps at them; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or playful about it. Do NOT start a scene - just react to being ogled.",
         'gaze_crotch' => "#PLAYER_NAME#'s eyes have been fixed below your waist. React per how you feel about them (#TIER#): a stranger or someone you dislike is very uncomfortable, offended, or confronts them; a friend is flustered or awkwardly amused; if you desire #PLAYER_NAME#, you might be bold, teasing, or invite the attention. Do NOT start a scene - just react.",
         'gaze_person' => "#PLAYER_NAME# has been staring at you for a while now. React the way your feelings for them (#TIER#) dictate: unsettling or rude from a stranger you distrust, warm or curious from a friend, charged and intimate if you love or desire them. Respond in character - do not start a scene.",
+        // Fertility prompts (FMR / FMR NG event contract, 2026-07-06): stage prompts keyed off the
+        // FMR_ActorStatus rank, event prompts off the survival/conception/labor events.
+        'fertility_tri1' => "#NPC_NAME# is newly pregnant (first trimester). Let it color you: waves of nausea, odd cravings, sudden tiredness, moods that swing without warning. Be private or open about it per your nature, and do not announce it every line.",
+        'fertility_tri2' => "#NPC_NAME# is visibly pregnant (second trimester). The bump shows and people notice. You feel steadier than the early weeks - protective of your belly, hungry, warm, sometimes glowing and sometimes aching. It shapes how you move and what you risk.",
+        'fertility_tri3' => "#NPC_NAME# is heavily pregnant (third trimester). Everything is effort: standing, walking, sleeping. You are protective, tired, and done with foolishness, but the child kicks and it is real now. Birth is coming soon and it is on your mind.",
+        'fertility_fullterm' => "#NPC_NAME# is full term - the baby could come at ANY moment. You feel enormous and restless, and your mind keeps returning to where and with whom the birth will happen. Treat danger and long journeys accordingly.",
+        'fertility_recovery' => "#NPC_NAME# recently gave birth and is still recovering. Sore, exhausted, emotional, and fiercely attached to the newborn. Keep intimacy off the table unless YOU clearly choose otherwise; your body is still healing.",
+        'fertility_cycle_menses' => "#NPC_NAME# is menstruating. Low energy, cramps, shorter patience than usual. It is private - reference it only obliquely unless you are close to the person you are speaking with.",
+        'fertility_cycle_ovulation' => "#NPC_NAME# is at the fertile peak of her cycle. There is a warmth and pull in you that sharpens attraction toward people you ALREADY desire. It does not create desire where none exists, and it never overrides your judgment or consent.",
+        'fertility_cycle_pms' => "#NPC_NAME# is in the premenstrual days: irritable edges, low patience, feelings close to the surface. Small annoyances land harder than they should.",
+        'fertility_stress' => "URGENT: the baby #NPC_NAME# carries is in danger RIGHT NOW - cause: #CAUSE#. React with real alarm in character: protect the child, get out of the hazard, demand help from those present. This overrides small talk.",
+        'fertility_stress_substance' => "#NPC_NAME# has taken #CAUSE# while carrying a child, and she can feel it reaching the baby. Guilt, defiance, or denial - whichever fits you - but the weight of it is in your words. Anyone close to you would be right to be alarmed.",
+        'fertility_relief' => "The danger to the baby has passed (#CAUSE# resolved). Relief washes through #NPC_NAME# - shaken, grateful, checking on the child, thanking whoever helped.",
+        'fertility_loss_baby' => "#NPC_NAME# has lost her baby - cause: #CAUSE#. This is raw grief. Speak from inside it: shock, sorrow, anger at the cause or at herself. Do not be cheerful. Let it shadow your words.",
+        'fertility_miscarriage' => "#NPC_NAME# has suffered a miscarriage (#CAUSE#). The grief is fresh and physical. React per your nature - withdrawn, weeping, stone-faced - but it colors everything you say right now.",
+        'fertility_conception' => "Something has changed in #NPC_NAME# - a new life has just begun in her, fathered by #FATHER_NAME#. She may not consciously know yet, so play only the earliest hints: a strange flutter, an unplaceable feeling. If she has reason to suspect, joy or dread per her situation.",
+        'fertility_labor' => "#NPC_NAME# is in labor or has JUST given birth. Contractions or a newborn in her arms - urgency, exhaustion, overwhelming feeling. If the child is still coming, demand help, a bed, a healer; if the child is here, she is flooded with emotion and needs rest.",
         'scene_breather' => "A quiet pause in your encounter with #PRIMARY_PARTNER# - a breather between acts, still close, still undressed, still in the moment. The encounter is STILL UNDERWAY and consent was already given. Do NOT restart introductions, do NOT ask whether to begin, do NOT treat this as a new scene. React with afterglow, closeness, teasing, or anticipation of what comes next.",
         'whiskey_dick' => "#PLAYER_NAME# is too drunk to perform and the scene has stalled. React as #NPC_NAME# according to your relationship, personality, and current mood. You may be disappointed, amused, annoyed, sympathetic, or teasing. Keep it in-character and do not continue the sex act.",
         'marriage_spouse_hostile' => 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -1887,7 +1904,7 @@ function nsfw_auto_init() {
     if (!isset($GLOBALS['db'])) return;
 
     try {
-        $seedVersion = '20260706436';
+        $seedVersion = '20260707212';
         $seedFlag = $GLOBALS['db']->fetchOne(
             "SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_seed_version'"
         );

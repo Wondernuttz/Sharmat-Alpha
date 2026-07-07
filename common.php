@@ -122,6 +122,40 @@ function processInfoFertility()
                 // Format: name@recovery@day (from FMR_ActorStatus rank 101-115)
                 $extended["fertility_is_pregnant"] = false;
                 $extended["fertility_recovery_day"] = intval($subCmd[2] ?? 0);
+                unset($extended["fertility_cycle_phase"]);
+                break;
+
+            case 'cycle':
+                // Format: name@cycle@menses|ovulation|pms (from FMR_ActorStatus rank 116-119; follicular unreported)
+                $extended["fertility_is_pregnant"] = false;
+                $extended["fertility_cycle_phase"] = strval($subCmd[2] ?? '');
+                unset($extended["fertility_recovery_day"]);
+                break;
+
+            case 'conceived':
+                // Format: name@conceived@fatherName (FertilityModeConception - the moment itself)
+                $conceivedFather = $subCmd[2] ?? '';
+                if (nsfwIsNarratorName($conceivedFather)) { $conceivedFather = ''; }
+                if ($conceivedFather !== '') { $extended["fertility_father"] = $conceivedFather; }
+                $extended["fertility_conceived_ts"] = time();
+                unset($extended["fertility_cycle_phase"]);
+                break;
+
+            case 'stress':
+                // Format: name@stress@cause@severity@healthPct (worn-baby hazard ACTIVE until relief)
+                $extended["fertility_stress_cause"] = strval($subCmd[2] ?? 'unknown');
+                $extended["fertility_stress_severity"] = intval($subCmd[3] ?? 0);
+                $extended["fertility_stress_ts"] = time();
+                unset($extended["fertility_relief_ts"]);
+                break;
+
+            case 'relief':
+                // Format: name@relief@cause (hazard ended)
+                $extended["fertility_relief_cause"] = strval($subCmd[2] ?? ($extended["fertility_stress_cause"] ?? 'unknown'));
+                $extended["fertility_relief_ts"] = time();
+                unset($extended["fertility_stress_cause"]);
+                unset($extended["fertility_stress_severity"]);
+                unset($extended["fertility_stress_ts"]);
                 break;
 
             case 'cleared':
@@ -139,6 +173,7 @@ function processInfoFertility()
             case 'birth':
                 $extended["fertility_is_pregnant"] = false;
                 $extended["fertility_recent_birth"] = $gameRequest[2];
+                $extended["fertility_birth_ts"] = time();   // localtime window for the labor/birth prompt
                 break;
 
             case 'baby_damage':
@@ -152,6 +187,10 @@ function processInfoFertility()
                 $extended["fertility_is_pregnant"] = false;
                 $extended["fertility_baby_lost"] = true;
                 $extended["fertility_baby_death_cause"] = $subCmd[2] ?? 'unknown';
+                $extended["fertility_loss_ts"] = time();    // grief window for the loss prompt
+                unset($extended["fertility_stress_cause"]);
+                unset($extended["fertility_stress_severity"]);
+                unset($extended["fertility_stress_ts"]);
                 break;
 
             case 'miscarriage':
@@ -159,6 +198,7 @@ function processInfoFertility()
                 $extended["fertility_is_pregnant"] = false;
                 $extended["fertility_miscarriage"] = true;
                 $extended["fertility_miscarriage_cause"] = $subCmd[2] ?? 'unknown';
+                $extended["fertility_loss_ts"] = time();    // grief window for the miscarriage prompt
                 break;
 
             case 'baby_status':

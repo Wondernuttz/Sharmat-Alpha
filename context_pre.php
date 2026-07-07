@@ -416,6 +416,69 @@ if (isset($GLOBALS["HERIKA_PERS"]) && $drunkStage < 1 && ($__lastPromptedDrunk >
     $__promptStateChanged = true;
 }
 
+// ============================================
+// FERTILITY (2026-07-06): inject the UI-editable Fertility-tab prompts from the per-NPC state that
+// processInfoFertility (common.php) stores from the fertility_notification events. Works with live
+// FMR today and FMR NG later (identical event contract). One persistent STAGE prompt (pregnancy
+// progress / recovery / cycle phase) plus windowed EVENT prompts (hazard stress persists until
+// relief; grief lingers 4x the window).
+// ============================================
+if (isset($GLOBALS["HERIKA_PERS"]) && _getNsfwSetting('NSFW_FERTILITY_ENABLED', true)
+    && $actorName !== '' && (!function_exists('nsfwIsNarratorName') || !nsfwIsNarratorName($actorName))
+    && (!function_exists('aiagentNsfwIsChildNpc') || !aiagentNsfwIsChildNpc($actorName))) {
+    if (!class_exists('NsfwNpcData')) { require_once __DIR__ . "/nsfw_data.php"; }
+    $__f = NsfwNpcData::get($actorName);
+    $__fWin = max(60, (int)_getNsfwSetting('NSFW_FERTILITY_EVENT_WINDOW_SECONDS', 1800));
+    $__fNow = time();
+    $__fFather = trim((string)($__f["fertility_father"] ?? ''));
+    if ($__fFather === '') { $__fFather = 'someone unknown'; }
+    $__fKeys = [];
+    if (!empty($__f["fertility_is_pregnant"])) {
+        $__fProg = (int)($__f["fertility_progress"] ?? 0);
+        if     ($__fProg >= 95) { $__fKeys[] = 'fertility_fullterm'; }
+        elseif ($__fProg >= 67) { $__fKeys[] = 'fertility_tri3'; }
+        elseif ($__fProg >= 34) { $__fKeys[] = 'fertility_tri2'; }
+        elseif ($__fProg >= 1)  { $__fKeys[] = 'fertility_tri1'; }
+    } elseif ((int)($__f["fertility_recovery_day"] ?? 0) >= 1) {
+        $__fKeys[] = 'fertility_recovery';
+    } else {
+        $__fCyc = (string)($__f["fertility_cycle_phase"] ?? '');
+        if     ($__fCyc === 'menses')    { $__fKeys[] = 'fertility_cycle_menses'; }
+        elseif ($__fCyc === 'ovulation') { $__fKeys[] = 'fertility_cycle_ovulation'; }
+        elseif ($__fCyc === 'pms')       { $__fKeys[] = 'fertility_cycle_pms'; }
+    }
+    $__fCause = '';
+    if (!empty($__f["fertility_stress_cause"])) {   // active hazard: persists until relief/loss clears it
+        $__fCause = (string)$__f["fertility_stress_cause"];
+        $__fKeys[] = in_array($__fCause, ['skooma', 'alcohol', 'drugs'], true) ? 'fertility_stress_substance' : 'fertility_stress';
+    } elseif (($__f["fertility_relief_ts"] ?? 0) > $__fNow - $__fWin) {
+        $__fCause = (string)($__f["fertility_relief_cause"] ?? '');
+        $__fKeys[] = 'fertility_relief';
+    }
+    if (($__f["fertility_loss_ts"] ?? 0) > $__fNow - ($__fWin * 4)) {
+        if (!empty($__f["fertility_miscarriage"])) {
+            $__fCause = (string)($__f["fertility_miscarriage_cause"] ?? $__fCause);
+            $__fKeys[] = 'fertility_miscarriage';
+        } elseif (!empty($__f["fertility_baby_lost"])) {
+            $__fCause = (string)($__f["fertility_baby_death_cause"] ?? $__fCause);
+            $__fKeys[] = 'fertility_loss_baby';
+        }
+    }
+    if (($__f["fertility_conceived_ts"] ?? 0) > $__fNow - $__fWin) { $__fKeys[] = 'fertility_conception'; }
+    if (($__f["fertility_birth_ts"] ?? 0) > $__fNow - $__fWin)     { $__fKeys[] = 'fertility_labor'; }
+    foreach (array_unique($__fKeys) as $__fK) {
+        $__fTxt = trim((string)(getGlobalPrompt($__fK) ?: ''));
+        if ($__fTxt === '') { continue; }
+        $__fTxt = strtr($__fTxt, [
+            '#PLAYER_NAME#' => $GLOBALS["PLAYER_NAME"] ?? 'the player',
+            '#NPC_NAME#'    => $actorName,
+            '#FATHER_NAME#' => $__fFather,
+            '#CAUSE#'       => ($__fCause !== '' ? $__fCause : 'unknown'),
+        ]);
+        $GLOBALS["HERIKA_PERS"] .= "\n\n#FERTILITY\n" . $__fTxt;
+    }
+}
+
 if ($drunkStage !== $__lastPromptedDrunk) {
     $__promptState["aiagent_nsfw_prompt_drunk_stage"] = $drunkStage;
     $__promptStateChanged = true;

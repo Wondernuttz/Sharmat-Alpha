@@ -846,6 +846,7 @@ function DoRegister()
 	RegisterForModEvent("ostim_thread_scenechanged", "OStimThreadSceneChanged")
 	RegisterForModEvent("ostim_thread_end", "OStimThreadEnd")
 
+
 	; ============================================
 	; SUBTHREAD EVENTS (NPC-to-NPC scenes from OStim NPCs mod)
 	; These fire for NPC-only scenes that don't involve player
@@ -928,6 +929,12 @@ function DoRegister()
 
 	UnRegisterForModEvent("FMR_BabyStatus")
 	RegisterForModEvent("FMR_BabyStatus", "OnFMRBabyStatus")
+
+	UnRegisterForModEvent("FMR_BabyStress")
+	RegisterForModEvent("FMR_BabyStress", "OnFMRBabyStress")
+
+	UnRegisterForModEvent("FMR_BabyRelief")
+	RegisterForModEvent("FMR_BabyRelief", "OnFMRBabyRelief")
 
 	UnRegisterForModEvent("FMR_MotherDeath")
 	RegisterForModEvent("FMR_MotherDeath", "OnFMRMotherDeath")
@@ -4141,9 +4148,11 @@ Event FertilityLabor(string eventname,Form Sender , int index)
 EndEvent
 
 Event FertilityModeConception(string eventname,Form mother , string motherName, string fatherName, int index)
-	
+
 	Debug.Trace("[CHIM-NSFW FERTILITY] Event:"+eventname+" , "+motherName+" pregnant of "+fatherName+", index:"+index+", mother fid:"+mother.GetFormId())
-	;AIAgentFunctions.logMessageForActor(motherName+"@pregnant","fertility_notification",motherName)
+	; CONCEPTION (2026-07-06): report the moment + the father so the server can color the earliest
+	; hints (the old @pregnant emit stayed commented out because FMR_ActorStatus already covers stage).
+	AIAgentFunctions.logMessageForActor(motherName+"@conceived@"+fatherName,"fertility_notification",motherName)
 EndEvent
 
 event FertilityModeUpdate(string a = " ", string b = " ", float ScaleStart = 0.0, form sender)
@@ -4192,10 +4201,46 @@ Event OnFMRActorStatus(Form akActor, int factionRank, string fatherName, int fat
 		; Recovery phase (post-birth)
 		int recoveryDay = factionRank - 100
 		AIAgentFunctions.logMessageForActor(motherName + "@recovery@" + recoveryDay, "fertility_notification", motherName)
+	elseif factionRank >= 116 && factionRank <= 119
+		; Cycle phases (2026-07-06): 116=Menstruation, 117=Follicular, 118=Ovulation, 119=Luteal/PMS.
+		; Follicular is the neutral baseline - deliberately not reported.
+		string cyclePhase = ""
+		if factionRank == 116
+			cyclePhase = "menses"
+		elseif factionRank == 118
+			cyclePhase = "ovulation"
+		elseif factionRank == 119
+			cyclePhase = "pms"
+		endif
+		if cyclePhase != ""
+			AIAgentFunctions.logMessageForActor(motherName + "@cycle@" + cyclePhase, "fertility_notification", motherName)
+		endif
 	elseif factionRank == 0
 		; Cleared/aborted
 		AIAgentFunctions.logMessageForActor(motherName + "@cleared", "fertility_notification", motherName)
 	endif
+EndEvent
+
+; Worn-baby hazard began (FMR survival tier: cold/submerged/exposure/skooma/alcohol/drugs)
+Event OnFMRBabyStress(Form akMother, string cause, int severity, int foodPct, int healthPct)
+	Actor akM = akMother as Actor
+	if !akM
+		return
+	endif
+	string mName = akM.GetDisplayName()
+	Debug.Trace("[CHIM-NSFW FMR] BabyStress: " + mName + " cause=" + cause + " sev=" + severity)
+	AIAgentFunctions.logMessageForActor(mName + "@stress@" + cause + "@" + severity + "@" + healthPct, "fertility_notification", mName)
+EndEvent
+
+; Worn-baby hazard ended
+Event OnFMRBabyRelief(Form akMother, string cause, int severity, int foodPct, int healthPct)
+	Actor akM = akMother as Actor
+	if !akM
+		return
+	endif
+	string mName = akM.GetDisplayName()
+	Debug.Trace("[CHIM-NSFW FMR] BabyRelief: " + mName + " cause=" + cause)
+	AIAgentFunctions.logMessageForActor(mName + "@relief@" + cause, "fertility_notification", mName)
 EndEvent
 
 ; Baby took damage during pregnancy
