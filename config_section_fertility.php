@@ -89,4 +89,68 @@
                 <label>Miscarriage</label>
                 <textarea id="promptFertilityMiscarriage" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
             </div>
+
+            <h3 class="info-subtitle">Royal Family / Dynasty (FMR NG)</h3>
+            <p style="color: #9988BB; font-size: 11px; margin-bottom: 10px;">
+                FMR NG exports the player's dynasty to <strong style="color:#B8A8D0;">FMRNG_Lineage.json</strong> on every change:
+                children (names, ages, legitimate vs bastard) and, with NG's Royal Dynasty Mode on, crown prince/princess titles and the
+                line of succession. NPCs weave this into conversation, plus any pregnancies they already know of through the fertility events.
+                Pure flavor: no new actions, no consent changes. Silently off when the file does not exist.
+                Extra placeholders: #FAMILY_SUMMARY#, #CHILD_COUNT#, #HEIR_NAME#, #HEIR_TITLE#, #BASTARD_NAMES#, #BASTARD_COUNT#, #EXPECTING_SUMMARY#, #EXPECTING_COUNT#.
+            </p>
+            <div class="settings-checkbox-group" style="margin-bottom: 14px;">
+                <label for="nsfwFertilityFamilyEnabled">
+                    <input type="checkbox" id="nsfwFertilityFamilyEnabled" name="NSFW_FERTILITY_FAMILY_ENABLED" checked>
+                    <span>Royal Family / Dynasty Context</span>
+                </label>
+                <div style="margin-top: 6px;">
+                    <label style="color: #9988BB; font-size: 12px;">Lineage file path (blank = auto-detect)</label>
+                    <input type="text" id="nsfwFertilityLineagePath" name="NSFW_FERTILITY_LINEAGE_PATH" placeholder="auto-detect (MO2 overwrite / game Data folder)" style="width: 100%; max-width: 520px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
+                    <p class="legend">Full path to FMRNG_Lineage.json. Windows form is fine (C:\...\overwrite\SKSE\Plugins\FMRNG_Lineage.json). Leave blank to let the server find it in the usual MO2 overwrite and Steam Data locations.</p>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Family Overview (fires whenever the player has children)</label>
+                <textarea id="promptFertilityFamilyOverview" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Royal Court (only while NG's Royal Dynasty Mode is on)</label>
+                <textarea id="promptFertilityFamilyRoyal" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Bastard Children (fires when any child was born out of wedlock)</label>
+                <textarea id="promptFertilityFamilyBastard" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Expecting Mothers (fires when known pregnancies carry the player's child)</label>
+                <textarea id="promptFertilityFamilyExpecting" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
+            </div>
+
+            <h3 class="info-subtitle">Baby Tragedy / Witness Reactions (FMR NG)</h3>
+            <p style="color: #9988BB; font-size: 11px; margin-bottom: 10px;">
+                FMR NG reports harm to OTHER mothers' babies with names attached: who killed a pregnant woman
+                (<strong style="color:#B8A8D0;">FMR_BabyTragedy</strong>), who lost a child to skooma or the cold, and whose baby is in danger
+                right now. Companions react with grief, judgment, or alarm. Pure flavor: no new actions, no consent changes;
+                an NPC's OWN grief stays in the Events prompts above. Extra placeholders: #TRAGEDY_SUMMARY#, #TRAGEDY_COUNT#,
+                #KILLER_NAME#, #VICTIM_NAME#, #LOSS_SUMMARY#, #DANGER_SUMMARY#.
+            </p>
+            <div class="settings-checkbox-group" style="margin-bottom: 14px;">
+                <label for="nsfwFertilityTragedyEnabled">
+                    <input type="checkbox" id="nsfwFertilityTragedyEnabled" name="NSFW_FERTILITY_TRAGEDY_ENABLED" checked>
+                    <span>Baby Tragedy / Witness Reactions</span>
+                </label>
+                <p class="legend" style="margin-top: 6px;">Losses and killings stay in NPCs' voices 4x the event reaction window; a hazard stays until it ends. The mother herself is excluded - these prompts are for everyone else.</p>
+            </div>
+            <div class="form-group">
+                <label>Witnessed Tragedy (a named killer harmed a pregnant or baby-carrying woman)</label>
+                <textarea id="promptFertilityWitnessTragedy" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Witnessed Loss (another woman lost her child - skooma, cold, drowning...)</label>
+                <textarea id="promptFertilityWitnessLoss" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Witnessed Danger (another woman's baby is in danger or was just hurt)</label>
+                <textarea id="promptFertilityWitnessDanger" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
+            </div>
         </div>

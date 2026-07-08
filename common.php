@@ -66,7 +66,7 @@ function processInfoFertility()
 
         // THROTTLE: Safety net to prevent duplicate processing even if FMR sends extras
         // Critical events (birth, death, miscarriage) bypass throttle
-        $criticalEvents = ['birth', 'baby_death', 'miscarriage', 'mother_death', 'aborted'];
+        $criticalEvents = ['birth', 'baby_death', 'miscarriage', 'mother_death', 'aborted', 'tragedy'];
         $throttleSeconds = 30;
 
         if (!in_array($eventType, $criticalEvents)) {
@@ -180,6 +180,7 @@ function processInfoFertility()
                 // Format: name@baby_damage@damage@remainingHealth
                 $extended["fertility_baby_health"] = intval($subCmd[3] ?? 100);
                 $extended["fertility_baby_damaged"] = true;
+                $extended["fertility_damage_ts"] = time();  // recency window for the witness/danger prompt
                 break;
 
             case 'baby_death':
@@ -212,6 +213,19 @@ function processInfoFertility()
                 // Format: name@mother_death@status (pregnant or with_baby)
                 $extended["fertility_mother_died"] = true;
                 $extended["fertility_death_status"] = $subCmd[2] ?? '';
+                break;
+
+            case 'tragedy':
+                // Format: name@tragedy@kind@killerName (FMR_BabyTragedy, NG-additive: killer attribution.
+                // kind: killed_pregnant / killed_carrying / beaten_miscarriage / beaten_babydeath.
+                // The paired FMR_BabyMiscarriage/BabyDeath/MotherDeath events keep maintaining the loss
+                // flags on this row; this case only records WHO did it for the witness prompts.)
+                $extended["fertility_tragedy_kind"] = strval($subCmd[2] ?? '');
+                $tragKiller = strval($subCmd[3] ?? '');
+                // Never let the Narrator be named as a killer - that fabricates a person.
+                if (nsfwIsNarratorName($tragKiller)) { $tragKiller = ''; }
+                $extended["fertility_tragedy_killer"] = ($tragKiller !== '' ? $tragKiller : 'someone');
+                $extended["fertility_tragedy_ts"] = time();
                 break;
         }
 

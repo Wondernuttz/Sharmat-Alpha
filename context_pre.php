@@ -479,6 +479,96 @@ if (isset($GLOBALS["HERIKA_PERS"]) && _getNsfwSetting('NSFW_FERTILITY_ENABLED', 
     }
 }
 
+// ============================================
+// FERTILITY / ROYAL FAMILY (pipeline 5, 2026-07-07): dynasty context from FMR NG's
+// FMRNG_Lineage.json disk export (children: names, ages, legitimate vs bastard,
+// royal titles) plus the pregnancies the server already knows from the FMR_*
+// events (fertility_father == player). FLAVOR ONLY: no toolsets, no consent
+// changes. Silently inert when no lineage file exists and nothing is expecting.
+// ============================================
+if (isset($GLOBALS["HERIKA_PERS"]) && _getNsfwSetting('NSFW_FERTILITY_ENABLED', true)
+    && _getNsfwSetting('NSFW_FERTILITY_FAMILY_ENABLED', true)
+    && $actorName !== '' && (!function_exists('nsfwIsNarratorName') || !nsfwIsNarratorName($actorName))
+    && (!function_exists('aiagentNsfwIsChildNpc') || !aiagentNsfwIsChildNpc($actorName))) {
+    require_once __DIR__ . "/nsfw_fertility_family.php";
+    $__ffam = aiagentNsfwFamilyContext();
+    if ($__ffam !== null) {
+        $__ffKeys = [];
+        if ($__ffam['childCount'] > 0)                              { $__ffKeys[] = 'fertility_family_overview'; }
+        if ($__ffam['royalMode'] && $__ffam['inLineCount'] > 0)     { $__ffKeys[] = 'fertility_family_royal'; }
+        if ($__ffam['bastardCount'] > 0)                            { $__ffKeys[] = 'fertility_family_bastard'; }
+        if ($__ffam['expectingCount'] > 0)                          { $__ffKeys[] = 'fertility_family_expecting'; }
+        $__ffHdr = $__ffam['royalMode'] ? "#ROYAL FAMILY" : "#PLAYER FAMILY";
+        $__ffFired = [];
+        foreach ($__ffKeys as $__ffK) {
+            $__ffTxt = trim((string)(getGlobalPrompt($__ffK) ?: ''));
+            if ($__ffTxt === '') { continue; }
+            $__ffTxt = strtr($__ffTxt, [
+                '#PLAYER_NAME#'       => $GLOBALS["PLAYER_NAME"] ?? 'the player',
+                '#NPC_NAME#'          => $actorName,
+                '#FAMILY_SUMMARY#'    => $__ffam['familySummary'],
+                '#CHILD_COUNT#'       => (string)$__ffam['childCount'],
+                '#BASTARD_COUNT#'     => (string)$__ffam['bastardCount'],
+                '#BASTARD_NAMES#'     => $__ffam['bastardNames'],
+                '#HEIR_NAME#'         => ($__ffam['heirName'] !== '' ? $__ffam['heirName'] : 'the firstborn'),
+                '#HEIR_TITLE#'        => ($__ffam['heirTitle'] !== '' ? $__ffam['heirTitle'] : 'heir'),
+                '#EXPECTING_SUMMARY#' => $__ffam['expectingSummary'],
+                '#EXPECTING_COUNT#'   => (string)$__ffam['expectingCount'],
+            ]);
+            $GLOBALS["HERIKA_PERS"] .= "\n\n" . $__ffHdr . "\n" . $__ffTxt;
+            $__ffFired[] = $__ffK;
+        }
+        if (count($__ffFired) > 0) {
+            error_log("[CHIM-NSFW FERTILITY] FAMILY context injected (" . implode(",", $__ffFired)
+                . ") children=" . $__ffam['childCount'] . " bastards=" . $__ffam['bastardCount']
+                . " expecting=" . $__ffam['expectingCount'] . " royal=" . ($__ffam['royalMode'] ? 1 : 0));
+        }
+    }
+}
+
+// ============================================
+// FERTILITY TRAGEDY / WITNESS (pipeline 6, 2026-07-07): recent baby tragedies among
+// OTHER NPCs - FMR NG's FMR_BabyTragedy killer attribution ("X killed Y, who was
+// pregnant"), plus losses and babies in danger from the FMR_BabyDamage/Stress
+// events - so companions can react with grief or judgment. FLAVOR ONLY: no
+// toolsets, no consent changes. The speaking NPC's OWN grief stays in #FERTILITY.
+// ============================================
+if (isset($GLOBALS["HERIKA_PERS"]) && _getNsfwSetting('NSFW_FERTILITY_ENABLED', true)
+    && _getNsfwSetting('NSFW_FERTILITY_TRAGEDY_ENABLED', true)
+    && $actorName !== '' && (!function_exists('nsfwIsNarratorName') || !nsfwIsNarratorName($actorName))
+    && (!function_exists('aiagentNsfwIsChildNpc') || !aiagentNsfwIsChildNpc($actorName))) {
+    require_once __DIR__ . "/nsfw_fertility_family.php";
+    $__ftg = aiagentNsfwTragedyContext($actorName);
+    if ($__ftg !== null) {
+        $__ftgKeys = [];
+        if ($__ftg['tragedyCount'] > 0) { $__ftgKeys[] = 'fertility_witness_tragedy'; }
+        if ($__ftg['lossCount'] > 0)    { $__ftgKeys[] = 'fertility_witness_loss'; }
+        if ($__ftg['dangerCount'] > 0)  { $__ftgKeys[] = 'fertility_witness_danger'; }
+        $__ftgFired = [];
+        foreach ($__ftgKeys as $__ftgK) {
+            $__ftgTxt = trim((string)(getGlobalPrompt($__ftgK) ?: ''));
+            if ($__ftgTxt === '') { continue; }
+            $__ftgTxt = strtr($__ftgTxt, [
+                '#PLAYER_NAME#'     => $GLOBALS["PLAYER_NAME"] ?? 'the player',
+                '#NPC_NAME#'        => $actorName,
+                '#TRAGEDY_SUMMARY#' => $__ftg['tragedySummary'],
+                '#TRAGEDY_COUNT#'   => (string)$__ftg['tragedyCount'],
+                '#KILLER_NAME#'     => ($__ftg['killerName'] !== '' ? $__ftg['killerName'] : 'someone'),
+                '#VICTIM_NAME#'     => ($__ftg['victimName'] !== '' ? $__ftg['victimName'] : 'a woman'),
+                '#LOSS_SUMMARY#'    => $__ftg['lossSummary'],
+                '#DANGER_SUMMARY#'  => $__ftg['dangerSummary'],
+            ]);
+            $GLOBALS["HERIKA_PERS"] .= "\n\n#FERTILITY NEWS\n" . $__ftgTxt;
+            $__ftgFired[] = $__ftgK;
+        }
+        if (count($__ftgFired) > 0) {
+            error_log("[CHIM-NSFW FERTILITY] TRAGEDY context injected (" . implode(",", $__ftgFired)
+                . ") tragedies=" . $__ftg['tragedyCount'] . " losses=" . $__ftg['lossCount']
+                . " dangers=" . $__ftg['dangerCount']);
+        }
+    }
+}
+
 if ($drunkStage !== $__lastPromptedDrunk) {
     $__promptState["aiagent_nsfw_prompt_drunk_stage"] = $drunkStage;
     $__promptStateChanged = true;

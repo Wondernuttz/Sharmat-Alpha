@@ -1082,6 +1082,9 @@ SQL;
                 'NSFW_VR_TOUCH_ENABLED' => isset($_POST['NSFW_VR_TOUCH_ENABLED']) ? filter_var($_POST['NSFW_VR_TOUCH_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_FERTILITY_ENABLED' => isset($_POST['NSFW_FERTILITY_ENABLED']) ? filter_var($_POST['NSFW_FERTILITY_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_FERTILITY_EVENT_WINDOW_SECONDS' => isset($_POST['NSFW_FERTILITY_EVENT_WINDOW_SECONDS']) ? max(60, min(21600, intval($_POST['NSFW_FERTILITY_EVENT_WINDOW_SECONDS']))) : 1800,
+                'NSFW_FERTILITY_FAMILY_ENABLED' => isset($_POST['NSFW_FERTILITY_FAMILY_ENABLED']) ? filter_var($_POST['NSFW_FERTILITY_FAMILY_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
+                'NSFW_FERTILITY_LINEAGE_PATH' => trim($_POST['NSFW_FERTILITY_LINEAGE_PATH'] ?? ''),
+                'NSFW_FERTILITY_TRAGEDY_ENABLED' => isset($_POST['NSFW_FERTILITY_TRAGEDY_ENABLED']) ? filter_var($_POST['NSFW_FERTILITY_TRAGEDY_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_GAZE_COOLDOWN_SECONDS' => isset($_POST['NSFW_GAZE_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_GAZE_COOLDOWN_SECONDS']))) : 25,
                 'NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS' => isset($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']))) : 30,
                 'GENERIC_GLOSSARY' => $_POST['GENERIC_GLOSSARY'] ?? '',
@@ -3168,6 +3171,13 @@ PROMPT;
                 'fertility_miscarriage' => $_POST['fertility_miscarriage'] ?? '',
                 'fertility_conception' => $_POST['fertility_conception'] ?? '',
                 'fertility_labor' => $_POST['fertility_labor'] ?? '',
+                'fertility_family_overview' => $_POST['fertility_family_overview'] ?? '',
+                'fertility_family_royal' => $_POST['fertility_family_royal'] ?? '',
+                'fertility_family_bastard' => $_POST['fertility_family_bastard'] ?? '',
+                'fertility_family_expecting' => $_POST['fertility_family_expecting'] ?? '',
+                'fertility_witness_tragedy' => $_POST['fertility_witness_tragedy'] ?? '',
+                'fertility_witness_loss' => $_POST['fertility_witness_loss'] ?? '',
+                'fertility_witness_danger' => $_POST['fertility_witness_danger'] ?? '',
 
                 // Price Templates (budget/standard/luxury) - stored as JSON objects
                 'price_template_budget' => isset($_POST['price_template_budget']) ? json_decode($_POST['price_template_budget'], true) : null,
@@ -3328,6 +3338,13 @@ PROMPT;
             'fertility_miscarriage' => '#NPC_NAME# has suffered a miscarriage (#CAUSE#). The grief is fresh and physical. React per your nature - withdrawn, weeping, stone-faced - but it colors everything you say right now.',
             'fertility_conception' => 'Something has changed in #NPC_NAME# - a new life has just begun in her, fathered by #FATHER_NAME#. She may not consciously know yet, so play only the earliest hints: a strange flutter, an unplaceable feeling. If she has reason to suspect, joy or dread per her situation.',
             'fertility_labor' => '#NPC_NAME# is in labor or has JUST given birth. Contractions or a newborn in her arms - urgency, exhaustion, overwhelming feeling. If the child is still coming, demand help, a bed, a healer; if the child is here, she is flooded with emotion and needs rest.',
+            'fertility_family_overview' => "#PLAYER_NAME#'s family is known to you: #FAMILY_SUMMARY#. Weave this knowledge in naturally when it fits - ask after the children, congratulate, gossip, or stay discreet, whichever suits your personality and how close you are to #PLAYER_NAME#. Do NOT recite this list; mention at most one or two family facts in a reply, and only when the conversation touches family, children, or legacy.",
+            'fertility_family_royal' => "#PLAYER_NAME#'s children are ROYALTY. #HEIR_NAME# is #HEIR_TITLE#, first in the line of succession; the other legitimate children are princes and princesses of the realm. Treat the royal family according to your station and personality: deference, courtly gossip, resentment, or ambition. Titles matter - say 'the Crown Princess' or 'the young prince' when speaking of the children, not just their names.",
+            'fertility_family_bastard' => "Some of #PLAYER_NAME#'s children were born out of wedlock: #BASTARD_NAMES#. This is delicate knowledge. Be tactful by default - a bastard is whispered about, not announced. Depending on your personality you may gossip privately, judge silently, or defend the child; never mock the child cruelly unless you are a genuinely cruel character.",
+            'fertility_family_expecting' => "Right now #EXPECTING_SUMMARY#. Word of this kind travels, and you know of it. React according to your closeness to those involved: congratulation, envy, quiet scheming over inheritance or succession, or discretion.",
+            'fertility_witness_tragedy' => "Grim news you know of: #TRAGEDY_SUMMARY#. React as #NPC_NAME# would - grief, horror, fury at the killer, cold judgment, or a vow of vengeance, per your nature and how close you were to the mother. This is heavy; do not be casual about it, and do not repeat the same lament every reply.",
+            'fertility_witness_loss' => "Sorrowful news you know of: #LOSS_SUMMARY#. React per your personality - sympathy, quiet mourning, judgment of the cause, or hushed gossip. Bring it up only when the conversation allows; a child's death is not small talk.",
+            'fertility_witness_danger' => "Happening NOW: #DANGER_SUMMARY#. If you are present or care for her, show real concern - urge help, protection, or getting clear of the hazard. An endangered child outweighs small talk.",
 
             // Section 2A: Marriage (Spouse + Spouse) Tier Prompts (11 tiers)
             'marriage_spouse_hostile' => 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -7161,6 +7178,11 @@ PROMPT;
                         const fertEnabledEl = document.getElementById('nsfwFertilityEnabled');
                         if (fertEnabledEl) fertEnabledEl.checked = data.data.NSFW_FERTILITY_ENABLED !== false;
                         elSet('nsfwFertilityEventWindow', 'value', data.data.NSFW_FERTILITY_EVENT_WINDOW_SECONDS !== undefined ? data.data.NSFW_FERTILITY_EVENT_WINDOW_SECONDS : 1800);
+                        const fertFamilyEl = document.getElementById('nsfwFertilityFamilyEnabled');
+                        if (fertFamilyEl) fertFamilyEl.checked = data.data.NSFW_FERTILITY_FAMILY_ENABLED !== false;
+                        elSet('nsfwFertilityLineagePath', 'value', data.data.NSFW_FERTILITY_LINEAGE_PATH !== undefined ? data.data.NSFW_FERTILITY_LINEAGE_PATH : '');
+                        const fertTragedyEl = document.getElementById('nsfwFertilityTragedyEnabled');
+                        if (fertTragedyEl) fertTragedyEl.checked = data.data.NSFW_FERTILITY_TRAGEDY_ENABLED !== false;
                         elSet('nsfwGazeCooldown', 'value', data.data.NSFW_GAZE_COOLDOWN_SECONDS !== undefined ? data.data.NSFW_GAZE_COOLDOWN_SECONDS : 25);
                         const combatBlockEl = document.getElementById('nsfwCombatBlockEnabled');
                         if (combatBlockEl) combatBlockEl.checked = data.data.NSFW_COMBAT_BLOCK_ENABLED !== undefined ? data.data.NSFW_COMBAT_BLOCK_ENABLED : true;
@@ -7522,6 +7544,9 @@ PROMPT;
             if (document.getElementById('nsfwVrTouchEnabled')) fdSet('NSFW_VR_TOUCH_ENABLED', 'nsfwVrTouchEnabled', 'checked');
             if (document.getElementById('nsfwFertilityEnabled')) fdSet('NSFW_FERTILITY_ENABLED', 'nsfwFertilityEnabled', 'checked');
             if (document.getElementById('nsfwFertilityEventWindow')) fdSet('NSFW_FERTILITY_EVENT_WINDOW_SECONDS', 'nsfwFertilityEventWindow', 'value');
+            if (document.getElementById('nsfwFertilityFamilyEnabled')) fdSet('NSFW_FERTILITY_FAMILY_ENABLED', 'nsfwFertilityFamilyEnabled', 'checked');
+            if (document.getElementById('nsfwFertilityLineagePath')) fdSet('NSFW_FERTILITY_LINEAGE_PATH', 'nsfwFertilityLineagePath', 'value');
+            if (document.getElementById('nsfwFertilityTragedyEnabled')) fdSet('NSFW_FERTILITY_TRAGEDY_ENABLED', 'nsfwFertilityTragedyEnabled', 'checked');
             if (document.getElementById('nsfwGazeCooldown')) fdSet('NSFW_GAZE_COOLDOWN_SECONDS', 'nsfwGazeCooldown', 'value');
             if (document.getElementById('nsfwCombatBlockEnabled')) fdSet('NSFW_COMBAT_BLOCK_ENABLED', 'nsfwCombatBlockEnabled', 'checked');
             if (document.getElementById('nsfwCombatBlockWindow')) fdSet('NSFW_COMBAT_BLOCK_WINDOW_SECONDS', 'nsfwCombatBlockWindow', 'value');
@@ -9680,7 +9705,7 @@ PROMPT;
     }
 
     // Load configured NPCs table
-    // Escape a string for safe use inside a single-quoted JS string in an HTML onclick (apostrophes like K'avald would otherwise break the handler)
+    // Escape a string for safe use inside a single-quoted JS string in an HTML onclick (apostrophes like J'zargo would otherwise break the handler)
     function jsStr(s) {
         return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     }
@@ -9749,7 +9774,7 @@ PROMPT;
             const sourceBadge = npc.source === 'ai' ? '<span class="badge-ai">AI</span>' : '<span class="badge-manual">User</span>';
             // Format NPC name for display (whiterun_guard -> Whiterun Guard)
             const displayName = formatNpcName(npc.name);
-            // Escape the raw name for safe embedding in onclick JS strings - an apostrophe (e.g. K'avald) would otherwise close the string and break Edit/Delete/priority
+            // Escape the raw name for safe embedding in onclick JS strings - an apostrophe (e.g. J'zargo) would otherwise close the string and break Edit/Delete/priority
             const safeName = jsStr(npc.name);
 
             // Check if this NPC is prioritized
@@ -10622,6 +10647,13 @@ PROMPT;
         fertility_miscarriage: '#NPC_NAME# has suffered a miscarriage (#CAUSE#). The grief is fresh and physical. React per your nature - withdrawn, weeping, stone-faced - but it colors everything you say right now.',
         fertility_conception: 'Something has changed in #NPC_NAME# - a new life has just begun in her, fathered by #FATHER_NAME#. She may not consciously know yet, so play only the earliest hints: a strange flutter, an unplaceable feeling. If she has reason to suspect, joy or dread per her situation.',
         fertility_labor: '#NPC_NAME# is in labor or has JUST given birth. Contractions or a newborn in her arms - urgency, exhaustion, overwhelming feeling. If the child is still coming, demand help, a bed, a healer; if the child is here, she is flooded with emotion and needs rest.',
+        fertility_family_overview: "#PLAYER_NAME#'s family is known to you: #FAMILY_SUMMARY#. Weave this knowledge in naturally when it fits - ask after the children, congratulate, gossip, or stay discreet, whichever suits your personality and how close you are to #PLAYER_NAME#. Do NOT recite this list; mention at most one or two family facts in a reply, and only when the conversation touches family, children, or legacy.",
+        fertility_family_royal: "#PLAYER_NAME#'s children are ROYALTY. #HEIR_NAME# is #HEIR_TITLE#, first in the line of succession; the other legitimate children are princes and princesses of the realm. Treat the royal family according to your station and personality: deference, courtly gossip, resentment, or ambition. Titles matter - say 'the Crown Princess' or 'the young prince' when speaking of the children, not just their names.",
+        fertility_family_bastard: "Some of #PLAYER_NAME#'s children were born out of wedlock: #BASTARD_NAMES#. This is delicate knowledge. Be tactful by default - a bastard is whispered about, not announced. Depending on your personality you may gossip privately, judge silently, or defend the child; never mock the child cruelly unless you are a genuinely cruel character.",
+        fertility_family_expecting: "Right now #EXPECTING_SUMMARY#. Word of this kind travels, and you know of it. React according to your closeness to those involved: congratulation, envy, quiet scheming over inheritance or succession, or discretion.",
+        fertility_witness_tragedy: "Grim news you know of: #TRAGEDY_SUMMARY#. React as #NPC_NAME# would - grief, horror, fury at the killer, cold judgment, or a vow of vengeance, per your nature and how close you were to the mother. This is heavy; do not be casual about it, and do not repeat the same lament every reply.",
+        fertility_witness_loss: "Sorrowful news you know of: #LOSS_SUMMARY#. React per your personality - sympathy, quiet mourning, judgment of the cause, or hushed gossip. Bring it up only when the conversation allows; a child's death is not small talk.",
+        fertility_witness_danger: "Happening NOW: #DANGER_SUMMARY#. If you are present or care for her, show real concern - urge help, protection, or getting clear of the hazard. An endangered child outweighs small talk.",
 
         // SECTION 2A: Marriage spouse prompts (11 tiers)
         marriage_spouse_hostile: 'You are with your spouse #SPOUSE# but you despise them utterly. This marriage is a battlefield. You endure this only out of obligation or circumstance. Rage, disgust, trapped.',
@@ -10983,6 +11015,13 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     setPromptValue('promptFertilityMiscarriage', s.fertility_miscarriage, 'fertility_miscarriage');
                     setPromptValue('promptFertilityConception', s.fertility_conception, 'fertility_conception');
                     setPromptValue('promptFertilityLabor', s.fertility_labor, 'fertility_labor');
+                    setPromptValue('promptFertilityFamilyOverview', s.fertility_family_overview, 'fertility_family_overview');
+                    setPromptValue('promptFertilityFamilyRoyal', s.fertility_family_royal, 'fertility_family_royal');
+                    setPromptValue('promptFertilityFamilyBastard', s.fertility_family_bastard, 'fertility_family_bastard');
+                    setPromptValue('promptFertilityFamilyExpecting', s.fertility_family_expecting, 'fertility_family_expecting');
+                    setPromptValue('promptFertilityWitnessTragedy', s.fertility_witness_tragedy, 'fertility_witness_tragedy');
+                    setPromptValue('promptFertilityWitnessLoss', s.fertility_witness_loss, 'fertility_witness_loss');
+                    setPromptValue('promptFertilityWitnessDanger', s.fertility_witness_danger, 'fertility_witness_danger');
                     if (s.arousal_gating_threshold !== undefined) {
                         document.getElementById('arousalGatingThreshold').value = s.arousal_gating_threshold;
                         document.getElementById('arousalGatingThresholdValue').textContent = s.arousal_gating_threshold;
@@ -11308,6 +11347,13 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('fertility_miscarriage', getVal('promptFertilityMiscarriage'));
         formData.append('fertility_conception', getVal('promptFertilityConception'));
         formData.append('fertility_labor', getVal('promptFertilityLabor'));
+        formData.append('fertility_family_overview', getVal('promptFertilityFamilyOverview'));
+        formData.append('fertility_family_royal', getVal('promptFertilityFamilyRoyal'));
+        formData.append('fertility_family_bastard', getVal('promptFertilityFamilyBastard'));
+        formData.append('fertility_family_expecting', getVal('promptFertilityFamilyExpecting'));
+        formData.append('fertility_witness_tragedy', getVal('promptFertilityWitnessTragedy'));
+        formData.append('fertility_witness_loss', getVal('promptFertilityWitnessLoss'));
+        formData.append('fertility_witness_danger', getVal('promptFertilityWitnessDanger'));
         formData.append('arousal_gating_threshold', document.getElementById('arousalGatingThreshold').value);
 
         // Devices & Wearables (Devious Devices)
@@ -11615,6 +11661,13 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         resetVal('promptFertilityMiscarriage', 'fertility_miscarriage');
         resetVal('promptFertilityConception', 'fertility_conception');
         resetVal('promptFertilityLabor', 'fertility_labor');
+        resetVal('promptFertilityFamilyOverview', 'fertility_family_overview');
+        resetVal('promptFertilityFamilyRoyal', 'fertility_family_royal');
+        resetVal('promptFertilityFamilyBastard', 'fertility_family_bastard');
+        resetVal('promptFertilityFamilyExpecting', 'fertility_family_expecting');
+        resetVal('promptFertilityWitnessTragedy', 'fertility_witness_tragedy');
+        resetVal('promptFertilityWitnessLoss', 'fertility_witness_loss');
+        resetVal('promptFertilityWitnessDanger', 'fertility_witness_danger');
         document.getElementById('arousalGatingThreshold').value = 10;
         document.getElementById('arousalGatingThresholdValue').textContent = '10';
 
