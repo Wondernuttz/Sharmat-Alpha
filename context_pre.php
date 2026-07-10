@@ -587,6 +587,24 @@ if (isset($GLOBALS["HERIKA_PERS"]) && function_exists('aiagentNsfwOpenMode') && 
     }
 }
 
+// ============================================
+// SLUT MODE (2026-07-10): the ladder still exists but starts at Acquaintance - inject the
+// UI-editable slut_mode_notice so the model knows the social rules. OPEN MODE supersedes
+// (its notice already covers a fully open world; injecting both would conflict).
+if (isset($GLOBALS["HERIKA_PERS"]) && function_exists('aiagentNsfwSlutMode') && aiagentNsfwSlutMode()
+    && !(function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode())
+    && $actorName !== '' && (!function_exists('nsfwIsNarratorName') || !nsfwIsNarratorName($actorName))
+    && (!function_exists('aiagentNsfwIsChildNpc') || !aiagentNsfwIsChildNpc($actorName))) {
+    $__smTxt = trim((string)(getGlobalPrompt('slut_mode_notice') ?: ''));
+    if ($__smTxt !== '') {
+        $__smTxt = strtr($__smTxt, [
+            '#PLAYER_NAME#' => $GLOBALS["PLAYER_NAME"] ?? 'the player',
+            '#NPC_NAME#'    => $actorName,
+        ]);
+        $GLOBALS["HERIKA_PERS"] .= "\n\n#SLUT MODE\n" . $__smTxt;
+    }
+}
+
 if ($drunkStage !== $__lastPromptedDrunk) {
     $__promptState["aiagent_nsfw_prompt_drunk_stage"] = $drunkStage;
     $__promptStateChanged = true;

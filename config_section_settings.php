@@ -23,6 +23,24 @@
                 </div>
             </div>
 
+            <!-- SLUT MODE: the ladder still exists, it just starts at Acquaintance -->
+            <div style="padding: 15px 20px; background: #1C1A24; border: 1px solid #3A3545; border-radius: 8px; margin-bottom: 14px;">
+                <div class="settings-checkbox-group" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;">
+                    <div style="flex: 1;">
+                        <label for="nsfwSlutMode">
+                            <input type="checkbox" id="nsfwSlutMode" name="NSFW_SLUT_MODE">
+                            <span>Slut Mode (fast ladder)</span>
+                        </label>
+                        <p class="legend">Regular SHARMAT with the ladder compressed: eligibility becomes affinity-driven from Acquaintance and up - no relationship-type requirement, no Friendly or affair floors, and NPC-to-NPC needs only Acquaintance between the pair. Strangers and disliked people still refuse, and arousal, payment, and everything else behave as normal. Open Mode supersedes this switch. The notice is injected every turn:</p>
+                    </div>
+                    <span class="section-save-btn" onclick="saveSettings(); savePromptSettings();">Save</span>
+                </div>
+                <div class="form-group" style="margin-top: 8px;">
+                    <label>Slut Mode Notice (model-facing)</label>
+                    <textarea id="promptSlutModeNotice" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
+                </div>
+            </div>
+
             <!-- ============================================================ -->
             <!-- CATEGORY: SCENE VOICE & PLAYER GATING -->
             <!-- ============================================================ -->

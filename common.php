@@ -1809,11 +1809,34 @@ function aiagentNsfwOpenMode() {
     return $cached;
 }
 
+// === SLUT MODE (2026-07-10) =========================================================
+// Regular SHARMAT with the ladder compressed: eligibility becomes affinity-tier driven
+// from ACQUAINTANCE (6) up. The rel-type grid and the Friendly(31)/affair floors do not
+// apply, and every scene-call floor read drops to the Acquaintance boundary. Below
+// Acquaintance (strangers, neutral, disliked) still refuses - unlike OPEN MODE, the
+// ladder still exists, it just starts much lower. Arousal, payment, orientation, combat
+// block, and child protection all behave exactly as normal. Its own prompt overhead
+// (slut_mode_notice) tells the model the social rules. OPEN MODE supersedes this switch.
+function aiagentNsfwSlutMode() {
+    static $cached = null;
+    if ($cached === null) { $cached = (bool)_getNsfwSetting('NSFW_SLUT_MODE', false); }
+    return $cached;
+}
+
 function aiagentNsfwRelTypeSexEligible($npcName) {
     $npcName = trim((string)$npcName);
     if ($npcName === '') { return true; }
     // OPEN MODE: rel types and affinity floors do not gate (children stay gated by their own frame).
     if (aiagentNsfwOpenMode() && !(function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($npcName))) { return true; }
+    // SLUT MODE: eligibility is affinity-tier driven from Acquaintance (6) up - the rel-type grid and
+    // the Friendly/affair floors do not apply. Below Acquaintance still refuses (the ladder starts lower,
+    // it does not disappear). Slave/prostitute lanes and everything downstream behave as normal.
+    if (aiagentNsfwSlutMode() && !(function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($npcName))) {
+        $smAff = function_exists('getNpcAffinity') ? (int)getNpcAffinity($npcName) : 0;
+        $smOk = ($smAff >= 6);
+        error_log("[AIAGENTNSFW] SLUT MODE eligibility {$npcName}: aff={$smAff}/floor=6(acquaintance) => " . ($smOk ? 'ELIGIBLE (sex allowed)' : 'NOT eligible (should refuse)'));
+        return $smOk;
+    }
     $eligible = [];
     try {
         $row = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
@@ -2630,6 +2653,18 @@ function aiagentNsfwProstituteAffinityPrice($basePrice, $affinity) {
  * always available without loading the heavy prompts.php file.
  */
 function _getNsfwSetting($key, $default = null) {
+    // SLUT MODE: every read of the scene-call floor (stranger gate, autonomy, NPC join, ostim
+    // freshness) drops to the Acquaintance boundary (6). One interception point covers every
+    // current and future read site. The recursion guard lets us read the user's actual slider
+    // value so a floor the user set BELOW 6 is respected (min, never raised).
+    static $inSlutFloorRead = false;
+    if ($key === 'NSFW_SCENE_CALL_MIN_AFFINITY' && !$inSlutFloorRead
+        && function_exists('aiagentNsfwSlutMode') && aiagentNsfwSlutMode()) {
+        $inSlutFloorRead = true;
+        $actualFloor = (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', ($default === null ? 56 : $default));
+        $inSlutFloorRead = false;
+        return min($actualFloor, 6);
+    }
     static $cache = null;
     static $dbWasAvailable = false;
 
@@ -2684,6 +2719,8 @@ function aiagentNsfwNpcToNpcSexEligible($npcA, $npcB) {
     if (!is_array($rel)) { return false; }
     $aff  = (int)($rel['aff'] ?? 0);
     $type = strtolower(trim((string)($rel['type'] ?? '')));
+    // SLUT MODE: NPC-to-NPC needs only Acquaintance affinity between the pair; the type check is skipped.
+    if (aiagentNsfwSlutMode()) { return $aff >= 6; }
     $floor = (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56);
     if ($aff < $floor) { return false; }
     // Rel-type eligibility from the SAME UI grid the player gate reads

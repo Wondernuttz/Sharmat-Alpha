@@ -1086,6 +1086,7 @@ SQL;
                 'NSFW_FERTILITY_LINEAGE_PATH' => trim($_POST['NSFW_FERTILITY_LINEAGE_PATH'] ?? ''),
                 'NSFW_FERTILITY_TRAGEDY_ENABLED' => isset($_POST['NSFW_FERTILITY_TRAGEDY_ENABLED']) ? filter_var($_POST['NSFW_FERTILITY_TRAGEDY_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_OPEN_MODE' => isset($_POST['NSFW_OPEN_MODE']) ? filter_var($_POST['NSFW_OPEN_MODE'], FILTER_VALIDATE_BOOLEAN) : false,
+                'NSFW_SLUT_MODE' => isset($_POST['NSFW_SLUT_MODE']) ? filter_var($_POST['NSFW_SLUT_MODE'], FILTER_VALIDATE_BOOLEAN) : false,
                 'NSFW_GAZE_COOLDOWN_SECONDS' => isset($_POST['NSFW_GAZE_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_GAZE_COOLDOWN_SECONDS']))) : 25,
                 'NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS' => isset($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']))) : 30,
                 'GENERIC_GLOSSARY' => $_POST['GENERIC_GLOSSARY'] ?? '',
@@ -3173,6 +3174,7 @@ PROMPT;
                 'fertility_conception' => $_POST['fertility_conception'] ?? '',
                 'fertility_labor' => $_POST['fertility_labor'] ?? '',
                 'open_mode_notice' => $_POST['open_mode_notice'] ?? '',
+                'slut_mode_notice' => $_POST['slut_mode_notice'] ?? '',
                 'fertility_family_overview' => $_POST['fertility_family_overview'] ?? '',
                 'fertility_family_royal' => $_POST['fertility_family_royal'] ?? '',
                 'fertility_family_bastard' => $_POST['fertility_family_bastard'] ?? '',
@@ -3341,6 +3343,7 @@ PROMPT;
             'fertility_conception' => 'Something has changed in #NPC_NAME# - a new life has just begun in her, fathered by #FATHER_NAME#. She may not consciously know yet, so play only the earliest hints: a strange flutter, an unplaceable feeling. If she has reason to suspect, joy or dread per her situation.',
             'fertility_labor' => '#NPC_NAME# is in labor or has JUST given birth. Contractions or a newborn in her arms - urgency, exhaustion, overwhelming feeling. If the child is still coming, demand help, a bed, a healer; if the child is here, she is flooded with emotion and needs rest.',
             'open_mode_notice' => 'OPEN MODE: this world runs on freely flowing desire. There is no courtship ladder, no formal permission, no social rank to attraction - closeness, flirtation, and intimacy happen whenever the people involved want them, between anyone willing. #NPC_NAME# may initiate affection or intimacy with #PLAYER_NAME# or with others present whenever it feels right, and others may do the same. You still have your own tastes, moods, and personality: act from THEM, not from rules. Refusal is always yours to give in character; enthusiasm is always yours to offer. Working folk still expect their coin.',
+            'slut_mode_notice' => 'In this world attraction moves FAST. People who merely know and like someone - even new acquaintances - flirt openly and fall into bed readily; modesty is thin and desire sits close to the surface. #NPC_NAME# needs only a little familiarity and goodwill toward #PLAYER_NAME# (or others present) to welcome flirtation, affection, and intimacy - no long courtship required. Personality still matters: shy characters blush their way to yes, bold ones say it plainly, and anyone still refuses people they dislike or distrust. Working folk still expect their coin.',
             'fertility_family_overview' => "#PLAYER_NAME#'s family is known to you: #FAMILY_SUMMARY#. Weave this knowledge in naturally when it fits - ask after the children, congratulate, gossip, or stay discreet, whichever suits your personality and how close you are to #PLAYER_NAME#. Do NOT recite this list; mention at most one or two family facts in a reply, and only when the conversation touches family, children, or legacy.",
             'fertility_family_royal' => "#PLAYER_NAME#'s children are ROYALTY. #HEIR_NAME# is #HEIR_TITLE#, first in the line of succession; the other legitimate children are princes and princesses of the realm. Treat the royal family according to your station and personality: deference, courtly gossip, resentment, or ambition. Titles matter - say 'the Crown Princess' or 'the young prince' when speaking of the children, not just their names.",
             'fertility_family_bastard' => "Some of #PLAYER_NAME#'s children were born out of wedlock: #BASTARD_NAMES#. This is delicate knowledge. Be tactful by default - a bastard is whispered about, not announced. Depending on your personality you may gossip privately, judge silently, or defend the child; never mock the child cruelly unless you are a genuinely cruel character.",
@@ -7188,6 +7191,8 @@ PROMPT;
                         if (fertTragedyEl) fertTragedyEl.checked = data.data.NSFW_FERTILITY_TRAGEDY_ENABLED !== false;
                         const openModeEl = document.getElementById('nsfwOpenMode');
                         if (openModeEl) openModeEl.checked = data.data.NSFW_OPEN_MODE === true || data.data.NSFW_OPEN_MODE === '1';
+                        const slutModeEl = document.getElementById('nsfwSlutMode');
+                        if (slutModeEl) slutModeEl.checked = data.data.NSFW_SLUT_MODE === true || data.data.NSFW_SLUT_MODE === '1';
                         elSet('nsfwGazeCooldown', 'value', data.data.NSFW_GAZE_COOLDOWN_SECONDS !== undefined ? data.data.NSFW_GAZE_COOLDOWN_SECONDS : 25);
                         const combatBlockEl = document.getElementById('nsfwCombatBlockEnabled');
                         if (combatBlockEl) combatBlockEl.checked = data.data.NSFW_COMBAT_BLOCK_ENABLED !== undefined ? data.data.NSFW_COMBAT_BLOCK_ENABLED : true;
@@ -7553,6 +7558,7 @@ PROMPT;
             if (document.getElementById('nsfwFertilityLineagePath')) fdSet('NSFW_FERTILITY_LINEAGE_PATH', 'nsfwFertilityLineagePath', 'value');
             if (document.getElementById('nsfwFertilityTragedyEnabled')) fdSet('NSFW_FERTILITY_TRAGEDY_ENABLED', 'nsfwFertilityTragedyEnabled', 'checked');
             if (document.getElementById('nsfwOpenMode')) fdSet('NSFW_OPEN_MODE', 'nsfwOpenMode', 'checked');
+            if (document.getElementById('nsfwSlutMode')) fdSet('NSFW_SLUT_MODE', 'nsfwSlutMode', 'checked');
             if (document.getElementById('nsfwGazeCooldown')) fdSet('NSFW_GAZE_COOLDOWN_SECONDS', 'nsfwGazeCooldown', 'value');
             if (document.getElementById('nsfwCombatBlockEnabled')) fdSet('NSFW_COMBAT_BLOCK_ENABLED', 'nsfwCombatBlockEnabled', 'checked');
             if (document.getElementById('nsfwCombatBlockWindow')) fdSet('NSFW_COMBAT_BLOCK_WINDOW_SECONDS', 'nsfwCombatBlockWindow', 'value');
@@ -10654,6 +10660,7 @@ PROMPT;
         fertility_conception: 'Something has changed in #NPC_NAME# - a new life has just begun in her, fathered by #FATHER_NAME#. She may not consciously know yet, so play only the earliest hints: a strange flutter, an unplaceable feeling. If she has reason to suspect, joy or dread per her situation.',
         fertility_labor: '#NPC_NAME# is in labor or has JUST given birth. Contractions or a newborn in her arms - urgency, exhaustion, overwhelming feeling. If the child is still coming, demand help, a bed, a healer; if the child is here, she is flooded with emotion and needs rest.',
         open_mode_notice: 'OPEN MODE: this world runs on freely flowing desire. There is no courtship ladder, no formal permission, no social rank to attraction - closeness, flirtation, and intimacy happen whenever the people involved want them, between anyone willing. #NPC_NAME# may initiate affection or intimacy with #PLAYER_NAME# or with others present whenever it feels right, and others may do the same. You still have your own tastes, moods, and personality: act from THEM, not from rules. Refusal is always yours to give in character; enthusiasm is always yours to offer. Working folk still expect their coin.',
+        slut_mode_notice: 'In this world attraction moves FAST. People who merely know and like someone - even new acquaintances - flirt openly and fall into bed readily; modesty is thin and desire sits close to the surface. #NPC_NAME# needs only a little familiarity and goodwill toward #PLAYER_NAME# (or others present) to welcome flirtation, affection, and intimacy - no long courtship required. Personality still matters: shy characters blush their way to yes, bold ones say it plainly, and anyone still refuses people they dislike or distrust. Working folk still expect their coin.',
         fertility_family_overview: "#PLAYER_NAME#'s family is known to you: #FAMILY_SUMMARY#. Weave this knowledge in naturally when it fits - ask after the children, congratulate, gossip, or stay discreet, whichever suits your personality and how close you are to #PLAYER_NAME#. Do NOT recite this list; mention at most one or two family facts in a reply, and only when the conversation touches family, children, or legacy.",
         fertility_family_royal: "#PLAYER_NAME#'s children are ROYALTY. #HEIR_NAME# is #HEIR_TITLE#, first in the line of succession; the other legitimate children are princes and princesses of the realm. Treat the royal family according to your station and personality: deference, courtly gossip, resentment, or ambition. Titles matter - say 'the Crown Princess' or 'the young prince' when speaking of the children, not just their names.",
         fertility_family_bastard: "Some of #PLAYER_NAME#'s children were born out of wedlock: #BASTARD_NAMES#. This is delicate knowledge. Be tactful by default - a bastard is whispered about, not announced. Depending on your personality you may gossip privately, judge silently, or defend the child; never mock the child cruelly unless you are a genuinely cruel character.",
@@ -11023,6 +11030,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     setPromptValue('promptFertilityConception', s.fertility_conception, 'fertility_conception');
                     setPromptValue('promptFertilityLabor', s.fertility_labor, 'fertility_labor');
                     setPromptValue('promptOpenModeNotice', s.open_mode_notice, 'open_mode_notice');
+                    setPromptValue('promptSlutModeNotice', s.slut_mode_notice, 'slut_mode_notice');
                     setPromptValue('promptFertilityFamilyOverview', s.fertility_family_overview, 'fertility_family_overview');
                     setPromptValue('promptFertilityFamilyRoyal', s.fertility_family_royal, 'fertility_family_royal');
                     setPromptValue('promptFertilityFamilyBastard', s.fertility_family_bastard, 'fertility_family_bastard');
@@ -11356,6 +11364,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('fertility_conception', getVal('promptFertilityConception'));
         formData.append('fertility_labor', getVal('promptFertilityLabor'));
         formData.append('open_mode_notice', getVal('promptOpenModeNotice'));
+        formData.append('slut_mode_notice', getVal('promptSlutModeNotice'));
         formData.append('fertility_family_overview', getVal('promptFertilityFamilyOverview'));
         formData.append('fertility_family_royal', getVal('promptFertilityFamilyRoyal'));
         formData.append('fertility_family_bastard', getVal('promptFertilityFamilyBastard'));
@@ -11671,6 +11680,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         resetVal('promptFertilityConception', 'fertility_conception');
         resetVal('promptFertilityLabor', 'fertility_labor');
         resetVal('promptOpenModeNotice', 'open_mode_notice');
+        resetVal('promptSlutModeNotice', 'slut_mode_notice');
         resetVal('promptFertilityFamilyOverview', 'fertility_family_overview');
         resetVal('promptFertilityFamilyRoyal', 'fertility_family_royal');
         resetVal('promptFertilityFamilyBastard', 'fertility_family_bastard');
