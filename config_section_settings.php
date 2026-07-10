@@ -118,12 +118,12 @@
                     <p class="legend">Affinity an NPC married to someone else needs before an affair with you is even possible. The relationship type must still be a checked sex-eligible one. Default 56 = Fond; raise to 76 (Devoted) for stricter affair rules.</p>
                 </div>
 
-                <div class="settings-checkbox-group" style="border: 1px solid #7A4A2A; border-radius: 6px; padding: 10px;">
+                <div class="settings-checkbox-group">
                     <label for="nsfwOpenMode">
                         <input type="checkbox" id="nsfwOpenMode" name="NSFW_OPEN_MODE">
-                        <span style="color: #FDB45C; font-weight: bold;">OPEN MODE (free play)</span>
+                        <span>Open Mode (free play)</span>
                     </label>
-                    <p class="legend">Turns the consent/eligibility FRAMEWORK off: no relationship-type checks, no affinity floors, no arousal gate, no orientation walls - any adult can engage any adult, NPC or player, freely. Everything informational keeps running (scenes, tiers, physics, gaze, drugs, fertility), NPCs keep in-character agency to refuse, relationships keep evolving in the background, and <strong style="color:#FDB45C;">prostitutes still require payment</strong>. Child protection is not affected by this switch and never will be. The notice below is injected every turn so the model knows the rules of this world:</p>
+                    <p class="legend">Turns the consent/eligibility framework off: no relationship-type checks, no affinity floors, no arousal gate, no orientation walls - any adult can engage any adult, NPC or player, freely. Everything informational keeps running (scenes, tiers, physics, gaze, drugs, fertility), NPCs keep in-character agency to refuse, relationships keep evolving in the background, and prostitutes still require payment. The notice below is injected every turn so the model knows the rules of this world:</p>
                     <div class="form-group" style="margin-top: 8px;">
                         <label>Open Mode Notice (model-facing)</label>
                         <textarea id="promptOpenModeNotice" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
