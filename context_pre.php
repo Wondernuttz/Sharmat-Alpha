@@ -569,6 +569,24 @@ if (isset($GLOBALS["HERIKA_PERS"]) && _getNsfwSetting('NSFW_FERTILITY_ENABLED', 
     }
 }
 
+// ============================================
+// OPEN MODE (2026-07-10): the consent/eligibility framework is off at its choke points (rel types,
+// affinity floors, arousal threshold, orientation walls) - PROSTITUTE PAYMENT STILL APPLIES and
+// child protection is untouched. Tell the model the rules of this world each turn via the
+// UI-editable open_mode_notice.
+if (isset($GLOBALS["HERIKA_PERS"]) && function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode()
+    && $actorName !== '' && (!function_exists('nsfwIsNarratorName') || !nsfwIsNarratorName($actorName))
+    && (!function_exists('aiagentNsfwIsChildNpc') || !aiagentNsfwIsChildNpc($actorName))) {
+    $__omTxt = trim((string)(getGlobalPrompt('open_mode_notice') ?: ''));
+    if ($__omTxt !== '') {
+        $__omTxt = strtr($__omTxt, [
+            '#PLAYER_NAME#' => $GLOBALS["PLAYER_NAME"] ?? 'the player',
+            '#NPC_NAME#'    => $actorName,
+        ]);
+        $GLOBALS["HERIKA_PERS"] .= "\n\n#OPEN MODE\n" . $__omTxt;
+    }
+}
+
 if ($drunkStage !== $__lastPromptedDrunk) {
     $__promptState["aiagent_nsfw_prompt_drunk_stage"] = $drunkStage;
     $__promptStateChanged = true;

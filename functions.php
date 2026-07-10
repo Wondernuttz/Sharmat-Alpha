@@ -2746,7 +2746,8 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
 	        // initiate a scene. Strip the sex-act initiators + scene driver unless romanticized (Fond+, aff>=56),
 	        // already consented, slave, or skooma-bargain. Affection + Accept/Refuse stay so they can still react.
 	        $fallbackAffinity = function_exists('getNpcAffinity') ? (int)getNpcAffinity($fallbackNpcName) : 0;
-		        $fallbackConsented = !empty($fallbackIntimacy["accepted_sex"]) || $fallbackIsSlaveActor || $fallbackSkoomaBargain || ($fallbackAffinity >= $fallbackSceneCallMin);
+		        $fallbackConsented = !empty($fallbackIntimacy["accepted_sex"]) || $fallbackIsSlaveActor || $fallbackSkoomaBargain || ($fallbackAffinity >= $fallbackSceneCallMin)
+		            || (function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode());   // OPEN MODE: strangers keep the toolset (sticky refusal below still dominates; prostitutes still charge)
 		        // REFUSAL DOMINATES (fix 2026-07-01): mirror the main route's sticky-refusal block (~2248). Without this a
 		        // refusing Fond+ NPC kept Start* tools on funcret turns and their FUNCSERV auto-consent ERASED the refusal.
 		        if (!$fallbackIsSlaveActor && (!empty($fallbackIntimacy["refused_until_scene_end"]) || (($fallbackIntimacy["scene_phase"] ?? '') === 'rejected'))) { $fallbackConsented = false; }

@@ -1664,6 +1664,8 @@ function nsfw_default_prompt_overrides() {
         'fertility_miscarriage' => "#NPC_NAME# has suffered a miscarriage (#CAUSE#). The grief is fresh and physical. React per your nature - withdrawn, weeping, stone-faced - but it colors everything you say right now.",
         'fertility_conception' => "Something has changed in #NPC_NAME# - a new life has just begun in her, fathered by #FATHER_NAME#. She may not consciously know yet, so play only the earliest hints: a strange flutter, an unplaceable feeling. If she has reason to suspect, joy or dread per her situation.",
         'fertility_labor' => "#NPC_NAME# is in labor or has JUST given birth. Contractions or a newborn in her arms - urgency, exhaustion, overwhelming feeling. If the child is still coming, demand help, a bed, a healer; if the child is here, she is flooded with emotion and needs rest.",
+        // OPEN MODE world-rules notice (injected every turn while NSFW_OPEN_MODE is on)
+        'open_mode_notice' => "OPEN MODE: this world runs on freely flowing desire. There is no courtship ladder, no formal permission, no social rank to attraction - closeness, flirtation, and intimacy happen whenever the people involved want them, between anyone willing. #NPC_NAME# may initiate affection or intimacy with #PLAYER_NAME# or with others present whenever it feels right, and others may do the same. You still have your own tastes, moods, and personality: act from THEM, not from rules. Refusal is always yours to give in character; enthusiasm is always yours to offer. Working folk still expect their coin.",
         'fertility_family_overview' => "#PLAYER_NAME#'s family is known to you: #FAMILY_SUMMARY#. Weave this knowledge in naturally when it fits - ask after the children, congratulate, gossip, or stay discreet, whichever suits your personality and how close you are to #PLAYER_NAME#. Do NOT recite this list; mention at most one or two family facts in a reply, and only when the conversation touches family, children, or legacy.",
         'fertility_family_royal' => "#PLAYER_NAME#'s children are ROYALTY. #HEIR_NAME# is #HEIR_TITLE#, first in the line of succession; the other legitimate children are princes and princesses of the realm. Treat the royal family according to your station and personality: deference, courtly gossip, resentment, or ambition. Titles matter - say 'the Crown Princess' or 'the young prince' when speaking of the children, not just their names.",
         'fertility_family_bastard' => "Some of #PLAYER_NAME#'s children were born out of wedlock: #BASTARD_NAMES#. This is delicate knowledge. Be tactful by default - a bastard is whispered about, not announced. Depending on your personality you may gossip privately, judge silently, or defend the child; never mock the child cruelly unless you are a genuinely cruel character.",
@@ -1911,7 +1913,7 @@ function nsfw_auto_init() {
     if (!isset($GLOBALS['db'])) return;
 
     try {
-        $seedVersion = '20260708161';
+        $seedVersion = '20260710592';
         $seedFlag = $GLOBALS['db']->fetchOne(
             "SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_seed_version'"
         );

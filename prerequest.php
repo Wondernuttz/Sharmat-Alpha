@@ -1909,7 +1909,8 @@ if ($scenePhase === "affection") {
             // instead of the bare accept/refuse choice. Pacing, not rejection: the RefuseSex arousal drain is
             // skipped (pending flag) and the relationship eval is tagged so affinity is never docked for it.
             // Skooma-bargain and slaves bypass arousal; prostitutes never reach this branch.
-            if (isSexDisposalEnabled() && !$isSkoomaAddictionBargain) {
+            if (isSexDisposalEnabled() && !$isSkoomaAddictionBargain
+                && !(function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode())) {   // OPEN MODE: no warmup decline
                 $wuThr = getGlobalPrompt('arousal_gating_threshold');
                 $wuThr = ($wuThr !== '' && $wuThr !== null) ? (int)$wuThr : 10;
                 $wuArousal = (int)($intimacyStatus["sex_disposal"] ?? 0);
@@ -2177,7 +2178,8 @@ if ($scenePhase === "affection") {
             $intimacyStatus["scene_phase"] = "engaged";
             $intimacyStatus["level"] = 2;
             error_log("[AIAGENTNSFW] Skooma addiction bargain accepted - bypassing arousal gate for $actorName");
-        } else if ($isSlave || $currentArousal >= $arousalThreshold) {
+        } else if ($isSlave || $currentArousal >= $arousalThreshold
+                   || (function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode())) {   // OPEN MODE: arousal never blocks (prostitute payment branch above is untouched)
             $intimacyStatus["scene_phase"] = "engaged";
             $intimacyStatus["level"] = 2;
             error_log("[AIAGENTNSFW] Arousal check passed ($currentArousal >= $arousalThreshold) - engaging scene for $actorName");

@@ -1790,9 +1790,30 @@ function aiagentNsfwAffectionOnCooldown($npcName) {
 // Fails OPEN (returns true) whenever the gate can't be evaluated (gate disabled, no types configured, DB/Relationship
 // unreadable) so it can never accidentally lock out everyone. A KNOWN type not in the list (incl. empty/unknown when
 // the gate is configured) is ineligible. Slaves/prostitutes/skooma bypass this in the caller, not here.
+// === OPEN MODE (2026-07-10) =========================================================
+// One master switch that turns the consent/eligibility FRAMEWORK off while leaving the
+// information machinery (scene state, tiers, physics, gaze, drugs, fertility) running:
+// anyone adult can engage anyone adult, and the model keeps full in-character agency
+// (RefuseSex stays offered; sticky refusals still dominate). CHILD PROTECTION IS NEVER
+// PART OF THIS SWITCH - every child gate checks independently of open mode. Relationship
+// learning keeps running in the background so turning open mode off later lands in a
+// coherent world. PROSTITUTES STILL REQUIRE PAYMENT (user directive 2026-07-10): the
+// payment branch in prerequest's arousal block is untouched; open mode only skips the
+// arousal threshold for everyone else. Checked at the choke points:
+// aiagentNsfwRelTypeSexEligible, aiagentNsfwOrientationAllowsPlayer,
+// aiagentNsfwNpcToNpcSexEligible, the stranger fallback gate (functions.php), and the
+// two arousal-gate sites in prerequest.php (warmup decline + engage threshold).
+function aiagentNsfwOpenMode() {
+    static $cached = null;
+    if ($cached === null) { $cached = (bool)_getNsfwSetting('NSFW_OPEN_MODE', false); }
+    return $cached;
+}
+
 function aiagentNsfwRelTypeSexEligible($npcName) {
     $npcName = trim((string)$npcName);
     if ($npcName === '') { return true; }
+    // OPEN MODE: rel types and affinity floors do not gate (children stay gated by their own frame).
+    if (aiagentNsfwOpenMode() && !(function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($npcName))) { return true; }
     $eligible = [];
     try {
         $row = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
@@ -2650,6 +2671,11 @@ function aiagentNsfwArousalNum($key, $default) {
 function aiagentNsfwNpcToNpcSexEligible($npcA, $npcB) {
     $npcA = trim((string)$npcA); $npcB = trim((string)$npcB);
     if ($npcA === '' || $npcB === '' || strcasecmp($npcA, $npcB) === 0) { return false; }
+    // OPEN MODE: any adult NPC may engage any adult NPC (incl. slaves); children never.
+    if (aiagentNsfwOpenMode()) {
+        if (function_exists('aiagentNsfwIsChildNpc') && (aiagentNsfwIsChildNpc($npcA) || aiagentNsfwIsChildNpc($npcB))) { return false; }
+        return true;
+    }
     if (function_exists('isNpcSlave') && isNpcSlave($npcA)) { return false; }        // slave A: player-only
     if (function_exists('isProstitute') && isProstitute($npcA)) { return true; }     // prostitute A: anyone
     if (!class_exists('RelationshipManager')) { return false; }
@@ -2682,6 +2708,8 @@ function aiagentNsfwNpcToNpcSexEligible($npcA, $npcB) {
 // same-gender player, or gay NPC + opposite-gender player) or an ASEXUAL NPC returns false. Mirrors the
 // flavor-only NsfwRelationship::checkOrientationMatch logic, promoted here to a real gate.
 function aiagentNsfwOrientationAllowsPlayer($npcName) {
+    // OPEN MODE: orientation never walls off engagement (it stays personality flavor in the profile).
+    if (aiagentNsfwOpenMode()) { return true; }
     try {
         require_once __DIR__ . "/nsfw_data.php";
         $ext = NsfwNpcData::get($npcName);
