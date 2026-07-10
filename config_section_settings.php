@@ -5,6 +5,24 @@
 
             <h2 class="section-header" style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;"><img src="images/ChimNSFWsoulgem.png" style="width: 32px; height: 32px; vertical-align: middle; position: relative; top: -5px;"> General Settings</h2>
 
+            <!-- OPEN MODE: top-level, across from the General Settings header -->
+            <div style="padding: 15px 20px; background: #1C1A24; border: 1px solid #3A3545; border-radius: 8px; margin-bottom: 14px;">
+                <div class="settings-checkbox-group" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;">
+                    <div style="flex: 1;">
+                        <label for="nsfwOpenMode">
+                            <input type="checkbox" id="nsfwOpenMode" name="NSFW_OPEN_MODE">
+                            <span>Open Mode (free play)</span>
+                        </label>
+                        <p class="legend">Turns the consent/eligibility framework off: no relationship-type checks, no affinity floors, no arousal gate, no orientation walls - any adult can engage any adult, NPC or player, freely. Everything informational keeps running (scenes, tiers, physics, gaze, drugs, fertility), NPCs keep in-character agency to refuse, relationships keep evolving in the background, and prostitutes still require payment. The notice is injected every turn so the model knows the rules of this world.</p>
+                    </div>
+                    <span class="section-save-btn" onclick="saveSettings(); savePromptSettings();">Save</span>
+                </div>
+                <div class="form-group" style="margin-top: 8px;">
+                    <label>Open Mode Notice (model-facing)</label>
+                    <textarea id="promptOpenModeNotice" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
+                </div>
+            </div>
+
             <!-- ============================================================ -->
             <!-- CATEGORY: SCENE VOICE & PLAYER GATING -->
             <!-- ============================================================ -->
@@ -116,18 +134,6 @@
                         <span class="slider-value" id="affairMinAffinityValue">56 (Fond)</span>
                     </div>
                     <p class="legend">Affinity an NPC married to someone else needs before an affair with you is even possible. The relationship type must still be a checked sex-eligible one. Default 56 = Fond; raise to 76 (Devoted) for stricter affair rules.</p>
-                </div>
-
-                <div class="settings-checkbox-group">
-                    <label for="nsfwOpenMode">
-                        <input type="checkbox" id="nsfwOpenMode" name="NSFW_OPEN_MODE">
-                        <span>Open Mode (free play)</span>
-                    </label>
-                    <p class="legend">Turns the consent/eligibility framework off: no relationship-type checks, no affinity floors, no arousal gate, no orientation walls - any adult can engage any adult, NPC or player, freely. Everything informational keeps running (scenes, tiers, physics, gaze, drugs, fertility), NPCs keep in-character agency to refuse, relationships keep evolving in the background, and prostitutes still require payment. The notice below is injected every turn so the model knows the rules of this world:</p>
-                    <div class="form-group" style="margin-top: 8px;">
-                        <label>Open Mode Notice (model-facing)</label>
-                        <textarea id="promptOpenModeNotice" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
-                    </div>
                 </div>
 
                 <div class="settings-checkbox-group">
