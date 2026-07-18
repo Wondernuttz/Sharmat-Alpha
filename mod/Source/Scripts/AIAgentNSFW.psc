@@ -967,12 +967,26 @@ function DoRegister()
 		JValue.Retain(actorsWithColliders)
 	endif
 
-	; FLATRIM GUARD (fix 2026-07-11, tester reports: walking past an NPC fired phantom "touch" events
-	; and whole unwanted conversations): CBPC fires body-vs-body collisions on flatscreen too, but the
-	; touch feature models VR HANDS. Require HIGGS (VR-only; every SHARMAT VR touch user runs it) -
-	; flatscreen installs never register the collision events, so phantoms die at the source.
-	if enableCBPC && Game.GetModByName("higgs_vr.esp") != 255
-		Debug.Trace("[CHIM-NSFW] Enabling CBPC Physics Touch Detection")
+	; VR PLATFORM DETECTION (2026-07-18, supersedes the 07-11 HIGGS-proxy guard): touch physics is
+	; ON in VR and OFF on flatscreen, decided by the PLATFORM itself - SkyrimVR.esm only exists in
+	; Skyrim VR, so this is the ground truth (a VR user without HIGGS now gets touch too; HIGGS still
+	; governs grabs separately). CBPC fires body-vs-body collisions on flatscreen, but the touch
+	; feature models VR HANDS - flatscreen installs never register, so phantoms die at the source.
+	; The platform is also reported to the server (silent marker) so the server can drop stray
+	; touch-lane events from older game installs.
+	bool platformIsVR = Game.GetModByName("SkyrimVR.esm") != 255
+	string vrFlag = "0"
+	if platformIsVR
+		vrFlag = "1"
+	endif
+	AIAgentFunctions.logMessage("VRSTATUS^" + vrFlag, "ext_nsfw_vrstatus")
+	if platformIsVR
+		Debug.Trace("[CHIM-NSFW] Platform detected: VR (SkyrimVR.esm present)")
+	else
+		Debug.Trace("[CHIM-NSFW] Platform detected: flatscreen")
+	endif
+	if enableCBPC && platformIsVR
+		Debug.Trace("[CHIM-NSFW] Enabling CBPC Physics Touch Detection (VR platform)")
 		lastPhysicsSpeechTime = 0.0
 		if (touchedLocations == 0)
 			touchedLocations = JMap.Object()
@@ -994,7 +1008,7 @@ function DoRegister()
 		RegisterForSingleUpdate(cbpcCooldown)
 	Else
 		if enableCBPC
-			Debug.Trace("[CHIM-NSFW] CBPC touch detection skipped: no HIGGS -> flatscreen, body-vs-body collisions would fire phantom touches")
+			Debug.Trace("[CHIM-NSFW] CBPC touch detection skipped: flatscreen platform, body-vs-body collisions would fire phantom touches")
 		else
 			Debug.Trace("[CHIM-NSFW] CBPC Physics disabled")
 		endif

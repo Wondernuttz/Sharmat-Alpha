@@ -27,6 +27,7 @@ $GLOBALS["external_fast_commands"][]="ext_nsfw_devices";    // Devious Devices w
 $GLOBALS["external_fast_commands"][]="ext_nsfw_player_drink"; // player consumed a drink/potion (silent: track alcohol + roll whiskey dick)
 $GLOBALS["external_fast_commands"][]="ext_nsfw_vampire";      // Papyrus reports an NPC's vampire race-keyword status (silent: store is_vampire)
 $GLOBALS["external_fast_commands"][]="ext_nsfw_defeat";       // Acheron defeat report -> auto-enslave (silent: set is_slave)
+$GLOBALS["external_fast_commands"][]="ext_nsfw_vrstatus";     // Pex platform report VRSTATUS^0|1 (silent: store is_vr; gates touch lanes)
 $GLOBALS["external_fast_commands"][]="_speech_abort";       // Client speech interrupts must not wait behind MAIN.
 // CONSENT BARK: the game fires this the instant a PLAYER scene turns explicit (tier 3). Registering it as a fast
 // command lets it BYPASS the MAIN semaphore so the accept/refuse decision resolves instantly. prerequest.php then
@@ -982,6 +983,19 @@ if (isset($GLOBALS["gameRequest"])) {
         }
     }
 
+    // VR PLATFORM REPORT (2026-07-18): pex detects the platform (SkyrimVR.esm) at load and reports
+    // VRSTATUS^<1|0>. Stored in runtime state; nsfw_physics drops contact-lane events on
+    // known-flatscreen installs regardless of the manual toggle. Silent: no LLM turn.
+    if ($currentEvent === "ext_nsfw_vrstatus") {
+        $vsRaw = (string)($GLOBALS["gameRequest"][3] ?? '');
+        $vsParts = explode("^", $vsRaw);   // [0]=...VRSTATUS (any context prefix lands here), [1]=1|0
+        if (isset($vsParts[1]) && function_exists('aiagentNsfwRuntimeStateSet')) {
+            $vsIsVr = (trim($vsParts[1]) === '1') ? 1 : 0;
+            aiagentNsfwRuntimeStateSet('platform', 'is_vr', ['v' => $vsIsVr], 604800);
+            error_log("[AIAGENTNSFW] Platform reported by game: " . ($vsIsVr ? "VR" : "flatscreen") . " (touch lanes " . ($vsIsVr ? "enabled" : "hard-off") . ")");
+        }
+    }
+
     // DEFEAT -> SLAVERY (feature 2026-07-17, user directive "Defeat should become checked slaves"):
     // Acheron (Simple Defeat) reports a hostile NPC the player defeated (payload "DEFEAT^<npc name>").
     // Sets the SAME is_slave flag as the NPC Settings checkbox, so the whole slavery system (tiers,
@@ -1009,7 +1023,7 @@ if (isset($GLOBALS["gameRequest"])) {
     // model read a raw "VAMPIRE^Name^0" row as if it were lore. Purge prior rows on every request;
     // the current request's row is inserted after preprocessing and gets swept on the next one.
     try {
-        $GLOBALS["db"]->delete("eventlog", "type in ('ext_nsfw_vampire','ext_nsfw_physics_raw','physics_raw','ext_nsfw_player_drink','ext_nsfw_devices','ext_nsfw_defeat')");
+        $GLOBALS["db"]->delete("eventlog", "type in ('ext_nsfw_vampire','ext_nsfw_physics_raw','physics_raw','ext_nsfw_player_drink','ext_nsfw_devices','ext_nsfw_defeat','ext_nsfw_vrstatus')");
     } catch (Exception $e) { /* non-fatal */ }
 
     // BACKLOG FIX — Scene end early detection.

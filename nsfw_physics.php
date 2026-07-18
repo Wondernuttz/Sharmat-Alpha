@@ -773,6 +773,20 @@ class NsfwPhysics {
             return null;
         }
 
+        // PLATFORM GATE (2026-07-18, user directive "detect VR and have it ON, flatrim OFF"): the pex
+        // reports the platform (VRSTATUS marker, SkyrimVR.esm detection). Known-flatscreen installs get
+        // contact lanes dropped HERE regardless of the toggle, so stale game mods that still register
+        // CBPC on flatscreen cannot spam phantom touches. VR or unknown platform (old pex, no report
+        // yet) keeps existing behavior - the toggle above remains the manual control.
+        if (in_array($action, ['touch', 'grab', 'spank', 'release'], true)
+            && function_exists('aiagentNsfwRuntimeStateGet')) {
+            $platform = aiagentNsfwRuntimeStateGet('platform', 'is_vr');
+            if (is_array($platform) && array_key_exists('v', $platform) && (int)$platform['v'] === 0) {
+                error_log("[NSFW Physics] Dropped {$action} event: platform is flatscreen (VR touch is VR-only)");
+                return null;
+            }
+        }
+
         $result = null;
 
         // Route to appropriate handler

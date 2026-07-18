@@ -461,7 +461,7 @@
                         <input type="checkbox" id="nsfwVrTouchEnabled" name="NSFW_VR_TOUCH_ENABLED" checked>
                         <span>VR Touch Reactions (CBPC contact)</span>
                     </label>
-                    <p class="legend">Master switch for touch reactions. NPCs react when your VR hands actually touch them (CBPC collision events from the plugin). Turn this OFF if you play flatscreen/2D - without VR hands these events can misfire - or if your collision setup triggers through worn armor. Gaze reactions are separate and stay on. (Moved here from the gating section 2026-07-17.)</p>
+                    <p class="legend">Master switch for touch reactions. NPCs react when your VR hands actually touch them (CBPC collision events from the plugin). The platform is now AUTO-DETECTED: on flatscreen/2D installs the game mod never registers touch events and the server drops any strays, regardless of this switch - no action needed. This switch remains the manual control for VR players (for example if your collision setup triggers through worn armor). Gaze reactions are separate and stay on.</p>
                 </div>
 
                 <h3 style="margin: 5px 0 15px; color: #FDF5D0; font-size: 16px; animation: subPulse 3s ease-in-out infinite alternate;">VR Touch &amp; Grab Cooldowns</h3>
