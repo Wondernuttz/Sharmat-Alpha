@@ -4,6 +4,21 @@
                 .sharmat-title { font-family: 'MagicCards', 'Times New Roman', serif; color: #FDF5D0; font-weight: bold; font-size: 38px; letter-spacing: 2px; margin: 0 0 12px; text-shadow: 0 0 10px rgba(253,245,208,0.6); animation: sharmatGlow 2.8s ease-in-out infinite alternate; }
             </style>
             <h1 class="sharmat-title"><img src="images/ChimNSFWsoulgem.png" style="width: 38px; height: 38px; vertical-align: middle; position: relative; top: -4px;"> SHARMAT</h1>
+            <?php
+                // Version display (2026-07-18): manifest.json is the server-version source of truth;
+                // mod/version.txt ships INSIDE the game-mod download so installed copies carry their own.
+                $sharmatManifestInfo = @json_decode((string)@file_get_contents(__DIR__ . '/manifest.json'), true);
+                $sharmatServerVersion = is_array($sharmatManifestInfo) ? (string)($sharmatManifestInfo['version'] ?? '?') : '?';
+                $sharmatBundledModVersion = trim((string)@file_get_contents(__DIR__ . '/mod/version.txt'));
+                if ($sharmatBundledModVersion === '') { $sharmatBundledModVersion = '?'; }
+            ?>
+            <p style="margin: -4px 0 6px; color: #FDF5D0; font-size: 15px; letter-spacing: 1px;">
+                Server Extension <strong>v<?php echo htmlspecialchars($sharmatServerVersion); ?></strong>
+                &nbsp;&middot;&nbsp; Game Mod (bundled) <strong>v<?php echo htmlspecialchars($sharmatBundledModVersion); ?></strong>
+            </p>
+            <p style="margin: 0 0 18px; color: #9988BB; font-size: 11px;">
+                The bundled version is what the Download Game Mod button delivers. Your INSTALLED mod folder has its own version.txt inside - if it reads lower than the bundled version (or is missing), re-download the game mod and load a save.
+            </p>
             <p style="line-height: 1.6; color: #B8A8C8; margin-bottom: 22px;">
                 SHARMAT is a CHIM NSFW framework designed to bring meaningful, realistic relationship building and actions into the AI platform. It is driven by multilevel prompt gating and timing, built off the CHIM relationship system, and is designed to help even less capable models deliver a more realistic NSFW experience. Actions in SHARMAT must to some degree be <strong style="color: #FDF5D0;">EARNED</strong> by the player: relationships must be maintained, and NPCs are made aware of edge cases they would otherwise miss using the standard prompt-overhead methods of the past.
             </p>
