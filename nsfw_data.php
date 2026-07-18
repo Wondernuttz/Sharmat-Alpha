@@ -1960,6 +1960,33 @@ function nsfw_normalize_prompt_runtime_keys() {
  * UI edits are the top layer and are never overwritten here. Missing rows are
  * inserted, and known JSON blobs are merged as defaults-under-user-values.
  */
+// SCHEMA HEAL (DemodiX 2026-07-18): pre-3.x CHIM boxes created conf_opts WITHOUT a unique
+// constraint on id. EVERY "ON CONFLICT (id)" write fails there with "no unique or exclusion
+// constraint matching the ON CONFLICT specification" - the SHARMAT seed write, the settings blob,
+// contact/runtime state, AND core's own upserts - so nothing saves. The ext cannot patch core
+// PHP on tester boxes, but it CAN heal the schema to what new installs have: dedup any duplicate
+// ids (keep the newest physical row), then add the unique index. No-op on healthy schemas.
+function nsfw_heal_conf_opts_unique_index() {
+    static $healed = false;
+    if ($healed) return;
+    $healed = true;
+    if (!isset($GLOBALS['db'])) return;
+    try {
+        $idx = $GLOBALS['db']->fetchOne(
+            "SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'conf_opts'
+             AND indexdef ILIKE '%UNIQUE%' AND indexdef ILIKE '%(id)%' LIMIT 1"
+        );
+        if ($idx) return;
+        // Full table snapshot before the only destructive step (dedup) - makes the heal reversible.
+        $GLOBALS['db']->query("CREATE TABLE IF NOT EXISTS conf_opts_backup_schema_heal AS SELECT * FROM conf_opts");
+        $GLOBALS['db']->query("DELETE FROM conf_opts a USING conf_opts b WHERE a.id = b.id AND a.ctid < b.ctid");
+        $GLOBALS['db']->query("CREATE UNIQUE INDEX IF NOT EXISTS conf_opts_id_key ON conf_opts (id)");
+        error_log("[AIAGENTNSFW] SCHEMA HEAL: added missing unique index on conf_opts(id) - pre-3.x CHIM schema, ON CONFLICT writes were failing on this box (backup: conf_opts_backup_schema_heal)");
+    } catch (Throwable $e) {
+        error_log("[AIAGENTNSFW] SCHEMA HEAL failed (conf_opts unique index): " . $e->getMessage());
+    }
+}
+
 function nsfw_auto_init() {
     static $checked = false;
     if ($checked) return;
@@ -1967,6 +1994,8 @@ function nsfw_auto_init() {
 
     // Need database connection
     if (!isset($GLOBALS['db'])) return;
+
+    nsfw_heal_conf_opts_unique_index();
 
     try {
         $seedVersion = '20260710380';
