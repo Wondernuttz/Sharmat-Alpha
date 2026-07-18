@@ -5,3 +5,4 @@ backups/
 *.backup-*
 
 bake_defaults.php
+mod/CHIM/server-plugins/

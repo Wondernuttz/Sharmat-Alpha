@@ -1,0 +1,12 @@
+{
+  "schema_version": 4,
+  "name": "aiagent_nsfw",
+  "version": "3.1.6",
+  "description": "SHARMAT server integration for CHIM.",
+  "server": {
+    "mutable_paths": [
+      "conf/conf.php",
+      "cmd/conf/conf.php"
+    ]
+  }
+}
