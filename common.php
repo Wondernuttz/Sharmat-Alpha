@@ -1439,6 +1439,13 @@ function aiagentNsfwQueuePlayerSceneStop($actorName, $command = 'ExtCmdStopScene
 // debounced via runtime-state (only pushes when the mapped value changed or 5+ min passed).
 function aiagentNsfwQueueOslaArousalSyncForTurn() {
     if (!_getNsfwSetting('NSFW_OSLA_SYNC_ENABLED', true)) { return; }
+    // HOTFIX (DemodiX 2026-07-18, runaway rechat/token burn): sync ONLY on real player-input turns.
+    // The v1 pushed after EVERY turn incl. rechat - each responselog row reads as NPC activity to the
+    // game, keeping the conversation "alive", which triggers another rechat, whose mood shifts arousal,
+    // which queues another row: a self-feeding loop. Player-input-only turns cannot loop (the player
+    // is the only trigger), and the value catches up on the next real exchange anyway.
+    $oslaSyncEvent = (string)($GLOBALS["gameRequest"][0] ?? '');
+    if (!in_array($oslaSyncEvent, ['inputtext', 'inputtext_s', 'ginputtext', 'ginputtext_s'], true)) { return; }
     $actorName = trim((string)($GLOBALS["HERIKA_NAME"] ?? ''));
     if ($actorName === '' || nsfwIsNarratorName($actorName)) { return; }
     if (function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($actorName)) { return; }
@@ -1449,7 +1456,9 @@ function aiagentNsfwQueueOslaArousalSyncForTurn() {
     $prev = aiagentNsfwRuntimeStateGet('osla_sync', $actorName);
     $prevValue = is_array($prev) ? (int)($prev['value'] ?? -1) : -1;
     $prevTs = is_array($prev) ? (int)($prev['ts'] ?? 0) : 0;
-    if ($oslaValue === $prevValue && (time() - $prevTs) < 300) { return; }
+    // HOTFIX part 2: meaningful changes only, hard-capped to one row per actor per minute.
+    if ($prevValue >= 0 && abs($oslaValue - $prevValue) < 4 && (time() - $prevTs) < 300) { return; }
+    if ((time() - $prevTs) < 60) { return; }
     $GLOBALS["db"]->insert(
         'responselog',
         [
