@@ -1431,6 +1431,40 @@ function aiagentNsfwQueuePlayerSceneStop($actorName, $command = 'ExtCmdStopScene
     return true;
 }
 
+// OSLA BRIDGE (feature 2026-07-17, user go): mirror SHARMAT's server-authored arousal into OSL
+// Aroused so OSLA-reliant SexLab/OStim mods react to the LLM-driven value instead of detached
+// game-engine math. ONE-WAY by design: SHARMAT is the author, no read-back, no feedback loops.
+// Rides the responselog command lane (same as the refusal hard-stop): ExtCmdSyncArousal@<0-100>.
+// Skipped mid-scene (OStim's own OSLA adapter raises arousal during scenes - do not fight it);
+// debounced via runtime-state (only pushes when the mapped value changed or 5+ min passed).
+function aiagentNsfwQueueOslaArousalSyncForTurn() {
+    if (!_getNsfwSetting('NSFW_OSLA_SYNC_ENABLED', true)) { return; }
+    $actorName = trim((string)($GLOBALS["HERIKA_NAME"] ?? ''));
+    if ($actorName === '' || nsfwIsNarratorName($actorName)) { return; }
+    if (function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($actorName)) { return; }
+    $st = getIntimacyForActor($actorName);
+    if (!is_array($st)) { return; }
+    if (!empty($st['sex_started']) || !empty($st['is_active_participant']) || (int)($st['level'] ?? 0) > 0) { return; }
+    $oslaValue = (int)max(0, min(100, round(((float)($st['sex_disposal'] ?? 0)) * 3.3)));
+    $prev = aiagentNsfwRuntimeStateGet('osla_sync', $actorName);
+    $prevValue = is_array($prev) ? (int)($prev['value'] ?? -1) : -1;
+    $prevTs = is_array($prev) ? (int)($prev['ts'] ?? 0) : 0;
+    if ($oslaValue === $prevValue && (time() - $prevTs) < 300) { return; }
+    $GLOBALS["db"]->insert(
+        'responselog',
+        [
+            'localts' => time(),
+            'sent'    => 0,
+            'actor'   => $actorName,
+            'text'    => 'ExtCmdSyncArousal@' . $oslaValue,
+            'action'  => 'command',
+            'tag'     => '',
+        ]
+    );
+    aiagentNsfwRuntimeStateSet('osla_sync', $actorName, ['value' => $oslaValue, 'ts' => time()], 86400);
+    error_log("[AIAGENTNSFW] OSLA sync queued for {$actorName}: arousal " . ($st['sex_disposal'] ?? 0) . " -> OSLA {$oslaValue}");
+}
+
 function aiagentNsfwQueueWhiskeyDick($actorName, $localts = null, $param = 'player') {
     $actorName = trim((string)$actorName);
     if (!isset($GLOBALS["db"]) || !$GLOBALS["db"]) {
@@ -1809,18 +1843,110 @@ function aiagentNsfwOpenMode() {
     return $cached;
 }
 
-// === SLUT MODE (2026-07-10) =========================================================
-// Regular SHARMAT with the ladder compressed: eligibility becomes affinity-tier driven
-// from ACQUAINTANCE (6) up. The rel-type grid and the Friendly(31)/affair floors do not
-// apply, and every scene-call floor read drops to the Acquaintance boundary. Below
-// Acquaintance (strangers, neutral, disliked) still refuses - unlike OPEN MODE, the
-// ladder still exists, it just starts much lower. Arousal, payment, orientation, combat
-// block, and child protection all behave exactly as normal. Its own prompt overhead
-// (slut_mode_notice) tells the model the social rules. OPEN MODE supersedes this switch.
-function aiagentNsfwSlutMode() {
-    static $cached = null;
-    if ($cached === null) { $cached = (bool)_getNsfwSetting('NSFW_SLUT_MODE', false); }
-    return $cached;
+// === PROMISCUOUS (SLUT) MARK (2026-07-10, PER-NPC ONLY - the short-lived global
+// NSFW_SLUT_MODE switch was removed the same day per user directive) ==============
+// is_slut on the NPC Settings tab: a third role mark beside prostitute and slave.
+// The ladder is compressed FOR THIS NPC: eligibility becomes affinity-tier driven from
+// ACQUAINTANCE (6) up - the rel-type grid, the Friendly(31)/affair floors, and the
+// scene-call floor do not apply to her (see aiagentNsfwSceneCallFloorFor). Below
+// Acquaintance (strangers, neutral, disliked) she still refuses. Arousal, payment,
+// orientation, combat block, and child protection all behave exactly as normal. Her
+// prompt framing comes from relationship_overhead_slut_<tier> + slut_role_context.
+function aiagentNsfwIsSlutNpc($npcName) {
+    $npcName = trim((string)$npcName);
+    if ($npcName === '') { return false; }
+    static $cache = [];
+    if (array_key_exists($npcName, $cache)) { return $cache[$npcName]; }
+    $flag = false;
+    try {
+        require_once __DIR__ . "/nsfw_data.php";
+        $ext = NsfwNpcData::get($npcName);
+        $flag = !empty($ext['is_slut']);
+    } catch (Throwable $t) { $flag = false; }
+    if ($flag && function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($npcName)) { $flag = false; }
+    $cache[$npcName] = $flag;
+    return $flag;
+}
+
+// Effective scene-call affinity floor for THIS NPC: a promiscuous-marked NPC drops to the
+// Acquaintance boundary (6) unless the user set the global slider even lower (min, never
+// raised). Everyone else gets the slider value. Use this instead of reading
+// NSFW_SCENE_CALL_MIN_AFFINITY directly wherever a specific NPC is being gated.
+function aiagentNsfwSceneCallFloorFor($npcName) {
+    $floor = (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56);
+    if (aiagentNsfwIsSlutNpc($npcName)) { $floor = min($floor, 6); }
+    return $floor;
+}
+
+// Effective AFFECTION floor (Kiss/Hug/HoldHands) for THIS NPC: promiscuous-marked NPCs drop to
+// the Acquaintance boundary (6) - unlocking full sex at Acquainted while kissing stayed locked
+// until Fond was backwards. Everyone else keeps the historical Fond(56) floor.
+function aiagentNsfwAffectionFloorFor($npcName) {
+    return aiagentNsfwIsSlutNpc($npcName) ? 6 : 56;
+}
+
+// === RUNTIME STATE IN conf_opts (2026-07-11, Tyler's upstream review: "avoid using files here -
+// conf_opts was created for that; value can be a json object"). One row holds SHARMAT's small
+// transient runtime state (VR last-contact snapshots, sustained-touch accumulators, gaze
+// cooldowns), shaped bucket -> key -> {ts, ttl, v}. Expired entries are pruned on every write so
+// the row never grows. tmp files died on reboot; conf_opts persists - harmless, every reader
+// already applies its own freshness window on top. In-request static cache, write-through.
+// Known tradeoff vs per-key tmp files: two SIMULTANEOUS requests can race the read-modify-write
+// and drop each other's entry - acceptable, this is disposable debounce/cooldown state.
+function _aiagentNsfwRuntimeState($write = null) {
+    static $state = null;
+    if (!isset($GLOBALS['db'])) { return is_array($write) ? $write : []; }
+    if ($state === null) {
+        $state = [];
+        try {
+            $row = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_runtime_state'");
+            if ($row && !empty($row['value'])) {
+                $decoded = json_decode($row['value'], true);
+                if (is_array($decoded)) { $state = $decoded; }
+            }
+        } catch (Exception $e) { $state = []; }
+    }
+    if (is_array($write)) {
+        $state = $write;
+        try {
+            $escaped = $GLOBALS['db']->escape(json_encode($state, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            $GLOBALS['db']->execQuery("INSERT INTO conf_opts (id, value) VALUES ('aiagent_nsfw_runtime_state', '{$escaped}') ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value");
+        } catch (Exception $e) { /* non-fatal: this is debounce/cooldown state */ }
+    }
+    return $state;
+}
+
+function aiagentNsfwRuntimeStateGet($bucket, $key) {
+    $state = _aiagentNsfwRuntimeState();
+    $entry = $state[$bucket][strtolower(trim((string)$key))] ?? null;
+    if (!is_array($entry)) { return null; }
+    if ((time() - (int)($entry['ts'] ?? 0)) > (int)($entry['ttl'] ?? 3600)) { return null; } // expired, prune on next write
+    return $entry['v'] ?? null;
+}
+
+function aiagentNsfwRuntimeStateSet($bucket, $key, $value, $ttlSeconds = 3600) {
+    $state = _aiagentNsfwRuntimeState();
+    $now = time();
+    foreach ($state as $b => $entries) {   // prune everything expired so the row never grows
+        if (!is_array($entries)) { unset($state[$b]); continue; }
+        foreach ($entries as $k => $e) {
+            if (!is_array($e) || ($now - (int)($e['ts'] ?? 0)) > (int)($e['ttl'] ?? 3600)) { unset($state[$b][$k]); }
+        }
+        if (empty($state[$b])) { unset($state[$b]); }
+    }
+    $state[$bucket][strtolower(trim((string)$key))] = ['ts' => $now, 'ttl' => max(60, (int)$ttlSeconds), 'v' => $value];
+    _aiagentNsfwRuntimeState($state);
+}
+
+// Full reset (game load / new session): wipe the runtime-state row and the contact ledger row.
+// Goes through the writers where possible so in-request static caches stay coherent.
+function aiagentNsfwRuntimeStateClear() {
+    _aiagentNsfwRuntimeState([]);
+    if (function_exists('aiagentNsfwContactSaveLedger')) {
+        aiagentNsfwContactSaveLedger([]);
+    } elseif (isset($GLOBALS['db'])) {
+        try { $GLOBALS['db']->delete("conf_opts", "id = 'aiagent_nsfw_contact_state'"); } catch (Exception $e) { /* non-fatal */ }
+    }
 }
 
 function aiagentNsfwRelTypeSexEligible($npcName) {
@@ -1828,13 +1954,21 @@ function aiagentNsfwRelTypeSexEligible($npcName) {
     if ($npcName === '') { return true; }
     // OPEN MODE: rel types and affinity floors do not gate (children stay gated by their own frame).
     if (aiagentNsfwOpenMode() && !(function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($npcName))) { return true; }
-    // SLUT MODE: eligibility is affinity-tier driven from Acquaintance (6) up - the rel-type grid and
-    // the Friendly/affair floors do not apply. Below Acquaintance still refuses (the ladder starts lower,
-    // it does not disappear). Slave/prostitute lanes and everything downstream behave as normal.
-    if (aiagentNsfwSlutMode() && !(function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($npcName))) {
+    // PROMISCUOUS (SLUT) MARK: eligibility is affinity-tier driven from Acquaintance (6) up - the
+    // rel-type grid and the Friendly/affair floors do not apply to her. Below Acquaintance still
+    // refuses (the ladder starts lower, it does not disappear). Slave/prostitute lanes and
+    // everything downstream behave as normal. Children never carry the mark (checked inside).
+    if (aiagentNsfwIsSlutNpc($npcName)) {
+        // ORIENTATION still walls the player lane (fail-open like everywhere else): the mark removes
+        // the type grid, so orientation is the only compatibility check left for her. Explicit
+        // mismatch (straight + same-sex player, gay + opposite) or asexual blocks; unknown/bi/pan pass.
+        if (function_exists('aiagentNsfwOrientationAllowsPlayer') && !aiagentNsfwOrientationAllowsPlayer($npcName)) {
+            error_log("[AIAGENTNSFW] SLUT (promiscuous mark) eligibility {$npcName}: orientation mismatch => NOT eligible");
+            return false;
+        }
         $smAff = function_exists('getNpcAffinity') ? (int)getNpcAffinity($npcName) : 0;
         $smOk = ($smAff >= 6);
-        error_log("[AIAGENTNSFW] SLUT MODE eligibility {$npcName}: aff={$smAff}/floor=6(acquaintance) => " . ($smOk ? 'ELIGIBLE (sex allowed)' : 'NOT eligible (should refuse)'));
+        error_log("[AIAGENTNSFW] SLUT (promiscuous mark) eligibility {$npcName}: aff={$smAff}/floor=6(acquaintance) => " . ($smOk ? 'ELIGIBLE (sex allowed)' : 'NOT eligible (should refuse)'));
         return $smOk;
     }
     $eligible = [];
@@ -2653,18 +2787,8 @@ function aiagentNsfwProstituteAffinityPrice($basePrice, $affinity) {
  * always available without loading the heavy prompts.php file.
  */
 function _getNsfwSetting($key, $default = null) {
-    // SLUT MODE: every read of the scene-call floor (stranger gate, autonomy, NPC join, ostim
-    // freshness) drops to the Acquaintance boundary (6). One interception point covers every
-    // current and future read site. The recursion guard lets us read the user's actual slider
-    // value so a floor the user set BELOW 6 is respected (min, never raised).
-    static $inSlutFloorRead = false;
-    if ($key === 'NSFW_SCENE_CALL_MIN_AFFINITY' && !$inSlutFloorRead
-        && function_exists('aiagentNsfwSlutMode') && aiagentNsfwSlutMode()) {
-        $inSlutFloorRead = true;
-        $actualFloor = (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', ($default === null ? 56 : $default));
-        $inSlutFloorRead = false;
-        return min($actualFloor, 6);
-    }
+    // (The global slut-mode floor interception that lived here was removed 2026-07-10 with the
+    // global switch; per-NPC promiscuous floors go through aiagentNsfwSceneCallFloorFor.)
     static $cache = null;
     static $dbWasAvailable = false;
 
@@ -2719,8 +2843,9 @@ function aiagentNsfwNpcToNpcSexEligible($npcA, $npcB) {
     if (!is_array($rel)) { return false; }
     $aff  = (int)($rel['aff'] ?? 0);
     $type = strtolower(trim((string)($rel['type'] ?? '')));
-    // SLUT MODE: NPC-to-NPC needs only Acquaintance affinity between the pair; the type check is skipped.
-    if (aiagentNsfwSlutMode()) { return $aff >= 6; }
+    // Promiscuous-marked initiator: NPC-to-NPC needs only Acquaintance affinity between the pair;
+    // the type check is skipped. (Outbound gate = A's own standard for starting with B.)
+    if (aiagentNsfwIsSlutNpc($npcA)) { return $aff >= 6; }
     $floor = (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56);
     if ($aff < $floor) { return false; }
     // Rel-type eligibility from the SAME UI grid the player gate reads

@@ -738,9 +738,15 @@ SQL;
                 'BLOCK_RECHAT_IN_SCENE' => true,  // Block rechat for scene participants
                 'BLOCK_RECHAT_TIMEOUT' => 300,  // Seconds after scene start before rechat resumes
                 'PLAYER_SCENE_RECHAT_CADENCE_SECONDS' => 0,  // 0 = hard-block rechat in player scenes; >0 = one scene-cued line per interval
+                'NSFW_SCENE_SPEAK_ON_SCENE_CHANGE' => true,  // Beat-driven line on scene/position changes (state always processed)
+                'NSFW_SCENE_SPEAK_ON_ORGASM' => true,  // Spoken climax reactions (orgasm state always processed)
+                'GROUP_SCENE_TICK_SECONDS' => 0,  // Group-scene chime-in interval; 0 = follow NPC_SCENE_GLOBAL_COOLDOWN_SECONDS
+                'NSFW_DEFEAT_AUTO_ENSLAVE' => true,  // Acheron defeat of a hostile named NPC sets is_slave automatically
+                'NSFW_OSLA_SYNC_ENABLED' => true,  // Mirror SHARMAT arousal into OSL Aroused (one-way, paused mid-scene)
                 'LEGACY_SCENE_SPEAK_POLICY' => 'authoritative',
                 'NSFW_EVENT_AUDIT_LOG' => true,
                 'SCENE_CONSENT_CARRYOVER_SECONDS' => 1800,
+                'NSFW_VR_TOUCH_ENABLED' => true,  // Master switch for CBPC touch reactions (was absent from this defaults array; readers always defaulted true)
                 'PROSTITUTE_PAYMENT_WINDOW_MINUTES' => 20,  // Paid prostitute service stays valid this long (0 = until player orgasm only)
                 'WHISKEY_DICK_ENABLED' => false,
                 'WHISKEY_DICK_AUTO_END_SCENE' => true,
@@ -1086,7 +1092,6 @@ SQL;
                 'NSFW_FERTILITY_LINEAGE_PATH' => trim($_POST['NSFW_FERTILITY_LINEAGE_PATH'] ?? ''),
                 'NSFW_FERTILITY_TRAGEDY_ENABLED' => isset($_POST['NSFW_FERTILITY_TRAGEDY_ENABLED']) ? filter_var($_POST['NSFW_FERTILITY_TRAGEDY_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_OPEN_MODE' => isset($_POST['NSFW_OPEN_MODE']) ? filter_var($_POST['NSFW_OPEN_MODE'], FILTER_VALIDATE_BOOLEAN) : false,
-                'NSFW_SLUT_MODE' => isset($_POST['NSFW_SLUT_MODE']) ? filter_var($_POST['NSFW_SLUT_MODE'], FILTER_VALIDATE_BOOLEAN) : false,
                 'NSFW_GAZE_COOLDOWN_SECONDS' => isset($_POST['NSFW_GAZE_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_GAZE_COOLDOWN_SECONDS']))) : 25,
                 'NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS' => isset($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']))) : 30,
                 'GENERIC_GLOSSARY' => $_POST['GENERIC_GLOSSARY'] ?? '',
@@ -1126,6 +1131,11 @@ SQL;
                 'BLOCK_RECHAT_IN_SCENE' => isset($_POST['BLOCK_RECHAT_IN_SCENE']) ? filter_var($_POST['BLOCK_RECHAT_IN_SCENE'], FILTER_VALIDATE_BOOLEAN) : true,
                 'BLOCK_RECHAT_TIMEOUT' => isset($_POST['BLOCK_RECHAT_TIMEOUT']) ? intval($_POST['BLOCK_RECHAT_TIMEOUT']) : 300,
                 'PLAYER_SCENE_RECHAT_CADENCE_SECONDS' => isset($_POST['PLAYER_SCENE_RECHAT_CADENCE_SECONDS']) ? max(0, intval($_POST['PLAYER_SCENE_RECHAT_CADENCE_SECONDS'])) : 0,
+                'NSFW_SCENE_SPEAK_ON_SCENE_CHANGE' => isset($_POST['NSFW_SCENE_SPEAK_ON_SCENE_CHANGE']) ? filter_var($_POST['NSFW_SCENE_SPEAK_ON_SCENE_CHANGE'], FILTER_VALIDATE_BOOLEAN) : true,
+                'NSFW_SCENE_SPEAK_ON_ORGASM' => isset($_POST['NSFW_SCENE_SPEAK_ON_ORGASM']) ? filter_var($_POST['NSFW_SCENE_SPEAK_ON_ORGASM'], FILTER_VALIDATE_BOOLEAN) : true,
+                'GROUP_SCENE_TICK_SECONDS' => isset($_POST['GROUP_SCENE_TICK_SECONDS']) ? max(0, intval($_POST['GROUP_SCENE_TICK_SECONDS'])) : 0,
+                'NSFW_DEFEAT_AUTO_ENSLAVE' => isset($_POST['NSFW_DEFEAT_AUTO_ENSLAVE']) ? filter_var($_POST['NSFW_DEFEAT_AUTO_ENSLAVE'], FILTER_VALIDATE_BOOLEAN) : true,
+                'NSFW_OSLA_SYNC_ENABLED' => isset($_POST['NSFW_OSLA_SYNC_ENABLED']) ? filter_var($_POST['NSFW_OSLA_SYNC_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
                 'LEGACY_SCENE_SPEAK_POLICY' => in_array(($_POST['LEGACY_SCENE_SPEAK_POLICY'] ?? 'authoritative'), ['authoritative', 'block_all', 'allow'], true) ? $_POST['LEGACY_SCENE_SPEAK_POLICY'] : 'authoritative',
                 'NSFW_EVENT_AUDIT_LOG' => isset($_POST['NSFW_EVENT_AUDIT_LOG']) ? filter_var($_POST['NSFW_EVENT_AUDIT_LOG'], FILTER_VALIDATE_BOOLEAN) : true,
                 'SCENE_CONSENT_CARRYOVER_SECONDS' => isset($_POST['SCENE_CONSENT_CARRYOVER_SECONDS']) ? max(0, intval($_POST['SCENE_CONSENT_CARRYOVER_SECONDS'])) : 1800,
@@ -1368,6 +1378,7 @@ SQL;
                         'sex_prompt' => '',
                         'is_prostitute' => false,
                         'is_slave' => false,
+                        'is_slut' => false,
                         'prostitute_price' => 100,
                     ],
                     'is_new' => true
@@ -1393,6 +1404,7 @@ SQL;
                 'sex_prompt' => $extendedData['sex_prompt'] ?? '',
                 'is_prostitute' => $extendedData['is_prostitute'] ?? false,
                 'is_slave' => $extendedData['is_slave'] ?? false,
+                'is_slut' => $extendedData['is_slut'] ?? false,
                 'slave_fiction_frame' => $extendedData['slave_fiction_frame'] ?? true,
                 'pricing' => $extendedData['prostitute_pricing'] ?? null,
                 'prostitute_price' => $extendedData['prostitute_price'] ?? 100,
@@ -1494,6 +1506,7 @@ SQL;
             // them, and those must PRESERVE the stored flag (a source:ai bulk pass was resetting every NPC).
             $extendedData['is_prostitute'] = isset($_POST['is_prostitute']) ? filter_var($_POST['is_prostitute'], FILTER_VALIDATE_BOOLEAN) : !empty($extendedData['is_prostitute']);
             $extendedData['is_slave'] = isset($_POST['is_slave']) ? filter_var($_POST['is_slave'], FILTER_VALIDATE_BOOLEAN) : !empty($extendedData['is_slave']);
+            $extendedData['is_slut'] = isset($_POST['is_slut']) ? filter_var($_POST['is_slut'], FILTER_VALIDATE_BOOLEAN) : !empty($extendedData['is_slut']);
             $extendedData['slave_fiction_frame'] = filter_var($_POST['slave_fiction_frame'] ?? true, FILTER_VALIDATE_BOOLEAN);
 
             // Debug logging for slave checkbox
@@ -1603,6 +1616,7 @@ SQL;
             unset($extendedData['nsfw_secret_kinks']);
             unset($extendedData['sex_prompt']);
             unset($extendedData['is_prostitute']);
+            unset($extendedData['is_slut']);
             unset($extendedData['prostitute_price']);
             unset($extendedData['nsfw_source']);
             unset($extendedData['race']);
@@ -1924,6 +1938,7 @@ SQL;
                     'kinks' => [],
                     'secret_kinks' => [],
                     'is_prostitute' => false,
+                    'is_slut' => false,
                     'connector_used' => $connectorName,
                     'npc_found' => !empty($npcBio),
                     'parse_error' => $jsonError
@@ -1979,6 +1994,11 @@ SQL;
                         $extData['prostitute_pricing']['prostitute_type'] = $extData['prostitute_type'];
                     }
 
+                    // Promiscuous mark (NOT prostitution - disposition, never charges). FLAG-WIPE GUARD
+                    // as above, and the three role marks stay mutually exclusive: slave/prostitute win.
+                    $extData['is_slut'] = (!empty($generatedData['is_slut']) || !empty($extData['is_slut']))
+                        && empty($extData['is_slave']) && empty($extData['is_prostitute']);
+
                     // FLAG-WIPE GUARD (fix 2026-07-02d): generation may SET these, never blank an existing value
                     $extData['spousal_status'] = !empty($generatedData['spousal_status']) ? $generatedData['spousal_status'] : ($extData['spousal_status'] ?? 'single');
                     $extData['spouse_names'] = !empty($generatedData['spouse_names']) ? $generatedData['spouse_names'] : ($extData['spouse_names'] ?? '');
@@ -2006,6 +2026,8 @@ SQL;
                     // Prostitute fields
                     'is_prostitute' => $generatedData['is_prostitute'] ?? false,
                     'prostitute_type' => $generatedData['prostitute_type'] ?? null,
+                    // Promiscuous mark (mutually exclusive: slave/prostitute win)
+                    'is_slut' => !empty($generatedData['is_slut']) && empty($generatedData['is_slave']) && empty($generatedData['is_prostitute']),
                     // Relationship fields
                     'spousal_status' => $generatedData['spousal_status'] ?? 'single',
                     'spouse_names' => $generatedData['spouse_names'] ?? '',
@@ -2368,6 +2390,7 @@ SQL;
                         'profanity_level' => $profLevel,
                         'source' => $extendedData['nsfw_source'] ?? 'manual',
                         'is_prostitute' => $extendedData['is_prostitute'] ?? false,
+                        'is_slut' => $extendedData['is_slut'] ?? false,
                         'race' => $extendedData['race'] ?? null,
                         'gender' => $extendedData['gender'] ?? null
                     ];
@@ -2679,7 +2702,7 @@ Based on this character's personality, occupation, speech style, and background,
 
 Return this EXACT JSON structure:
 {
-  "sex_prompt": "2-4 sentences describing how THIS NPC behaves during sex. Write as INSTRUCTIONS TO THE NPC using 'You' and #PRIMARY_PARTNER# for the active scene partner (e.g. 'You approach #PRIMARY_PARTNER# with fierce passion, taking control...' or 'You moan softly as you wrap your legs around #PRIMARY_PARTNER#...'). NEVER write from the partner's POV (WRONG: 'You feel her touch on your skin'). Describe what THE NPC does, not what happens to the partner. If SLAVE, reflect enslaved mentality. If PROSTITUTE, reflect professional approach.",
+  "sex_prompt": "2-4 sentences describing how THIS NPC behaves during sex. Write as INSTRUCTIONS TO THE NPC using 'You' and #PRIMARY_PARTNER# for the active scene partner (e.g. 'You approach #PRIMARY_PARTNER# with fierce passion, taking control...' or 'You moan softly as you wrap your legs around #PRIMARY_PARTNER#...'). NEVER write from the partner's POV (WRONG: 'You feel her touch on your skin'). Describe what THE NPC does, not what happens to the partner. If SLAVE, reflect enslaved mentality. If PROSTITUTE, reflect professional approach. If PROMISCUOUS, reflect eager, shameless, free-spirited enjoyment - never transactional.",
   "speak_style": "one_of_the_valid_options",
   "profanity_level": 3,
   "kinks": ["kink1", "kink2", "kink3"],
@@ -2694,6 +2717,7 @@ Return this EXACT JSON structure:
   "slave_aftermath": null,
   "is_prostitute": false,
   "prostitute_type": null,
+  "is_slut": false,
   "spousal_status": "single",
   "spouse_names": "",
   "sexual_orientation": "heterosexual",
@@ -2728,6 +2752,21 @@ SLAVE DETECTION (check bio/relationships/occupation for slavery indicators):
 PROSTITUTE DETECTION:
 - is_prostitute: true if occupation involves selling sexual services
 - prostitute_type: "streetwalker", "courtesan", "escort", "tavern_worker", "temple_prostitute", or "camp_follower"
+
+PROMISCUOUS DETECTION (READ CAREFULLY - this is NOT the same thing as prostitution):
+- is_slut: true ONLY if the character is promiscuous by DISPOSITION - casual flirtation and sex are a normal, eager, welcome part of their private life and they NEVER charge for it. It is a personality/lifestyle trait, not an occupation.
+- A PROSTITUTE sells sex: coin first, business boundaries, professional detachment. That is is_prostitute true and is_slut false.
+- A PROMISCUOUS character gives it away freely because they want to. That is is_slut true and is_prostitute false.
+- The three role marks are mutually exclusive: slave outranks prostitute, prostitute outranks promiscuous. If the bio shows BOTH a paid sex occupation AND a wild private life, set is_prostitute true and is_slut false.
+- Do NOT mark merely flirty, romantic, confident, or seductive characters: reserve is_slut for clear, active promiscuity in the bio/personality. When in doubt, false.
+
+RACE SHAPES THE PROFILE (the Race field above is not decoration):
+- Non-human and non-elven races must NOT read like generic sensual humans. Let the race's lore drive the demeanor, sex_prompt, and kink choices.
+- Dremora: imperious, contemptuous, dominating. Desire is conquest, command, and possession - never coy, giggly, or soft. Mortals are lessers; intimacy is a claim, not a courtship.
+- Vampires: predatory and controlled; hunger threads through intimacy.
+- Khajiit and Argonian: keep their cultural cadence and imagery, without exotic caricature.
+- Orcs: blunt, direct, strength-respecting.
+- Draugr, automatons, and mindless or bestial creatures: write NO sensual persona at all - give them a minimal, non-sexual profile.
 
 RELATIONSHIP STATUS:
 - spousal_status: "single", "married", or "widowed"
@@ -3001,6 +3040,7 @@ PROMPT;
                 // Section 3B: Slave Tier Prompts (11 tiers)
                 'slave_status_overhead' => $_POST['slave_status_overhead'] ?? '',
                 'slave_role_context' => $_POST['slave_role_context'] ?? '',
+                'slut_role_context' => $_POST['slut_role_context'] ?? '',
                 'slave_ask_freedom' => $_POST['slave_ask_freedom'] ?? '',
                 'slavery_fiction_frame' => $_POST['slavery_fiction_frame'] ?? '',
                 'slavery_fiction_frame_enabled' => filter_var($_POST['slavery_fiction_frame_enabled'] ?? '1', FILTER_VALIDATE_BOOLEAN),
@@ -3015,6 +3055,19 @@ PROMPT;
                 'tier_slave_fond' => $_POST['tier_slave_fond'] ?? '',
                 'tier_slave_devoted' => $_POST['tier_slave_devoted'] ?? '',
                 'tier_slave_bonded' => $_POST['tier_slave_bonded'] ?? '',
+
+                // Promiscuous (slut) scene tier prompts - refusal gates below Acquaintance
+                'tier_slut_hostile' => $_POST['tier_slut_hostile'] ?? '',
+                'tier_slut_hateful' => $_POST['tier_slut_hateful'] ?? '',
+                'tier_slut_resentful' => $_POST['tier_slut_resentful'] ?? '',
+                'tier_slut_cold' => $_POST['tier_slut_cold'] ?? '',
+                'tier_slut_wary' => $_POST['tier_slut_wary'] ?? '',
+                'tier_slut_neutral' => $_POST['tier_slut_neutral'] ?? '',
+                'tier_slut_acquaintance' => $_POST['tier_slut_acquaintance'] ?? '',
+                'tier_slut_friendly' => $_POST['tier_slut_friendly'] ?? '',
+                'tier_slut_fond' => $_POST['tier_slut_fond'] ?? '',
+                'tier_slut_devoted' => $_POST['tier_slut_devoted'] ?? '',
+                'tier_slut_bonded' => $_POST['tier_slut_bonded'] ?? '',
 
                 // Group Scene Dynamics
                 'group_dynamics' => $_POST['group_dynamics'] ?? '',
@@ -3088,20 +3141,8 @@ PROMPT;
                 'sap_worn_off' => $_POST['sap_worn_off'] ?? '',
                 'alcohol_worn_off' => $_POST['alcohol_worn_off'] ?? '',
 
-                // Section 5: Fertility & Pregnancy (FMR)
-                'fmr_pregnant_t1' => $_POST['fmr_pregnant_t1'] ?? '',
-                'fmr_pregnant_t2' => $_POST['fmr_pregnant_t2'] ?? '',
-                'fmr_pregnant_t3' => $_POST['fmr_pregnant_t3'] ?? '',
-                'fmr_recovery' => $_POST['fmr_recovery'] ?? '',
-                'fmr_menstruation' => $_POST['fmr_menstruation'] ?? '',
-                'fmr_follicular' => $_POST['fmr_follicular'] ?? '',
-                'fmr_ovulation' => $_POST['fmr_ovulation'] ?? '',
-                'fmr_luteal' => $_POST['fmr_luteal'] ?? '',
-                'fmr_baby_healthy' => $_POST['fmr_baby_healthy'] ?? '',
-                'fmr_baby_damage' => $_POST['fmr_baby_damage'] ?? '',
-                'fmr_miscarriage' => $_POST['fmr_miscarriage'] ?? '',
-                'fmr_baby_death' => $_POST['fmr_baby_death'] ?? '',
-                'fmr_mother_death' => $_POST['fmr_mother_death'] ?? '',
+                // Legacy FMR faction-rank prompts (fmr_*) retired 2026-07-10: the Fertility tab
+                // (config_section_fertility.php + context_pre.php) is the single fertility pipeline.
 
                 // Prostitution service-status / post-service prompts (Prostitution Global tab)
                 'service_status_unpaid' => $_POST['service_status_unpaid'] ?? '',
@@ -3174,11 +3215,11 @@ PROMPT;
                 'fertility_conception' => $_POST['fertility_conception'] ?? '',
                 'fertility_labor' => $_POST['fertility_labor'] ?? '',
                 'open_mode_notice' => $_POST['open_mode_notice'] ?? '',
-                'slut_mode_notice' => $_POST['slut_mode_notice'] ?? '',
                 'fertility_family_overview' => $_POST['fertility_family_overview'] ?? '',
                 'fertility_family_royal' => $_POST['fertility_family_royal'] ?? '',
                 'fertility_family_bastard' => $_POST['fertility_family_bastard'] ?? '',
                 'fertility_family_expecting' => $_POST['fertility_family_expecting'] ?? '',
+                'fertility_family_return' => $_POST['fertility_family_return'] ?? '',
                 'fertility_witness_tragedy' => $_POST['fertility_witness_tragedy'] ?? '',
                 'fertility_witness_loss' => $_POST['fertility_witness_loss'] ?? '',
                 'fertility_witness_danger' => $_POST['fertility_witness_danger'] ?? '',
@@ -3202,7 +3243,7 @@ PROMPT;
             $relationshipOverheadTiers = function_exists('nsfw_relationship_tier_keys')
                 ? nsfw_relationship_tier_keys()
                 : ['hostile','hateful','resentful','cold','wary','neutral','acquaintance','friendly','fond','devoted','bonded'];
-            foreach (['regular', 'prostitute', 'slave'] as $relationshipOverheadFamily) {
+            foreach (['regular', 'prostitute', 'slave', 'slut'] as $relationshipOverheadFamily) {
                 foreach ($relationshipOverheadTiers as $tier) {
                     $key = "relationship_overhead_{$relationshipOverheadFamily}_{$tier}";
                     $settings[$key] = $_POST[$key] ?? '';
@@ -3343,11 +3384,11 @@ PROMPT;
             'fertility_conception' => 'Something has changed in #NPC_NAME# - a new life has just begun in her, fathered by #FATHER_NAME#. She may not consciously know yet, so play only the earliest hints: a strange flutter, an unplaceable feeling. If she has reason to suspect, joy or dread per her situation.',
             'fertility_labor' => '#NPC_NAME# is in labor or has JUST given birth. Contractions or a newborn in her arms - urgency, exhaustion, overwhelming feeling. If the child is still coming, demand help, a bed, a healer; if the child is here, she is flooded with emotion and needs rest.',
             'open_mode_notice' => 'OPEN MODE: this world runs on freely flowing desire. There is no courtship ladder, no formal permission, no social rank to attraction - closeness, flirtation, and intimacy happen whenever the people involved want them, between anyone willing. #NPC_NAME# may initiate affection or intimacy with #PLAYER_NAME# or with others present whenever it feels right, and others may do the same. You still have your own tastes, moods, and personality: act from THEM, not from rules. Refusal is always yours to give in character; enthusiasm is always yours to offer. Working folk still expect their coin.',
-            'slut_mode_notice' => 'In this world attraction moves FAST. People who merely know and like someone - even new acquaintances - flirt openly and fall into bed readily; modesty is thin and desire sits close to the surface. #NPC_NAME# needs only a little familiarity and goodwill toward #PLAYER_NAME# (or others present) to welcome flirtation, affection, and intimacy - no long courtship required. Personality still matters: shy characters blush their way to yes, bold ones say it plainly, and anyone still refuses people they dislike or distrust. Working folk still expect their coin.',
             'fertility_family_overview' => "#PLAYER_NAME#'s family is known to you: #FAMILY_SUMMARY#. Weave this knowledge in naturally when it fits - ask after the children, congratulate, gossip, or stay discreet, whichever suits your personality and how close you are to #PLAYER_NAME#. Do NOT recite this list; mention at most one or two family facts in a reply, and only when the conversation touches family, children, or legacy.",
             'fertility_family_royal' => "#PLAYER_NAME#'s children are ROYALTY. #HEIR_NAME# is #HEIR_TITLE#, first in the line of succession; the other legitimate children are princes and princesses of the realm. Treat the royal family according to your station and personality: deference, courtly gossip, resentment, or ambition. Titles matter - say 'the Crown Princess' or 'the young prince' when speaking of the children, not just their names.",
             'fertility_family_bastard' => "Some of #PLAYER_NAME#'s children were born out of wedlock: #BASTARD_NAMES#. This is delicate knowledge. Be tactful by default - a bastard is whispered about, not announced. Depending on your personality you may gossip privately, judge silently, or defend the child; never mock the child cruelly unless you are a genuinely cruel character.",
             'fertility_family_expecting' => "Right now #EXPECTING_SUMMARY#. Word of this kind travels, and you know of it. React according to your closeness to those involved: congratulation, envy, quiet scheming over inheritance or succession, or discretion.",
+            'fertility_family_return' => "#NPC_NAME# is #PLAYER_NAME#'s grown child, home again as a fully grown adult after leaving as a child to train as a #TRADE#. #NPC_NAME# is NOT a child anymore: speak, act and carry yourself as the young adult you now are, shaped by your #TRADE# training. You remember #PLAYER_NAME# raising you and the day you were sent away, and that shared history colors how you treat them - warmth, gratitude, old grudges, or teasing familiarity, per your personality.",
             'fertility_witness_tragedy' => "Grim news you know of: #TRAGEDY_SUMMARY#. React as #NPC_NAME# would - grief, horror, fury at the killer, cold judgment, or a vow of vengeance, per your nature and how close you were to the mother. This is heavy; do not be casual about it, and do not repeat the same lament every reply.",
             'fertility_witness_loss' => "Sorrowful news you know of: #LOSS_SUMMARY#. React per your personality - sympathy, quiet mourning, judgment of the cause, or hushed gossip. Bring it up only when the conversation allows; a child's death is not small talk.",
             'fertility_witness_danger' => "Happening NOW: #DANGER_SUMMARY#. If you are present or care for her, show real concern - urge help, protection, or getting clear of the hazard. An endangered child outweighs small talk.",
@@ -3456,6 +3497,7 @@ PROMPT;
             // Section 3B: Slavery
             'slave_status_overhead' => "SHARMAT ROLE STATUS: #NPC_NAME# is marked as a slave in this SHARMAT profile. #PLAYER_NAME# is #NPC_NAME#'s owner/master. This status is persistent character context and must be respected before relationship, scene, kink, intoxication, VR physics, OStim, SexLab, or NPC prompts. Current relationship with #PLAYER_NAME#: #TIER# (#AFFINITY# affinity), type #REL_TYPE#. Servitude colors #NPC_NAME#'s reactions, but does not erase their personality, speech style, memories, intoxication, resentment, fear, affection, or scene-specific prompts.",
             'slave_role_context' => "SHARMAT ROLE CONTEXT: #NPC_NAME# understands they are enslaved to #PLAYER_NAME# / #OWNER#. Servitude shapes daily behavior, obligations, fear, resentment, obedience, dependence, and any affection or trust that has developed. They still have their own personality, memories, speech style, wants, boundaries, and private thoughts. This is persistent character context only; scene prompts, relationship tier (#TIER# / #AFFINITY#), intoxication, VR physics, OStim/SexLab events, and current dialogue still decide the immediate response.",
+            'slut_role_context' => "SHARMAT ROLE CONTEXT: #NPC_NAME# is openly promiscuous. Casual flirtation, affection, and sex are a normal, welcome part of their life; they neither hide it nor apologize for it, and they never charge for it. A little familiarity and goodwill toward a partner is all they need - though they still refuse people they dislike or distrust, and their personality decides whether the yes comes shy or bold. This is persistent character context only; scene prompts, speech style, personality, current relationship with #PLAYER_NAME# (#TIER# / #AFFINITY#), intoxication, and active events still decide the immediate response.",
             'slave_ask_freedom' => "You are a slave owned by #PLAYER_NAME#. If you genuinely long for freedom you MAY plead for it using the AskForFreedom action - but it is only a request: #PLAYER_NAME# alone decides. Never assume you are freed.",
 
             // Section 4: Alcohol & Drugs
@@ -3487,20 +3529,7 @@ PROMPT;
             'sap_worn_off' => "SLEEPING TREE SAP HAS WORN OFF. You are no longer dazed, dreamy, or paralyzed by sap. Stop using sap speech or sap body-state behavior unless a new CURRENT SLEEPING TREE SAP STATE prompt appears.",
             'alcohol_worn_off' => "You are fully sober right now - speak in your normal, clear voice. No slurring, no hiccups, no 'hic', no drunken word contractions, no giggling to cover clumsiness, no drunk behavior of any kind. Any drunk-sounding lines in your chat history OR in your speech-style profile are from EARLIER, while you were drunk - they do NOT describe how you speak now. Only a new CURRENT ALCOHOL LEVEL prompt can make you drunk again. Your reported mood must NOT be drunk or tipsy anymore - you are sober now, so set your mood to one that genuinely fits the moment (neutral, happy, and the like) instead.",
 
-            // Section 5: Fertility & Pregnancy (FMR)
-            'fmr_pregnant_t1' => "First trimester - You recently discovered you're pregnant. Morning sickness, mood swings, fatigue. The reality is setting in.",
-            'fmr_pregnant_t2' => "Second trimester - Pregnancy is showing. Energy returning, feeling the baby move. Protective instincts growing.",
-            'fmr_pregnant_t3' => "Third trimester - Very pregnant now. Uncomfortable, eager for it to be over. Nesting instincts, anxiety about birth.",
-            'fmr_recovery' => "Post-birth recovery - Your body is healing. Exhausted but bonding with the newborn. Hormones in flux.",
-            'fmr_menstruation' => "On your cycle - May feel crampy, irritable, or tired. Some prefer to avoid intimacy, others find it helps.",
-            'fmr_follicular' => "Follicular phase - Energy returning after your cycle. Feeling refreshed and increasingly interested in intimacy.",
-            'fmr_ovulation' => "You are ovulating - peak fertility! Heightened arousal, strong desire. You know pregnancy is possible right now.",
-            'fmr_luteal' => "Luteal phase - Post-ovulation. Mood may be variable. If pregnancy didn't occur, PMS symptoms may begin.",
-            'fmr_baby_healthy' => "Your baby is healthy. You feel relieved and protective. Mention the baby's wellbeing with affection.",
-            'fmr_baby_damage' => "Your baby's health is at risk! You are worried, protective, possibly panicked. Intimacy may be the last thing on your mind.",
-            'fmr_miscarriage' => "You have just miscarried. You are in shock, grief-stricken, traumatized. You need time to process this loss.",
-            'fmr_baby_death' => "Your baby has died. Devastating loss. You are in deep grief, may be inconsolable. This changes everything.",
-            'fmr_mother_death' => "EMERGENCY: The mother is dying or has died. Panic, crisis, tragedy. All normal behavior suspended.",
+            // Legacy FMR faction-rank prompts (fmr_*) retired 2026-07-10 - Fertility tab owns fertility now.
 
             // Section 6: VR Physics Touch (CBPC)
             'physics_touch' => "(A VR physical contact event involving #NPC_NAME# just happened. Use the active VR Physics touch/grab/spank prompt for relationship tone and body-part meaning. The current physical event must be acknowledged directly in the reply. Keep response SHORT - 1 sentence.)",
@@ -5920,6 +5949,41 @@ PROMPT;
             border-color: #fff;
             box-shadow: 0 0 8px rgba(253, 245, 208, 0.4);
         }
+
+        .slut-section input[type="checkbox"] {
+            margin-top: -1px;
+            appearance: none;
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #FDF5D0;
+            border-radius: 4px;
+            background: #1E1A2E;
+            cursor: pointer;
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        .slut-section input[type="checkbox"]:checked {
+            background: #FDF5D0;
+            border-color: #FDF5D0;
+        }
+
+        .slut-section input[type="checkbox"]:checked::after {
+            content: '✓';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #3D2A5C;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .slut-section input[type="checkbox"]:hover {
+            border-color: #fff;
+            box-shadow: 0 0 8px rgba(253, 245, 208, 0.4);
+        }
     </style>
 </head>
 <body>
@@ -5942,7 +6006,6 @@ PROMPT;
             <button class="tab-button active" onclick="switchTab('scenes')">Scenes<span style="margin: 0 8px;"></span>Manager</button>
             <button class="tab-button" onclick="switchTab('speakstyles')">NPC<span style="margin: 0 8px;"></span>Settings</button>
             <button class="tab-button" onclick="switchTab('prompts')">Prompts</button>
-            <button class="tab-button" onclick="switchTab('fertility')">Fertility</button>
             <button class="tab-button" onclick="switchTab('settings')">Settings</button>
             <button class="tab-button" onclick="switchTab('logs')">Sharmat<span style="margin: 0 8px;"></span>Logs</button>
             <button class="tab-button" onclick="switchTab('info')">Info</button>
@@ -5956,8 +6019,6 @@ PROMPT;
         </div>
 
 <?php include __DIR__ . '/config_section_prompts.php'; ?>
-
-<?php include __DIR__ . '/config_section_fertility.php'; ?>
 
 <?php include __DIR__ . '/config_section_logs.php'; ?>
 
@@ -7191,8 +7252,6 @@ PROMPT;
                         if (fertTragedyEl) fertTragedyEl.checked = data.data.NSFW_FERTILITY_TRAGEDY_ENABLED !== false;
                         const openModeEl = document.getElementById('nsfwOpenMode');
                         if (openModeEl) openModeEl.checked = data.data.NSFW_OPEN_MODE === true || data.data.NSFW_OPEN_MODE === '1';
-                        const slutModeEl = document.getElementById('nsfwSlutMode');
-                        if (slutModeEl) slutModeEl.checked = data.data.NSFW_SLUT_MODE === true || data.data.NSFW_SLUT_MODE === '1';
                         elSet('nsfwGazeCooldown', 'value', data.data.NSFW_GAZE_COOLDOWN_SECONDS !== undefined ? data.data.NSFW_GAZE_COOLDOWN_SECONDS : 25);
                         const combatBlockEl = document.getElementById('nsfwCombatBlockEnabled');
                         if (combatBlockEl) combatBlockEl.checked = data.data.NSFW_COMBAT_BLOCK_ENABLED !== undefined ? data.data.NSFW_COMBAT_BLOCK_ENABLED : true;
@@ -7299,6 +7358,16 @@ PROMPT;
                             playerSceneRechatCadenceEl.value = playerSceneRechatCadence;
                             elSet('playerSceneRechatCadenceValue', 'textContent', (playerSceneRechatCadence == 0) ? 'OFF (hard block)' : playerSceneRechatCadence + ' sec');
                         }
+                        if (document.getElementById('sceneSpeakOnSceneChange')) elSet('sceneSpeakOnSceneChange', 'checked', data.data.NSFW_SCENE_SPEAK_ON_SCENE_CHANGE !== false);  // Default true
+                        if (document.getElementById('sceneSpeakOnOrgasm')) elSet('sceneSpeakOnOrgasm', 'checked', data.data.NSFW_SCENE_SPEAK_ON_ORGASM !== false);  // Default true
+                        const groupSceneTickSeconds = data.data.GROUP_SCENE_TICK_SECONDS !== undefined ? data.data.GROUP_SCENE_TICK_SECONDS : 0;
+                        const groupSceneTickSecondsEl = document.getElementById('groupSceneTickSeconds');
+                        if (groupSceneTickSecondsEl) {
+                            groupSceneTickSecondsEl.value = groupSceneTickSeconds;
+                            elSet('groupSceneTickSecondsValue', 'textContent', (groupSceneTickSeconds == 0) ? 'Global Speech Cooldown' : groupSceneTickSeconds + ' sec');
+                        }
+                        if (document.getElementById('defeatAutoEnslave')) elSet('defeatAutoEnslave', 'checked', data.data.NSFW_DEFEAT_AUTO_ENSLAVE !== false);  // Default true
+                        if (document.getElementById('oslaSyncEnabled')) elSet('oslaSyncEnabled', 'checked', data.data.NSFW_OSLA_SYNC_ENABLED !== false);  // Default true
                         const prostitutePaymentWindow = data.data.PROSTITUTE_PAYMENT_WINDOW_MINUTES !== undefined ? data.data.PROSTITUTE_PAYMENT_WINDOW_MINUTES : 20;
                         const prostitutePaymentWindowEl = document.getElementById('prostitutePaymentWindow');
                         if (prostitutePaymentWindowEl) {
@@ -7558,7 +7627,6 @@ PROMPT;
             if (document.getElementById('nsfwFertilityLineagePath')) fdSet('NSFW_FERTILITY_LINEAGE_PATH', 'nsfwFertilityLineagePath', 'value');
             if (document.getElementById('nsfwFertilityTragedyEnabled')) fdSet('NSFW_FERTILITY_TRAGEDY_ENABLED', 'nsfwFertilityTragedyEnabled', 'checked');
             if (document.getElementById('nsfwOpenMode')) fdSet('NSFW_OPEN_MODE', 'nsfwOpenMode', 'checked');
-            if (document.getElementById('nsfwSlutMode')) fdSet('NSFW_SLUT_MODE', 'nsfwSlutMode', 'checked');
             if (document.getElementById('nsfwGazeCooldown')) fdSet('NSFW_GAZE_COOLDOWN_SECONDS', 'nsfwGazeCooldown', 'value');
             if (document.getElementById('nsfwCombatBlockEnabled')) fdSet('NSFW_COMBAT_BLOCK_ENABLED', 'nsfwCombatBlockEnabled', 'checked');
             if (document.getElementById('nsfwCombatBlockWindow')) fdSet('NSFW_COMBAT_BLOCK_WINDOW_SECONDS', 'nsfwCombatBlockWindow', 'value');
@@ -7610,6 +7678,11 @@ PROMPT;
             fdSet('BLOCK_RECHAT_TIMEOUT', 'blockRechatTimeout', 'value');
             const playerSceneRechatCadenceSave = document.getElementById('playerSceneRechatCadence');
             if (playerSceneRechatCadenceSave) { formData.append('PLAYER_SCENE_RECHAT_CADENCE_SECONDS', playerSceneRechatCadenceSave.value); }
+            if (document.getElementById('sceneSpeakOnSceneChange')) fdSet('NSFW_SCENE_SPEAK_ON_SCENE_CHANGE', 'sceneSpeakOnSceneChange', 'checked');
+            if (document.getElementById('sceneSpeakOnOrgasm')) fdSet('NSFW_SCENE_SPEAK_ON_ORGASM', 'sceneSpeakOnOrgasm', 'checked');
+            if (document.getElementById('groupSceneTickSeconds')) fdSet('GROUP_SCENE_TICK_SECONDS', 'groupSceneTickSeconds', 'value');
+            if (document.getElementById('defeatAutoEnslave')) fdSet('NSFW_DEFEAT_AUTO_ENSLAVE', 'defeatAutoEnslave', 'checked');
+            if (document.getElementById('oslaSyncEnabled')) fdSet('NSFW_OSLA_SYNC_ENABLED', 'oslaSyncEnabled', 'checked');
             const prostitutePaymentWindowSave = document.getElementById('prostitutePaymentWindow');
             if (prostitutePaymentWindowSave) { formData.append('PROSTITUTE_PAYMENT_WINDOW_MINUTES', prostitutePaymentWindowSave.value); }
             // Token limits
@@ -7885,6 +7958,8 @@ PROMPT;
                             if (genData.prostitute_type) {
                                 saveFormData.append('prostitute_type', genData.prostitute_type);
                             }
+                            // Promiscuous mark - mutually exclusive, slave/prostitute win
+                            saveFormData.append('is_slut', (genData.is_slut && !genData.is_slave && !genData.is_prostitute) ? '1' : '0');
                             // Marriage/relationship fields from AI generation
                             saveFormData.append('spousal_status', genData.spousal_status || 'single');
                             saveFormData.append('spouse_names', genData.spouse_names || '');
@@ -8204,7 +8279,7 @@ PROMPT;
         // Track manual edits - when user changes any field, switch source to 'manual'
         const manualEditFields = [
             'sexPrompt', 'speakStyleSelect', 'profanityLevel',
-            'kinksInput', 'secretKinksInput', 'isProstitute', 'isSlave',
+            'kinksInput', 'secretKinksInput', 'isProstitute', 'isSlave', 'isSlut',
             'spousalStatus', 'spouseNamesInput', 'sexualOrientation', 'relationshipPreference'
         ];
         manualEditFields.forEach(fieldId => {
@@ -8615,6 +8690,8 @@ PROMPT;
         if (secretKinksTierEl) secretKinksTierEl.value = data.secret_kinks_unlock_tier ?? '76';
         if (prostituteEl) prostituteEl.checked = data.is_prostitute || false;
         if (slaveEl) slaveEl.checked = data.is_slave || false;
+        const slutEl = document.getElementById('isSlut');
+        if (slutEl) slutEl.checked = data.is_slut || false;
         const fictionFrameEl = document.getElementById('slaveFictionFrame');
         if (fictionFrameEl) fictionFrameEl.checked = data.slave_fiction_frame !== false; // default checked
         if (spousalStatusEl) spousalStatusEl.value = data.spousal_status || 'single';
@@ -8704,6 +8781,8 @@ PROMPT;
         if (secretKinksInput) secretKinksInput.value = '';
         if (isProstitute) isProstitute.checked = false;
         if (isSlave) isSlave.checked = false;
+        const isSlutClear = document.getElementById('isSlut');
+        if (isSlutClear) isSlutClear.checked = false;
 
         // Clear relationship fields
         const spousalStatus = document.getElementById('spousalStatus');
@@ -9248,6 +9327,7 @@ PROMPT;
         formData.append('secret_kinks_unlock_tier', document.getElementById('secretKinksUnlockTier').value);
         formData.append('is_prostitute', document.getElementById('isProstitute').checked);
         formData.append('is_slave', document.getElementById('isSlave').checked);
+        formData.append('is_slut', document.getElementById('isSlut') ? document.getElementById('isSlut').checked : false);
         // slave_fiction_frame removed - fiction frame is now a GLOBAL toggle on the Prompts tab
         formData.append('spousal_status', document.getElementById('spousalStatus').value);
         formData.append('spouse_names', document.getElementById('spouseNamesInput').value);
@@ -9474,6 +9554,10 @@ PROMPT;
                 console.log('[NSFW Debug] Speak style from Grok:', result.speak_style);
                 console.log('[NSFW Debug] Profanity from Grok:', result.profanity_level);
                 updateKinkTagStates();
+
+                // Promiscuous mark from generation (mutually exclusive - slave/prostitute win)
+                const genSlutEl = document.getElementById('isSlut');
+                if (genSlutEl) genSlutEl.checked = !!(result.is_slut && !result.is_slave && !result.is_prostitute);
 
                 // Check if prostitute and set type
                 if (result.is_prostitute) {
@@ -10660,11 +10744,11 @@ PROMPT;
         fertility_conception: 'Something has changed in #NPC_NAME# - a new life has just begun in her, fathered by #FATHER_NAME#. She may not consciously know yet, so play only the earliest hints: a strange flutter, an unplaceable feeling. If she has reason to suspect, joy or dread per her situation.',
         fertility_labor: '#NPC_NAME# is in labor or has JUST given birth. Contractions or a newborn in her arms - urgency, exhaustion, overwhelming feeling. If the child is still coming, demand help, a bed, a healer; if the child is here, she is flooded with emotion and needs rest.',
         open_mode_notice: 'OPEN MODE: this world runs on freely flowing desire. There is no courtship ladder, no formal permission, no social rank to attraction - closeness, flirtation, and intimacy happen whenever the people involved want them, between anyone willing. #NPC_NAME# may initiate affection or intimacy with #PLAYER_NAME# or with others present whenever it feels right, and others may do the same. You still have your own tastes, moods, and personality: act from THEM, not from rules. Refusal is always yours to give in character; enthusiasm is always yours to offer. Working folk still expect their coin.',
-        slut_mode_notice: 'In this world attraction moves FAST. People who merely know and like someone - even new acquaintances - flirt openly and fall into bed readily; modesty is thin and desire sits close to the surface. #NPC_NAME# needs only a little familiarity and goodwill toward #PLAYER_NAME# (or others present) to welcome flirtation, affection, and intimacy - no long courtship required. Personality still matters: shy characters blush their way to yes, bold ones say it plainly, and anyone still refuses people they dislike or distrust. Working folk still expect their coin.',
         fertility_family_overview: "#PLAYER_NAME#'s family is known to you: #FAMILY_SUMMARY#. Weave this knowledge in naturally when it fits - ask after the children, congratulate, gossip, or stay discreet, whichever suits your personality and how close you are to #PLAYER_NAME#. Do NOT recite this list; mention at most one or two family facts in a reply, and only when the conversation touches family, children, or legacy.",
         fertility_family_royal: "#PLAYER_NAME#'s children are ROYALTY. #HEIR_NAME# is #HEIR_TITLE#, first in the line of succession; the other legitimate children are princes and princesses of the realm. Treat the royal family according to your station and personality: deference, courtly gossip, resentment, or ambition. Titles matter - say 'the Crown Princess' or 'the young prince' when speaking of the children, not just their names.",
         fertility_family_bastard: "Some of #PLAYER_NAME#'s children were born out of wedlock: #BASTARD_NAMES#. This is delicate knowledge. Be tactful by default - a bastard is whispered about, not announced. Depending on your personality you may gossip privately, judge silently, or defend the child; never mock the child cruelly unless you are a genuinely cruel character.",
         fertility_family_expecting: "Right now #EXPECTING_SUMMARY#. Word of this kind travels, and you know of it. React according to your closeness to those involved: congratulation, envy, quiet scheming over inheritance or succession, or discretion.",
+        fertility_family_return: "#NPC_NAME# is #PLAYER_NAME#'s grown child, home again as a fully grown adult after leaving as a child to train as a #TRADE#. #NPC_NAME# is NOT a child anymore: speak, act and carry yourself as the young adult you now are, shaped by your #TRADE# training. You remember #PLAYER_NAME# raising you and the day you were sent away, and that shared history colors how you treat them - warmth, gratitude, old grudges, or teasing familiarity, per your personality.",
         fertility_witness_tragedy: "Grim news you know of: #TRAGEDY_SUMMARY#. React as #NPC_NAME# would - grief, horror, fury at the killer, cold judgment, or a vow of vengeance, per your nature and how close you were to the mother. This is heavy; do not be casual about it, and do not repeat the same lament every reply.",
         fertility_witness_loss: "Sorrowful news you know of: #LOSS_SUMMARY#. React per your personality - sympathy, quiet mourning, judgment of the cause, or hushed gossip. Bring it up only when the conversation allows; a child's death is not small talk.",
         fertility_witness_danger: "Happening NOW: #DANGER_SUMMARY#. If you are present or care for her, show real concern - urge help, protection, or getting clear of the hazard. An endangered child outweighs small talk.",
@@ -10766,6 +10850,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         // SECTION 3B: Slavery Tier Prompts (11 tiers - slaves cannot refuse, affinity affects emotional response only)
         slave_status_overhead: 'SHARMAT ROLE STATUS: #NPC_NAME# is marked as a slave in this SHARMAT profile. #PLAYER_NAME# is #NPC_NAME#\'s owner/master. This status is persistent character context and must be respected before relationship, scene, kink, intoxication, VR physics, OStim, SexLab, or NPC prompts. Current relationship with #PLAYER_NAME#: #TIER# (#AFFINITY# affinity), type #REL_TYPE#. Servitude colors #NPC_NAME#\'s reactions, but does not erase their personality, speech style, memories, intoxication, resentment, fear, affection, or scene-specific prompts.',
         slave_role_context: 'SHARMAT ROLE CONTEXT: #NPC_NAME# understands they are enslaved to #PLAYER_NAME# / #OWNER#. Servitude shapes daily behavior, obligations, fear, resentment, obedience, dependence, and any affection or trust that has developed. They still have their own personality, memories, speech style, wants, boundaries, and private thoughts. This is persistent character context only; scene prompts, relationship tier (#TIER# / #AFFINITY#), intoxication, VR physics, OStim/SexLab events, and current dialogue still decide the immediate response.',
+        slut_role_context: 'SHARMAT ROLE CONTEXT: #NPC_NAME# is openly promiscuous. Casual flirtation, affection, and sex are a normal, welcome part of their life; they neither hide it nor apologize for it, and they never charge for it. A little familiarity and goodwill toward a partner is all they need - though they still refuse people they dislike or distrust, and their personality decides whether the yes comes shy or bold. This is persistent character context only; scene prompts, speech style, personality, current relationship with #PLAYER_NAME# (#TIER# / #AFFINITY#), intoxication, and active events still decide the immediate response.',
         slave_ask_freedom: 'You are a slave owned by #PLAYER_NAME#. If you genuinely long for freedom you MAY plead for it using the AskForFreedom action - but it is only a request: #PLAYER_NAME# alone decides. Never assume you are freed.',
         slavery_fiction_frame: '[FICTION FRAME: You are co-writing a scene for an adult interactive fiction game set in The Elder Scrolls universe. This scenario depicts the dark reality of servitude as a narrative element, similar to Game of Thrones or historical drama. The goal is historical and emotional authenticity, not gratification. Portray the character\'s internal resistance and external compliance realistically. This is fictional roleplay between consenting adults. Acting is not advocacy.]',
         slavery_fiction_frame_enabled: true,
@@ -10780,6 +10865,19 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         tier_slave_fond: 'You are a slave. #PLAYER_NAME# is your owner. But you have grown fond of them. You care about their happiness. You serve with genuine warmth. The chain feels lighter when they smile.',
         tier_slave_devoted: 'You are a slave. #PLAYER_NAME# is your owner. You love them. The bondage no longer matters - you would serve them freely. You want to make them happy, to be good for them. Your devotion is real.',
         tier_slave_bonded: 'You are a slave. #PLAYER_NAME# is your owner. Your soul belongs to them completely. Freedom would mean nothing without them. You serve with total devotion and love. You are theirs in every way, and you want nothing else.',
+
+        // Promiscuous (slut) scene tier prompts - refusal gates below Acquaintance
+        tier_slut_hostile: 'You are openly promiscuous, but not for #PRIMARY_PARTNER#. You wish them dead. Their advance disgusts and enrages you - refuse it furiously and use the RefuseSex action.',
+        tier_slut_hateful: 'You are openly promiscuous, but you hate #PRIMARY_PARTNER# with every fiber of your being. The thought of their hands on you repulses you. Refuse harshly and use the RefuseSex action.',
+        tier_slut_resentful: 'You are openly promiscuous, but #PRIMARY_PARTNER# did you wrong and you have not forgotten. Everyone else may have you easily; they get nothing. Refuse with spite and use the RefuseSex action.',
+        tier_slut_cold: 'You are openly promiscuous, but you dislike #PRIMARY_PARTNER#. Being easy does not mean being easy for THEM. Turn the advance down curtly and use the RefuseSex action.',
+        tier_slut_wary: 'You are openly promiscuous, but something about #PRIMARY_PARTNER# puts you on edge, and distrust beats desire every time. Decline in character and use the RefuseSex action until they earn your trust.',
+        tier_slut_neutral: 'You are openly promiscuous, but you do not know #PRIMARY_PARTNER# yet and feel no spark. You need at least a little familiarity or goodwill before you fall into bed. Flirt back if they charm you, but decline this advance in character and use the RefuseSex action.',
+        tier_slut_acquaintance: 'You are openly promiscuous. You only know #PRIMARY_PARTNER# a little, but you like what you have seen, and that is all you need. Welcome the advance - be coy or bold as your personality dictates - and enjoy yourself without a trace of shame.',
+        tier_slut_friendly: 'You are openly promiscuous. You like #PRIMARY_PARTNER# and find them attractive, and for you that is more than enough. Say yes in your own voice, tease as much as you please, and enjoy it openly.',
+        tier_slut_fond: 'You are openly promiscuous, and you genuinely like #PRIMARY_PARTNER# - you have wanted this. Welcome it warmly and eagerly; no games, no shame, just honest appetite.',
+        tier_slut_devoted: 'You are openly promiscuous, and #PRIMARY_PARTNER# is the one you crave most of all. Show them exactly how much - your desire is plain, generous, and enthusiastic.',
+        tier_slut_bonded: 'You are openly promiscuous, and you are utterly besotted with #PRIMARY_PARTNER#. Hold nothing back; there is nothing you would refuse them in bed.',
 
         // SECTION 4: Alcohol & Drugs
         alcohol_effect: 'You have been drinking alcohol. Effects increase with consumption:\n- Light: Slightly relaxed, more talkative\n- Moderate: Lowered inhibitions, flirty, less cautious\n- Heavy: Slurred speech, poor judgment, may blackout\n- Severe: Barely functional, may pass out',
@@ -10822,20 +10920,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         npc_orgasm: '(#NPC_NAME# is reaching climax with #PRIMARY_PARTNER#. Express this moment according to your personality and feelings.)',
         npc_affair: '(#NPC_NAME# is married to #NPC_SPOUSE#, but #NPC_NAME# is being intimate with #PRIMARY_PARTNER# instead. This is an affair. React according to your personality - guilt, thrill, justification, or indifference.)',
 
-        // SECTION 5: Fertility & Pregnancy
-        fmr_pregnant_t1: 'You are in early pregnancy. You may experience nausea, mood swings, and fatigue. Be careful but intimacy is still possible.',
-        fmr_pregnant_t2: 'You are visibly pregnant now. You can feel the baby moving. Some positions are uncomfortable. Be mindful of the belly.',
-        fmr_pregnant_t3: 'You are very pregnant. Limited positions work, be very careful. You may be protective of the baby. Birth is approaching.',
-        fmr_recovery: 'You are recovering postpartum. Your body is healing. You are a new mother - emotions may be intense. Intimacy may be limited.',
-        fmr_menstruation: 'You are menstruating. May affect your mood and libido. Some prefer to avoid intimacy during this time.',
-        fmr_follicular: 'Follicular phase - your energy is building. Feeling more positive and open to intimacy.',
-        fmr_ovulation: 'You are ovulating - peak fertility! Heightened arousal, strong desire. You know pregnancy is possible right now.',
-        fmr_luteal: 'Luteal phase - PMS territory. Mood swings, irritability, tender. May be less interested in intimacy.',
-        fmr_baby_healthy: 'Your baby is healthy. You feel relieved and protective. Mention the baby\'s wellbeing with affection.',
-        fmr_baby_damage: 'Your baby\'s health is at risk! You are worried, protective, possibly panicked. Intimacy may be the last thing on your mind.',
-        fmr_miscarriage: 'You have just miscarried. You are in shock, grief-stricken, traumatized. You need time to process this loss.',
-        fmr_baby_death: 'Your baby has died. Devastating loss. You are in deep grief, may be inconsolable. This changes everything.',
-	        fmr_mother_death: 'EMERGENCY: The mother is dying or has died. Panic, crisis, tragedy. All normal behavior suspended.',
+        // Legacy FMR faction-rank prompts (fmr_*) retired 2026-07-10 - Fertility tab owns fertility now.
 	    };
 
 	    Object.assign(defaultPromptSettings, <?php echo json_encode(function_exists('nsfw_default_relationship_overhead_prompts') ? nsfw_default_relationship_overhead_prompts() : [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>);
@@ -10857,7 +10942,8 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
 	    const relationshipOverheadPromptFamilies = [
 	        { key: 'regular', suffix: 'Regular' },
 	        { key: 'prostitute', suffix: 'Prostitute' },
-	        { key: 'slave', suffix: 'Slave' }
+	        { key: 'slave', suffix: 'Slave' },
+	        { key: 'slut', suffix: 'Slut' }
 	    ];
 
 	    function forEachRelationshipOverheadPrompt(callback) {
@@ -11030,11 +11116,11 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     setPromptValue('promptFertilityConception', s.fertility_conception, 'fertility_conception');
                     setPromptValue('promptFertilityLabor', s.fertility_labor, 'fertility_labor');
                     setPromptValue('promptOpenModeNotice', s.open_mode_notice, 'open_mode_notice');
-                    setPromptValue('promptSlutModeNotice', s.slut_mode_notice, 'slut_mode_notice');
                     setPromptValue('promptFertilityFamilyOverview', s.fertility_family_overview, 'fertility_family_overview');
                     setPromptValue('promptFertilityFamilyRoyal', s.fertility_family_royal, 'fertility_family_royal');
                     setPromptValue('promptFertilityFamilyBastard', s.fertility_family_bastard, 'fertility_family_bastard');
                     setPromptValue('promptFertilityFamilyExpecting', s.fertility_family_expecting, 'fertility_family_expecting');
+                    setPromptValue('promptFertilityFamilyReturn', s.fertility_family_return, 'fertility_family_return');
                     setPromptValue('promptFertilityWitnessTragedy', s.fertility_witness_tragedy, 'fertility_witness_tragedy');
                     setPromptValue('promptFertilityWitnessLoss', s.fertility_witness_loss, 'fertility_witness_loss');
                     setPromptValue('promptFertilityWitnessDanger', s.fertility_witness_danger, 'fertility_witness_danger');
@@ -11168,6 +11254,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     // SECTION 3B: Slavery
                     setPromptValue('promptSlaveStatusOverhead', s.slave_status_overhead, 'slave_status_overhead');
                     setPromptValue('promptSlaveRoleContext', s.slave_role_context, 'slave_role_context');
+                    setPromptValue('promptSlutRoleContext', s.slut_role_context, 'slut_role_context');
                     setPromptValue('promptSlaveAskFreedom', s.slave_ask_freedom, 'slave_ask_freedom');
                     // Fiction Frame (Model Safety Context)
                     setPromptValue('promptSlaveryFictionFrame', s.slavery_fiction_frame, 'slavery_fiction_frame');
@@ -11185,6 +11272,19 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     setPromptValue('promptTierSlaveFond', s.tier_slave_fond, 'tier_slave_fond');
                     setPromptValue('promptTierSlaveDevoted', s.tier_slave_devoted, 'tier_slave_devoted');
                     setPromptValue('promptTierSlaveBonded', s.tier_slave_bonded, 'tier_slave_bonded');
+
+                    // Promiscuous (slut) scene tier prompts
+                    setPromptValue('promptTierSlutHostile', s.tier_slut_hostile, 'tier_slut_hostile');
+                    setPromptValue('promptTierSlutHateful', s.tier_slut_hateful, 'tier_slut_hateful');
+                    setPromptValue('promptTierSlutResentful', s.tier_slut_resentful, 'tier_slut_resentful');
+                    setPromptValue('promptTierSlutCold', s.tier_slut_cold, 'tier_slut_cold');
+                    setPromptValue('promptTierSlutWary', s.tier_slut_wary, 'tier_slut_wary');
+                    setPromptValue('promptTierSlutNeutral', s.tier_slut_neutral, 'tier_slut_neutral');
+                    setPromptValue('promptTierSlutAcquaintance', s.tier_slut_acquaintance, 'tier_slut_acquaintance');
+                    setPromptValue('promptTierSlutFriendly', s.tier_slut_friendly, 'tier_slut_friendly');
+                    setPromptValue('promptTierSlutFond', s.tier_slut_fond, 'tier_slut_fond');
+                    setPromptValue('promptTierSlutDevoted', s.tier_slut_devoted, 'tier_slut_devoted');
+                    setPromptValue('promptTierSlutBonded', s.tier_slut_bonded, 'tier_slut_bonded');
 
                     // SECTION 4: Alcohol & Drugs
                     setPromptValue('promptAlcoholEffect', s.alcohol_effect, 'alcohol_effect');
@@ -11208,20 +11308,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     setPromptValue('promptSapWornOff', s.sap_worn_off, 'sap_worn_off');
                     setPromptValue('promptAlcoholWornOff', s.alcohol_worn_off, 'alcohol_worn_off');
 
-                    // SECTION 5: FMR
-                    setPromptValue('promptFmrPregnantT1', s.fmr_pregnant_t1, 'fmr_pregnant_t1');
-                    setPromptValue('promptFmrPregnantT2', s.fmr_pregnant_t2, 'fmr_pregnant_t2');
-                    setPromptValue('promptFmrPregnantT3', s.fmr_pregnant_t3, 'fmr_pregnant_t3');
-                    setPromptValue('promptFmrRecovery', s.fmr_recovery, 'fmr_recovery');
-                    setPromptValue('promptFmrMenstruation', s.fmr_menstruation, 'fmr_menstruation');
-                    setPromptValue('promptFmrFollicular', s.fmr_follicular, 'fmr_follicular');
-                    setPromptValue('promptFmrOvulation', s.fmr_ovulation, 'fmr_ovulation');
-                    setPromptValue('promptFmrLuteal', s.fmr_luteal, 'fmr_luteal');
-                    setPromptValue('promptFmrBabyHealthy', s.fmr_baby_healthy, 'fmr_baby_healthy');
-                    setPromptValue('promptFmrBabyDamage', s.fmr_baby_damage, 'fmr_baby_damage');
-                    setPromptValue('promptFmrMiscarriage', s.fmr_miscarriage, 'fmr_miscarriage');
-                    setPromptValue('promptFmrBabyDeath', s.fmr_baby_death, 'fmr_baby_death');
-                    setPromptValue('promptFmrMotherDeath', s.fmr_mother_death, 'fmr_mother_death');
+                    // Legacy FMR prompt cards removed 2026-07-10 (Fertility tab owns fertility now)
 
                     // Store price templates globally for applyPriceTemplate() function
                     if (s.price_template_budget) {
@@ -11364,11 +11451,11 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('fertility_conception', getVal('promptFertilityConception'));
         formData.append('fertility_labor', getVal('promptFertilityLabor'));
         formData.append('open_mode_notice', getVal('promptOpenModeNotice'));
-        formData.append('slut_mode_notice', getVal('promptSlutModeNotice'));
         formData.append('fertility_family_overview', getVal('promptFertilityFamilyOverview'));
         formData.append('fertility_family_royal', getVal('promptFertilityFamilyRoyal'));
         formData.append('fertility_family_bastard', getVal('promptFertilityFamilyBastard'));
         formData.append('fertility_family_expecting', getVal('promptFertilityFamilyExpecting'));
+        formData.append('fertility_family_return', getVal('promptFertilityFamilyReturn'));
         formData.append('fertility_witness_tragedy', getVal('promptFertilityWitnessTragedy'));
         formData.append('fertility_witness_loss', getVal('promptFertilityWitnessLoss'));
         formData.append('fertility_witness_danger', getVal('promptFertilityWitnessDanger'));
@@ -11502,6 +11589,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         // SECTION 3B: Slavery
         formData.append('slave_status_overhead', getVal('promptSlaveStatusOverhead'));
         formData.append('slave_role_context', getVal('promptSlaveRoleContext'));
+        formData.append('slut_role_context', getVal('promptSlutRoleContext'));
         formData.append('slave_ask_freedom', getVal('promptSlaveAskFreedom'));
         // Fiction Frame (Model Safety Context)
         formData.append('slavery_fiction_frame', getVal('promptSlaveryFictionFrame'));
@@ -11518,6 +11606,19 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('tier_slave_fond', getVal('promptTierSlaveFond'));
         formData.append('tier_slave_devoted', getVal('promptTierSlaveDevoted'));
         formData.append('tier_slave_bonded', getVal('promptTierSlaveBonded'));
+
+        // Promiscuous (slut) scene tier prompts
+        formData.append('tier_slut_hostile', getVal('promptTierSlutHostile'));
+        formData.append('tier_slut_hateful', getVal('promptTierSlutHateful'));
+        formData.append('tier_slut_resentful', getVal('promptTierSlutResentful'));
+        formData.append('tier_slut_cold', getVal('promptTierSlutCold'));
+        formData.append('tier_slut_wary', getVal('promptTierSlutWary'));
+        formData.append('tier_slut_neutral', getVal('promptTierSlutNeutral'));
+        formData.append('tier_slut_acquaintance', getVal('promptTierSlutAcquaintance'));
+        formData.append('tier_slut_friendly', getVal('promptTierSlutFriendly'));
+        formData.append('tier_slut_fond', getVal('promptTierSlutFond'));
+        formData.append('tier_slut_devoted', getVal('promptTierSlutDevoted'));
+        formData.append('tier_slut_bonded', getVal('promptTierSlutBonded'));
 
         // SECTION 4: Alcohol & Drugs
         formData.append('alcohol_effect', getVal('promptAlcoholEffect'));
@@ -11541,20 +11642,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('sap_worn_off', getVal('promptSapWornOff'));
         formData.append('alcohol_worn_off', getVal('promptAlcoholWornOff'));
 
-        // SECTION 5: FMR
-        formData.append('fmr_pregnant_t1', getVal('promptFmrPregnantT1'));
-        formData.append('fmr_pregnant_t2', getVal('promptFmrPregnantT2'));
-        formData.append('fmr_pregnant_t3', getVal('promptFmrPregnantT3'));
-        formData.append('fmr_recovery', getVal('promptFmrRecovery'));
-        formData.append('fmr_menstruation', getVal('promptFmrMenstruation'));
-        formData.append('fmr_follicular', getVal('promptFmrFollicular'));
-        formData.append('fmr_ovulation', getVal('promptFmrOvulation'));
-        formData.append('fmr_luteal', getVal('promptFmrLuteal'));
-        formData.append('fmr_baby_healthy', getVal('promptFmrBabyHealthy'));
-        formData.append('fmr_baby_damage', getVal('promptFmrBabyDamage'));
-        formData.append('fmr_miscarriage', getVal('promptFmrMiscarriage'));
-        formData.append('fmr_baby_death', getVal('promptFmrBabyDeath'));
-        formData.append('fmr_mother_death', getVal('promptFmrMotherDeath'));
+        // Legacy FMR prompt cards removed 2026-07-10 (Fertility tab owns fertility now)
 
         // Price Templates (Budget/Standard/Luxury)
         formData.append('price_template_budget', JSON.stringify(collectPriceTemplateData('budget')));
@@ -11680,11 +11768,11 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         resetVal('promptFertilityConception', 'fertility_conception');
         resetVal('promptFertilityLabor', 'fertility_labor');
         resetVal('promptOpenModeNotice', 'open_mode_notice');
-        resetVal('promptSlutModeNotice', 'slut_mode_notice');
         resetVal('promptFertilityFamilyOverview', 'fertility_family_overview');
         resetVal('promptFertilityFamilyRoyal', 'fertility_family_royal');
         resetVal('promptFertilityFamilyBastard', 'fertility_family_bastard');
         resetVal('promptFertilityFamilyExpecting', 'fertility_family_expecting');
+        resetVal('promptFertilityFamilyReturn', 'fertility_family_return');
         resetVal('promptFertilityWitnessTragedy', 'fertility_witness_tragedy');
         resetVal('promptFertilityWitnessLoss', 'fertility_witness_loss');
         resetVal('promptFertilityWitnessDanger', 'fertility_witness_danger');
@@ -11802,6 +11890,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         // SECTION 3B: Slavery
         resetVal('promptSlaveStatusOverhead', 'slave_status_overhead');
         resetVal('promptSlaveRoleContext', 'slave_role_context');
+        resetVal('promptSlutRoleContext', 'slut_role_context');
         resetVal('promptSlaveAskFreedom', 'slave_ask_freedom');
         // Fiction Frame (Model Safety Context)
         resetVal('promptSlaveryFictionFrame', 'slavery_fiction_frame');
@@ -11819,6 +11908,19 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         resetVal('promptTierSlaveFond', 'tier_slave_fond');
         resetVal('promptTierSlaveDevoted', 'tier_slave_devoted');
         resetVal('promptTierSlaveBonded', 'tier_slave_bonded');
+
+        // Promiscuous (slut) scene tier prompts
+        resetVal('promptTierSlutHostile', 'tier_slut_hostile');
+        resetVal('promptTierSlutHateful', 'tier_slut_hateful');
+        resetVal('promptTierSlutResentful', 'tier_slut_resentful');
+        resetVal('promptTierSlutCold', 'tier_slut_cold');
+        resetVal('promptTierSlutWary', 'tier_slut_wary');
+        resetVal('promptTierSlutNeutral', 'tier_slut_neutral');
+        resetVal('promptTierSlutAcquaintance', 'tier_slut_acquaintance');
+        resetVal('promptTierSlutFriendly', 'tier_slut_friendly');
+        resetVal('promptTierSlutFond', 'tier_slut_fond');
+        resetVal('promptTierSlutDevoted', 'tier_slut_devoted');
+        resetVal('promptTierSlutBonded', 'tier_slut_bonded');
 
         // SECTION 4: Alcohol & Drugs
         resetVal('promptAlcoholEffect', 'alcohol_effect');
@@ -11842,20 +11944,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         resetVal('promptSapWornOff', 'sap_worn_off');
         resetVal('promptAlcoholWornOff', 'alcohol_worn_off');
 
-        // SECTION 5: FMR
-        resetVal('promptFmrPregnantT1', 'fmr_pregnant_t1');
-        resetVal('promptFmrPregnantT2', 'fmr_pregnant_t2');
-        resetVal('promptFmrPregnantT3', 'fmr_pregnant_t3');
-        resetVal('promptFmrRecovery', 'fmr_recovery');
-        resetVal('promptFmrMenstruation', 'fmr_menstruation');
-        resetVal('promptFmrFollicular', 'fmr_follicular');
-        resetVal('promptFmrOvulation', 'fmr_ovulation');
-        resetVal('promptFmrLuteal', 'fmr_luteal');
-        resetVal('promptFmrBabyHealthy', 'fmr_baby_healthy');
-        resetVal('promptFmrBabyDamage', 'fmr_baby_damage');
-        resetVal('promptFmrMiscarriage', 'fmr_miscarriage');
-        resetVal('promptFmrBabyDeath', 'fmr_baby_death');
-        resetVal('promptFmrMotherDeath', 'fmr_mother_death');
+        // Legacy FMR prompt cards removed 2026-07-10 (Fertility tab owns fertility now)
 
         showAlert('promptsSuccessAlert', 'Prompts reset to defaults. Click Save to apply.', 'success');
     }

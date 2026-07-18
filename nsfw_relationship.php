@@ -57,6 +57,10 @@ class NsfwRelationship {
         // Get the prompt from database - NO FALLBACK TO HARDCODED DEFAULTS
         // If prompt is not in DB, log error and return empty (user must save prompts in UI first)
         $prompt = $prompts[$promptKey] ?? '';
+        // PROMISCUOUS MARK: is_slut NPCs swap to the tier_slut_<tier> scene set (eager Acquainted+
+        // acceptance, RefuseSex gates below); null = mark absent or set blank, keep the regular path.
+        $slutTierText = self::getSlutTierPromptText($npcName, $tier, $isProstitute, $prompts);
+        if ($slutTierText !== null) { $prompt = $slutTierText; }
         if (empty($prompt) && !$isProstitute) {
             // Regular-NPC safety net: profileless / fresh-DB NPCs would otherwise emit EMPTY tier context
             // (NPC-NPC dialogue then silently fails). Prostitutes use their own pathway - no fallback.
@@ -106,8 +110,11 @@ class NsfwRelationship {
                 return $prompt;
             }
 
-            // AFFAIR: Married but partner is NOT spouse - use affair prompts
-            if (self::isAffairScenario($npcName, $partnerName)) {
+            // AFFAIR: Married but partner is NOT spouse - use affair prompts. A promiscuous-marked
+            // NPC skips the affair-guilt framing (the mark removes the affair floor) and falls
+            // through to her tier_slut_<tier> scene set below.
+            if (self::isAffairScenario($npcName, $partnerName)
+                && !(function_exists('aiagentNsfwIsSlutNpc') && aiagentNsfwIsSlutNpc($npcName))) {
                 $spouseName = self::getSpouseName($npcName);
                 $prompt = $isNpcPromptContext
                     ? self::getNpcAffairTierPrompt($tier, $partnerName, $spouseName, $npcName)
@@ -126,6 +133,9 @@ class NsfwRelationship {
 
         // Get prompt from database - regular-NPC safety net for profileless/fresh-DB (covers NPC-NPC, OStim + SexLab)
         $prompt = $prompts[$promptKey] ?? '';
+        // PROMISCUOUS MARK: is_slut NPCs swap to the tier_slut_<tier> scene set.
+        $slutTierText = self::getSlutTierPromptText($npcName, $tier, $isProstitute, $prompts);
+        if ($slutTierText !== null) { $prompt = $slutTierText; }
         if (empty($prompt) && !$isProstitute) {
             require_once __DIR__ . "/nsfw_data.php";
             $_defTiers = NsfwData::getDefaultTierPrompts();
@@ -199,9 +209,13 @@ class NsfwRelationship {
     }
 
     private static function getNpcSceneTierPrompt($tier, $affinity, $isProstitute, $partnerName, $npcName = '') {
+        $npcIsSlutMark = !$isProstitute && trim((string)$npcName) !== ''
+            && function_exists('aiagentNsfwIsSlutNpc') && aiagentNsfwIsSlutNpc($npcName);
         $roleLine = $isProstitute
             ? 'This NPC is marked as a prostitute / sex worker; let that professional context color the response.'
-            : 'Use this relationship tier as emotional context only.';
+            : ($npcIsSlutMark
+                ? 'This NPC is openly promiscuous (never charges); let that eager, casual-desire disposition color the response.'
+                : 'Use this relationship tier as emotional context only.');
         $prompt = "#NPC_NAME# is in an NPC-to-NPC intimate scene with #PRIMARY_PARTNER#. Relationship tier toward #PRIMARY_PARTNER#: #TIER# (#AFFINITY# affinity). {$roleLine} Do not run the player affinity, arousal, refusal, or scene-stop gate for this NPC-only route. React through #NPC_NAME#'s speech style, profile, current scene, and relationship state.";
         $prompt = self::replaceNpcScenePlaceholders($prompt, $partnerName, '', $npcName);
         $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
@@ -217,6 +231,21 @@ class NsfwRelationship {
      * @param string $partnerName Owner/initiator name for placeholder replacement
      * @return string The slave tier prompt
      */
+    // PROMISCUOUS MARK (2026-07-10): a regular NPC carrying is_slut swaps her per-tier SCENE prompt
+    // to tier_slut_<tier> (Promiscuous (Global) section: eager Acquainted+ acceptance, RefuseSex
+    // gates below). Returns the prompt text, or null when the mark/set does not apply so callers
+    // fall through to the regular tier_<tier> path untouched. Blank saved key falls back to the
+    // shipped default so a fresh DB never emits empty scene context for a marked NPC.
+    private static function getSlutTierPromptText($npcName, $tier, $isProstitute, $prompts) {
+        if ($isProstitute) { return null; }
+        $npcName = trim((string)$npcName);
+        if ($npcName === '' || !function_exists('aiagentNsfwIsSlutNpc') || !aiagentNsfwIsSlutNpc($npcName)) { return null; }
+        $key = "tier_slut_{$tier}";
+        $text = trim((string)($prompts[$key] ?? ''));
+        if ($text === '') { $text = trim((string)self::getDefaultPromptOverride($key)); }
+        return ($text !== '') ? $text : null;
+    }
+
     public static function getSlaveTierPrompt($affinity, $partnerName = 'Owner') {
         $tier = strtolower(RelationshipManager::getTierLabel($affinity));
 
@@ -315,12 +344,16 @@ class NsfwRelationship {
 
         $isSlave = !empty($extended['is_slave']);
         $isProstitute = !$isSlave && !empty($extended['is_prostitute']);
-        if (!$isSlave && !$isProstitute) {
+        // Promiscuous mark gets its own persistent role context too (children never carry the mark;
+        // the save guards block it and aiagentNsfwIsSlutNpc re-checks, but guard here as well).
+        $isSlut = !$isSlave && !$isProstitute && !empty($extended['is_slut'])
+            && !(function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($npcName));
+        if (!$isSlave && !$isProstitute && !$isSlut) {
             return '';
         }
 
         $prompts = self::loadPromptSettings();
-        $promptKey = $isSlave ? 'slave_role_context' : 'prostitute_role_context';
+        $promptKey = $isSlave ? 'slave_role_context' : ($isProstitute ? 'prostitute_role_context' : 'slut_role_context');
         $prompt = trim((string)($prompts[$promptKey] ?? self::getDefaultPromptOverride($promptKey)));
         // Do NOT early-return on an empty base overhead. An INELIGIBLE relationship type must STILL receive the
         // "not sexually available" addendum below even when the per-tier overhead text is blank (user directive
@@ -329,7 +362,7 @@ class NsfwRelationship {
 
         $prompt = self::replaceRoleOverheadPlaceholders($prompt, $npcName, $partnerName, $extended, $isSlave);
 
-        return self::wrapXml($isSlave ? 'sharmat_slave_role_context' : 'sharmat_prostitute_role_context', $prompt);
+        return self::wrapXml($isSlave ? 'sharmat_slave_role_context' : ($isProstitute ? 'sharmat_prostitute_role_context' : 'sharmat_slut_role_context'), $prompt);
     }
 
     /**
@@ -354,6 +387,17 @@ class NsfwRelationship {
         $isSlave = !empty($extended['is_slave']);
         $isProstitute = !$isSlave && !empty($extended['is_prostitute']);
         $family = $isSlave ? 'slave' : ($isProstitute ? 'prostitute' : 'regular');
+
+        // PROMISCUOUS MARK + OPEN MODE (2026-07-10): an NPC marked promiscuous (is_slut, NPC
+        // Settings tab) uses the promiscuous overhead family (relationship_overhead_slut_<tier>)
+        // instead of the regular one; slaves and prostitutes keep their own lanes and children
+        // never swap. Open mode keeps the regular texts (the open_mode_notice carries the world
+        // rules) but both must also bypass the type-ineligibility addendum below, which otherwise
+        // orders a per-turn RefuseSex and fights the eligibility gate.
+        $ovIsChild = function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($npcName);
+        $ovOpenMode = !$ovIsChild && function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode();
+        $ovSlutMode = !$ovIsChild && !$ovOpenMode && !empty($extended['is_slut']);
+        if ($family === 'regular' && $ovSlutMode) { $family = 'slut'; }
 
         $playerName = self::getPlayerRouteName();
         $partnerName = trim((string)($partnerName ?? ''));
@@ -389,7 +433,7 @@ class NsfwRelationship {
         // Friendly+) an explicit pre-emptive RefuseSex instruction. All appended into the SINGLE overhead block
         // so they land on her in one go. Editable via the Prompts panel (relationship_overhead_tier_tag /
         // relationship_overhead_spouse_tag); the refusal text comes from the Relationship Types section.
-        if ($family === 'regular' && empty($isNpcPromptContext)) {
+        if (($family === 'regular' || $family === 'slut') && empty($isNpcPromptContext)) {
             // The tier-tag add-on (UI: relationship_overhead_tier_tag) is the INELIGIBLE-TYPE addendum: it applies
             // ONLY to NPCs whose relationship TYPE is NOT one of the UI-selected sex-eligible types. Eligible types
             // (e.g. romantic, crush) are exempt and never see it. Was injecting unconditionally, which force-refused
@@ -405,18 +449,36 @@ class NsfwRelationship {
             $relTypeLowerOv = strtolower(trim((string)($relationship['type'] ?? '')));
             $typeIsEligibleOv = ($relTypeLowerOv !== '' && in_array($relTypeLowerOv, $rtEligibleOv, true));
 
+            // OPEN MODE: no type is ineligible - the refusal addendum would fight the mode. SLUT
+            // family (per-NPC mark or global mode): eligibility is affinity-driven from Acquaintance
+            // (6) up, mirroring aiagentNsfwRelTypeSexEligible; below the floor the refusal addendum
+            // still fires so the mechanical gate and the prompt agree.
+            if ($ovOpenMode) {
+                $typeIsEligibleOv = true;
+            } elseif ($family === 'slut') {
+                // Mirror aiagentNsfwRelTypeSexEligible exactly: affinity floor 6 AND orientation
+                // allows the player - so the prompt and the mechanical gate never disagree.
+                $typeIsEligibleOv = ((int)($relationship['aff'] ?? 0) >= 6)
+                    && (!function_exists('aiagentNsfwOrientationAllowsPlayer') || aiagentNsfwOrientationAllowsPlayer($npcName));
+            }
+
             if (!$typeIsEligibleOv) {
                 $tierTag = trim((string)($prompts['relationship_overhead_tier_tag']
                     ?? "Your current relationship tier with #PLAYER_NAME# is #TIER# (#AFFINITY# affinity)."));
                 if ($tierTag !== '') { $prompt .= "\n" . $tierTag; }
             }
 
-            $overheadSpouse = '';
-            try { $overheadSpouse = trim((string)self::getSpouseName($npcName)); } catch (Exception $e) { $overheadSpouse = ''; }
-            if ($overheadSpouse !== '') {
-                $spouseTag = trim((string)($prompts['relationship_overhead_spouse_tag']
-                    ?? "You are married to #SPOUSE#. #PLAYER_NAME# is not your spouse; any sexual intimacy with #PLAYER_NAME# would be an affair on your part."));
-                if ($spouseTag !== '') { $prompt .= "\n" . $spouseTag; }
+            // Spouse-affair notice: skipped in open mode (no permission structure exists) and for the
+            // slut family (the mode/mark explicitly removes the affair floor); a promiscuous or
+            // open-world spouse being warned "this would be an affair" every turn contradicts both.
+            if (!$ovOpenMode && $family !== 'slut') {
+                $overheadSpouse = '';
+                try { $overheadSpouse = trim((string)self::getSpouseName($npcName)); } catch (Exception $e) { $overheadSpouse = ''; }
+                if ($overheadSpouse !== '') {
+                    $spouseTag = trim((string)($prompts['relationship_overhead_spouse_tag']
+                        ?? "You are married to #SPOUSE#. #PLAYER_NAME# is not your spouse; any sexual intimacy with #PLAYER_NAME# would be an affair on your part."));
+                    if ($spouseTag !== '') { $prompt .= "\n" . $spouseTag; }
+                }
             }
 
             // Inject the kind-decline instruction ONLY for an INELIGIBLE relationship type (eligible types like
@@ -1572,8 +1634,10 @@ class NsfwRelationship {
                 return $prompt;
             }
 
-            // AFFAIR: Married but partner is NOT spouse - use affair prompts
-            if (self::isAffairScenario($npcName, $partnerName)) {
+            // AFFAIR: Married but partner is NOT spouse - use affair prompts. Promiscuous-marked
+            // NPCs skip the affair-guilt framing and use their tier_slut_<tier> set below.
+            if (self::isAffairScenario($npcName, $partnerName)
+                && !(function_exists('aiagentNsfwIsSlutNpc') && aiagentNsfwIsSlutNpc($npcName))) {
                 $spouseName = self::getSpouseName($npcName);
                 $prompt = $isNpcPromptContext
                     ? self::getNpcAffairTierPrompt($tier, $partnerName, $spouseName, $npcName)
@@ -1597,6 +1661,9 @@ class NsfwRelationship {
 
         // Get prompt from database - regular-NPC safety net for profileless/fresh-DB
         $prompt = $prompts[$promptKey] ?? '';
+        // PROMISCUOUS MARK: is_slut NPCs swap to the tier_slut_<tier> scene set.
+        $slutTierText = self::getSlutTierPromptText($npcName ?? '', $tier, $isProstitute, $prompts);
+        if ($slutTierText !== null) { $prompt = $slutTierText; }
         if (empty($prompt) && !$isProstitute) {
             require_once __DIR__ . "/nsfw_data.php";
             $_defTiers = NsfwData::getDefaultTierPrompts();

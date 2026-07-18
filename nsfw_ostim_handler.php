@@ -1198,6 +1198,16 @@ class NsfwOstimHandler {
             error_log("[AIAGENTNSFW] Suppressed affection transition speech for {$sexStageName} (tier {$sceneTier}); state updated, final affection beat may speak");
         }
 
+        // IN-SCENE TALKATIVENESS (feature 2026-07-12): "Respond to Scene/Position Changes" unchecked
+        // silences the beat-driven line on scene CHANGES only. All scene state above is already
+        // processed; the new-scene/consent turn ($anyActorNeedsTierPrompt) ALWAYS speaks - it is the
+        // RefuseSex window for scenes started outside SHARMAT tools. Group-scene tick below stays independent.
+        if (empty($GLOBALS["AIAGENTNSFW_FORCE_STOP"]) && !$anyActorNeedsTierPrompt
+            && !_getNsfwSetting('NSFW_SCENE_SPEAK_ON_SCENE_CHANGE', true)) {
+            $GLOBALS["AIAGENTNSFW_FORCE_STOP"] = true;
+            error_log("[AIAGENTNSFW] Scene-change response suppressed (Respond to Scene/Position Changes off); state processed silently");
+        }
+
 	        error_log("[AIAGENTNSFW] Scene processed: $sexSceneName | Actors: " . implode(",", $orderedActorList) . " | Primary: " . ($primaryPartner ?? "none") . " | Desc: $cleanedSceneDesc | FORCE_STOP=" . ($GLOBALS["AIAGENTNSFW_FORCE_STOP"] ? "Y" : "N"));
 	
 	        // Log the full event (with description) now that we have it computed
@@ -1222,15 +1232,24 @@ class NsfwOstimHandler {
                 $others[] = $a;
             }
             if (!empty($others)) {
-                $gsCadence = (int)_getNsfwSetting('NPC_SCENE_GLOBAL_COOLDOWN_SECONDS', 25);
+                // GROUP-SCENE CHATTER TICK (feature 2026-07-12): own interval slider; 0 = follow the
+                // NPC Scene Global Speech Cooldown (pre-slider behavior, default 25s).
+                $gsCadence = (int)_getNsfwSetting('GROUP_SCENE_TICK_SECONDS', 0);
+                if ($gsCadence <= 0) { $gsCadence = (int)_getNsfwSetting('NPC_SCENE_GLOBAL_COOLDOWN_SECONDS', 25); }
                 if ($gsCadence < 1) { $gsCadence = 1; }
                 $gsClock = sys_get_temp_dir() . "/nsfw_groupscene_last.txt";
                 if ((time() - (int)(@file_get_contents($gsClock) ?: 0)) >= $gsCadence) {
                     $gsIdxFile = sys_get_temp_dir() . "/nsfw_groupscene_idx.txt";
-                    $gsIdx = (int)(@file_get_contents($gsIdxFile) ?: 0) % count($others);
+                    // RANDOM participant (user request 2026-07-12, was round-robin): orgy chime-ins pick
+                    // a random non-primary participant; avoid the same NPC twice in a row when possible.
+                    $gsIdx = (count($others) > 1) ? mt_rand(0, count($others) - 1) : 0;
+                    $gsPrev = (int)(@file_get_contents($gsIdxFile) ?: -1);
+                    if (count($others) > 1 && $gsIdx === $gsPrev) {
+                        $gsIdx = ($gsIdx + 1) % count($others);
+                    }
                     if (self::queueParticipantSceneTurn($others[$gsIdx], $primaryPartner ?: $playerNm)) {
                         @file_put_contents($gsClock, time(), LOCK_EX);
-                        @file_put_contents($gsIdxFile, ($gsIdx + 1), LOCK_EX);
+                        @file_put_contents($gsIdxFile, $gsIdx, LOCK_EX);
                     }
                 }
             }
@@ -2427,7 +2446,7 @@ class NsfwOstimHandler {
             // ELIGIBILITY REQUIRED (fix 2026-07-01g): scene-underway is not consent for a rel-type-ineligible NPC
             || (empty($intimacyStatus["npc_is_prostitute"])
                 && function_exists('aiagentNsfwRelTypeSexEligible') && aiagentNsfwRelTypeSexEligible($actor)
-                && (!empty($intimacyStatus["sex_started"]) || !empty($intimacyStatus["had_sex_in_scene"]) || (function_exists('getNpcAffinity') && (int)getNpcAffinity($actor) >= (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56))));
+                && (!empty($intimacyStatus["sex_started"]) || !empty($intimacyStatus["had_sex_in_scene"]) || (function_exists('getNpcAffinity') && (int)getNpcAffinity($actor) >= (function_exists('aiagentNsfwSceneCallFloorFor') ? (int)aiagentNsfwSceneCallFloorFor($actor) : (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56)))));
         // SELF-LATCH BREAKER (fix 2026-07-01): same healing as handleOrgasm - chatnf_sl_climax often arrives BEFORE
         // ext_nsfw_orgasm and used to RE-AFFIRM a spurious latch instead of healing it. A consenting NPC with NO
         // sticky refusal (refused_until_scene_end) is not actually rejected; a genuine refusal is untouched.
@@ -2841,7 +2860,7 @@ class NsfwOstimHandler {
             // ELIGIBILITY REQUIRED (fix 2026-07-01g): scene-underway is not consent for a rel-type-ineligible NPC
             || (empty($intimacyStatus["npc_is_prostitute"])
                 && function_exists('aiagentNsfwRelTypeSexEligible') && aiagentNsfwRelTypeSexEligible($actor)
-                && (!empty($intimacyStatus["sex_started"]) || !empty($intimacyStatus["had_sex_in_scene"]) || (function_exists('getNpcAffinity') && (int)getNpcAffinity($actor) >= (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56))));
+                && (!empty($intimacyStatus["sex_started"]) || !empty($intimacyStatus["had_sex_in_scene"]) || (function_exists('getNpcAffinity') && (int)getNpcAffinity($actor) >= (function_exists('aiagentNsfwSceneCallFloorFor') ? (int)aiagentNsfwSceneCallFloorFor($actor) : (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56)))));
         // SELF-LATCH BREAKER (verified spec 2026-07-01): the suppression block below WRITES scene_phase='rejected' on
         // every suppressed climax, so ONE spurious rejection (a lost scene flag, or an NPC-to-NPC orgasm misrouted to
         // this player handler) used to latch a CONSENTING NPC (e.g. a bonded partner) into the negative "refused" cue

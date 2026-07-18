@@ -687,6 +687,9 @@ function _getFmrPrompt($key, $default, $replacements = []) {
     return $prompt;
 }
 
+// LEGACY (retired 2026-07-10): the fmr_* prompt set and getFertilityPromptForNpc below are no
+// longer injected anywhere - the Fertility tab pipeline (context_pre.php) owns fertility prompts.
+// Kept only so old saved fmr_* values and any third-party callers do not fatal.
 // Pregnancy prompts by trimester
 $_fmrPregnantT1Default = "You are in early pregnancy. You may experience nausea, mood swings, and fatigue. Be careful but intimacy is still possible.";
 $_fmrPregnantT2Default = "You are visibly pregnant now. You can feel the baby moving. Some positions are uncomfortable. Be mindful of the belly.";

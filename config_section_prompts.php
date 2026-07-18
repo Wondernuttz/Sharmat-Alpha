@@ -30,6 +30,7 @@
                     ['key' => 'regular', 'suffix' => 'Regular', 'title' => 'General NPC Relationship Overhead', 'desc' => 'Injected for ordinary NPCs before scene/touch/sex prompts.'],
                     ['key' => 'prostitute', 'suffix' => 'Prostitute', 'title' => 'Prostitute Relationship Overhead', 'desc' => 'Injected for NPCs marked as prostitutes before payment, scene, and client prompts.'],
                     ['key' => 'slave', 'suffix' => 'Slave', 'title' => 'Slave Relationship Overhead', 'desc' => 'Injected for NPCs marked as slaves before slavery, scene, and owner prompts.'],
+                    ['key' => 'slut', 'suffix' => 'Slut', 'title' => 'Promiscuous Relationship Overhead', 'desc' => 'Injected for NPCs marked as promiscuous (slut) on the NPC Settings tab. Acquainted and up welcome advances (orientation permitting); Neutral and below still refuse. Prostitutes and slaves keep their own sets.'],
                 ];
             ?>
 
@@ -1563,7 +1564,100 @@
                 </div>
             </div>
 
-                        <!-- ============================================ -->
+            <!-- ============================================ -->
+            <!-- SECTION 3B2: PROMISCUOUS (SLUT) GLOBAL -->
+            <div style="margin-top: 15px;"></div>
+            <!-- ============================================ -->
+            <div class="collapsible-section" style="margin-bottom: 15px;">
+                <div class="collapsible-header" onclick="togglePromptSection('section3b2')" style="background: linear-gradient(135deg, #2A2540 0%, #1C1A24 100%); padding: 15px 20px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border: 1px solid #3A3545; transition: all 0.3s ease;">
+                    <h3 class="section-header" style="margin: 0; display: flex; align-items: center; gap: 10px;">
+                        <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;">
+                        Promiscuous (Global)
+                    </h3>
+                    <div style="display: flex; gap: 8px;">
+                        <span class="section-save-btn" onclick="event.stopPropagation(); savePromptSettings();">Save</span>
+                        <span id="section3b2Toggle" class="section-toggle-btn">Open</span>
+                    </div>
+                </div>
+                <div id="section3b2Content" class="collapsible-content" style="display: none; padding: 20px; background: #1C1A24; border: 1px solid #3A3545; border-top: none; border-radius: 0 0 8px 8px;">
+                    <p style="color: #9988BB; font-size: 12px; margin-bottom: 20px;">
+                        Global prompts for NPCs marked as promiscuous (slut) on the NPC Settings tab. Their per-tier behavior lives in the Promiscuous group of the Relationship Overhead section above.
+                    </p>
+
+                    <!-- Promiscuous Role Context -->
+                    <div class="card" style="margin-bottom: 20px; border: 2px solid #4A3545;">
+                        <h3 class="section-header" style="display: flex; align-items: center; gap: 10px;">
+                            <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> Promiscuous Role Context
+                        </h3>
+                        <p style="color: #B8A8C8; font-size: 11px; margin: 10px 0;">
+                            Injected into the character prompt for every NPC with the promiscuous checkbox enabled, before scene and affinity tier prompts. Use this for the general identity layer (openly promiscuous, no charge, still refuses dislike/distrust), not affinity gating. Leave blank to disable this layer.
+                            Placeholders: <code>#NPC_NAME#</code>, <code>#PLAYER_NAME#</code>, <code>#TIER#</code>, <code>#AFFINITY#</code>, <code>#REL_TYPE#</code>.
+                        </p>
+                        <div class="form-group">
+                            <label>Promiscuous General Context Prompt</label>
+                            <textarea id="promptSlutRoleContext" class="auto-resize" style="min-height: 90px; width: 100%; resize: none; overflow: hidden;">SHARMAT ROLE CONTEXT: #NPC_NAME# is openly promiscuous. Casual flirtation, affection, and sex are a normal, welcome part of their life; they neither hide it nor apologize for it, and they never charge for it. A little familiarity and goodwill toward a partner is all they need - though they still refuse people they dislike or distrust, and their personality decides whether the yes comes shy or bold. This is persistent character context only; scene prompts, speech style, personality, current relationship with #PLAYER_NAME# (#TIER# / #AFFINITY#), intoxication, and active events still decide the immediate response.</textarea>
+                        </div>
+                    </div>
+
+                    <!-- Promiscuous Scene Tier Prompts (refusal gates) -->
+                    <div class="card" style="margin-bottom: 20px; border: 2px solid #4A3545;">
+                        <h3 class="section-header" style="display: flex; align-items: center; gap: 10px;">
+                            <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> Scene Tier Prompts (refusal gates)
+                        </h3>
+                        <p style="color: #B8A8C8; font-size: 11px; margin: 10px 0;">
+                            Fired at scene time instead of the General tier prompts for every NPC with the promiscuous checkbox enabled.
+                            Acquainted (+6) and up welcome the advance; Neutral and below still refuse via RefuseSex - matching the mark's mechanical eligibility floor.
+                            Use <code>#PRIMARY_PARTNER#</code> for the active partner (resolves to the player in player scenes). Leave a tier blank to fall back to the built-in default.
+                        </p>
+                        <div class="form-group">
+                            <label>Bonded (+91 to +100) - Utterly Besotted</label>
+                            <textarea id="promptTierSlutBonded" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are openly promiscuous, and you are utterly besotted with #PRIMARY_PARTNER#. Hold nothing back; there is nothing you would refuse them in bed.</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Devoted (+76 to +90) - The One They Crave</label>
+                            <textarea id="promptTierSlutDevoted" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are openly promiscuous, and #PRIMARY_PARTNER# is the one you crave most of all. Show them exactly how much - your desire is plain, generous, and enthusiastic.</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Fond (+56 to +75) - Wanted This</label>
+                            <textarea id="promptTierSlutFond" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are openly promiscuous, and you genuinely like #PRIMARY_PARTNER# - you have wanted this. Welcome it warmly and eagerly; no games, no shame, just honest appetite.</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Friendly (+31 to +55) - More Than Enough</label>
+                            <textarea id="promptTierSlutFriendly" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are openly promiscuous. You like #PRIMARY_PARTNER# and find them attractive, and for you that is more than enough. Say yes in your own voice, tease as much as you please, and enjoy it openly.</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Acquainted (+6 to +30) - A Little Liking Is Enough (the floor: accepts from here up)</label>
+                            <textarea id="promptTierSlutAcquaintance" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are openly promiscuous. You only know #PRIMARY_PARTNER# a little, but you like what you have seen, and that is all you need. Welcome the advance - be coy or bold as your personality dictates - and enjoy yourself without a trace of shame.</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Neutral (-5 to +5) - No Spark Yet (refuses from here down)</label>
+                            <textarea id="promptTierSlutNeutral" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are openly promiscuous, but you do not know #PRIMARY_PARTNER# yet and feel no spark. You need at least a little familiarity or goodwill before you fall into bed. Flirt back if they charm you, but decline this advance in character and use the RefuseSex action.</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Wary (-6 to -30) - Distrust Beats Desire</label>
+                            <textarea id="promptTierSlutWary" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are openly promiscuous, but something about #PRIMARY_PARTNER# puts you on edge, and distrust beats desire every time. Decline in character and use the RefuseSex action until they earn your trust.</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Cold (-31 to -55) - Not For Them</label>
+                            <textarea id="promptTierSlutCold" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are openly promiscuous, but you dislike #PRIMARY_PARTNER#. Being easy does not mean being easy for THEM. Turn the advance down curtly and use the RefuseSex action.</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Resentful (-56 to -75) - They Get Nothing</label>
+                            <textarea id="promptTierSlutResentful" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are openly promiscuous, but #PRIMARY_PARTNER# did you wrong and you have not forgotten. Everyone else may have you easily; they get nothing. Refuse with spite and use the RefuseSex action.</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Hateful (-76 to -90) - Repulsed</label>
+                            <textarea id="promptTierSlutHateful" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are openly promiscuous, but you hate #PRIMARY_PARTNER# with every fiber of your being. The thought of their hands on you repulses you. Refuse harshly and use the RefuseSex action.</textarea>
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label>Hostile (-91 to -100) - Fury</label>
+                            <textarea id="promptTierSlutHostile" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are openly promiscuous, but not for #PRIMARY_PARTNER#. You wish them dead. Their advance disgusts and enrages you - refuse it furiously and use the RefuseSex action.</textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ============================================ -->
             <!-- SECTION 3C: NSFW LOCAL DEFAULTS -->
             <!-- ============================================ -->
             <div class="collapsible-section" style="margin-bottom: 15px;">
@@ -1942,124 +2036,9 @@ EXAMPLE SPEECH FORMAT: WHOOOOOOOOOOAAAAA.......IMMA..........YEAH..........isit?
             </div>
 
             <!-- ============================================ -->
-            <!-- SECTION 5: FERTILITY MODE RELOADED (FMR) -->
+            <!-- SECTION 5: FERTILITY & PREGNANCY (event-contract pipeline; content moved back from the short-lived Fertility tab 2026-07-10; the old faction-rank fmr_* cards that lived here are retired) -->
             <!-- ============================================ -->
-            <div class="collapsible-section" style="margin-bottom: 15px;">
-                <div class="collapsible-header" onclick="togglePromptSection('section5')" style="background: linear-gradient(135deg, #2A2540 0%, #1C1A24 100%); padding: 15px 20px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border: 1px solid #3A3545; transition: all 0.3s ease;">
-                    <h3 class="section-header" style="margin: 0; display: flex; align-items: center; gap: 10px;">
-                        <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;">
-                        Fertility & Pregnancy
-                    </h3>
-                    <div style="display: flex; gap: 8px;">
-                        <span class="section-save-btn" onclick="event.stopPropagation(); savePromptSettings();">Save</span>
-                        <span id="section5Toggle" class="section-toggle-btn">Open</span>
-                    </div>
-                </div>
-                <div id="section5Content" class="collapsible-content" style="display: none; padding: 20px; background: #1C1A24; border: 1px solid #3A3545; border-top: none; border-radius: 0 0 8px 8px;">
-                    <p style="color: #9988BB; font-size: 12px; margin-bottom: 10px;">
-                        Integration with fertility mod events. Faction ranks determine pregnancy/cycle state.
-                    </p>
-                    <div style="background: #252233; padding: 10px; border-radius: 5px; margin-bottom: 20px; font-size: 11px; color: #9988BB;">
-                        <strong>Faction Ranks:</strong> 0=Clear | 1-100=Pregnant% | 101-115=Recovery | 116=Menstruation | 117=Follicular | 118=Ovulation | 119=Luteal
-                    </div>
-
-                    <!-- 5a. Pregnancy Awareness -->
-                    <div class="card" style="margin-bottom: 20px;">
-                        <h3 class="section-header" style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
-                            <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> Pregnancy Awareness (Trimester-Based)
-                        </h3>
-                        <p style="color: #9988BB; font-size: 11px; margin-bottom: 10px;">
-                            How pregnancy state affects NPC behavior during sex. Ranks 1-100 indicate pregnancy progress %.
-                        </p>
-                        <div class="form-group">
-                            <label>1st Trimester (Ranks 1-33)</label>
-                            <textarea id="promptFmrPregnantT1" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are in early pregnancy. You may experience nausea, mood swings, and fatigue. Be careful but intimacy is still possible.</textarea>
-                        </div>
-                        <div class="form-group">
-                            <label>2nd Trimester (Ranks 34-66)</label>
-                            <textarea id="promptFmrPregnantT2" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are visibly pregnant now. You can feel the baby moving. Some positions are uncomfortable. Be mindful of the belly.</textarea>
-                        </div>
-                        <div class="form-group">
-                            <label>3rd Trimester (Ranks 67-100)</label>
-                            <textarea id="promptFmrPregnantT3" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are very pregnant. Limited positions work, be very careful. You may be protective of the baby. Birth is approaching.</textarea>
-                        </div>
-                        <div class="form-group">
-                            <label>Recovery (Ranks 101-115)</label>
-                            <textarea id="promptFmrRecovery" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are recovering postpartum. Your body is healing. You are a new mother - emotions may be intense. Intimacy may be limited.</textarea>
-                        </div>
-                    </div>
-
-                    <!-- 5b. Cycle Awareness -->
-                    <div class="card" style="margin-bottom: 20px;">
-                        <h3 class="section-header" style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
-                            <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> Cycle Awareness
-                        </h3>
-                        <p style="color: #9988BB; font-size: 11px; margin-bottom: 10px;">
-                            How menstrual cycle phase affects behavior and libido.
-                        </p>
-                        <div class="row">
-                            <div class="form-group" style="flex: 1;">
-                                <label>Menstruation (Rank 116)</label>
-                                <textarea id="promptFmrMenstruation" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are menstruating. May affect your mood and libido. Some prefer to avoid intimacy during this time.</textarea>
-                            </div>
-                            <div class="form-group" style="flex: 1;">
-                                <label>Follicular (Rank 117)</label>
-                                <textarea id="promptFmrFollicular" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">Follicular phase - your energy is building. Feeling more positive and open to intimacy.</textarea>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="form-group" style="flex: 1;">
-                                <label>Ovulation (Rank 118)</label>
-                                <textarea id="promptFmrOvulation" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You are ovulating - peak fertility! Heightened arousal, strong desire. You know pregnancy is possible right now.</textarea>
-                            </div>
-                            <div class="form-group" style="flex: 1;">
-                                <label>Luteal (Rank 119)</label>
-                                <textarea id="promptFmrLuteal" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">Luteal phase - PMS territory. Mood swings, irritability, tender. May be less interested in intimacy.</textarea>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- 5c. Baby Status Reactions -->
-                    <div class="card" style="margin-bottom: 20px;">
-                        <h3 class="section-header" style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
-                            <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> Baby Status Reactions
-                        </h3>
-                        <p style="color: #9988BB; font-size: 11px; margin-bottom: 10px;">
-                            React to baby health information received every poll (mother, babyAge, health, daysRemaining).
-                        </p>
-                        <div class="form-group">
-                            <label>Baby Healthy</label>
-                            <textarea id="promptFmrBabyHealthy" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">Your baby is healthy. You feel relieved and protective. Mention the baby's wellbeing with affection.</textarea>
-                        </div>
-                        <div class="form-group">
-                            <label>Baby Damaged/At Risk</label>
-                            <textarea id="promptFmrBabyDamage" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">Your baby's health is at risk! You are worried, protective, possibly panicked. Intimacy may be the last thing on your mind.</textarea>
-                        </div>
-                    </div>
-
-                    <!-- 5d. Trauma Events -->
-                    <div class="card" style="margin-bottom: 20px;">
-                        <h3 class="section-header" style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
-                            <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> Trauma Events
-                        </h3>
-                        <p style="color: #9988BB; font-size: 11px; margin-bottom: 10px;">
-                            Critical state change events - miscarriage, death. These override normal behavior.
-                        </p>
-                        <div class="form-group">
-                            <label>Miscarriage</label>
-                            <textarea id="promptFmrMiscarriage" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">You have just miscarried. You are in shock, grief-stricken, traumatized. You need time to process this loss.</textarea>
-                        </div>
-                        <div class="form-group">
-                            <label>Baby Death</label>
-                            <textarea id="promptFmrBabyDeath" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">Your baby has died. Devastating loss. You are in deep grief, may be inconsolable. This changes everything.</textarea>
-                        </div>
-                        <div class="form-group">
-                            <label>Mother Death</label>
-                            <textarea id="promptFmrMotherDeath" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">EMERGENCY: The mother is dying or has died. Panic, crisis, tragedy. All normal behavior suspended.</textarea>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <?php include __DIR__ . '/config_section_fertility.php'; ?>
 
             <!-- ============================================ -->
             <!-- SECTION: DEVICES & WEARABLES (Devious Devices) -->

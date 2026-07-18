@@ -1,5 +1,18 @@
-        <div id="fertility" class="tab-content">
-            <h2 style="color: #FDF5D0;">Fertility</h2>
+            <!-- FERTILITY & PREGNANCY: lives on the Prompts tab (was briefly its own tab 2026-07-07,
+                 folded back in 2026-07-10 per user directive). Element IDs are load-bearing - the
+                 save/load JS in config_manager.php addresses them directly. -->
+            <div class="collapsible-section" style="margin-bottom: 15px;">
+                <div class="collapsible-header" onclick="togglePromptSection('sectionFertility')" style="background: linear-gradient(135deg, #2A2540 0%, #1C1A24 100%); padding: 15px 20px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border: 1px solid #3A3545; transition: all 0.3s ease;">
+                    <h3 class="section-header" style="margin: 0; display: flex; align-items: center; gap: 10px;">
+                        <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;">
+                        Fertility &amp; Pregnancy
+                    </h3>
+                    <div style="display: flex; gap: 8px;">
+                        <span class="section-save-btn" onclick="event.stopPropagation(); saveSettings(); savePromptSettings();">Save</span>
+                        <span id="sectionFertilityToggle" class="section-toggle-btn">Open</span>
+                    </div>
+                </div>
+                <div id="sectionFertilityContent" class="collapsible-content" style="display: none; padding: 20px; background: #1C1A24; border: 1px solid #3A3545; border-top: none; border-radius: 0 0 8px 8px;">
             <p style="color: #B8A8C8; line-height: 1.6; margin-bottom: 14px;">
                 SHARMAT listens for the Fertility Mode event contract and colors each NPC's dialogue with her
                 current state: cycle phase, trimester, recovery, worn-baby hazards, conception, labor, and loss.
@@ -125,6 +138,10 @@
                 <label>Expecting Mothers (fires when known pregnancies carry the player's child)</label>
                 <textarea id="promptFertilityFamilyExpecting" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
             </div>
+            <div class="form-group">
+                <label>Grown Child Returned (fires when the speaking NPC is a child of the player who came back from training as an adult; the first conversation also silently clears their stored child flags and rebuilds their profile)</label>
+                <textarea id="promptFertilityFamilyReturn" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
+            </div>
 
             <h3 class="info-subtitle">Baby Tragedy / Witness Reactions (FMR NG)</h3>
             <p style="color: #9988BB; font-size: 11px; margin-bottom: 10px;">
@@ -153,4 +170,5 @@
                 <label>Witnessed Danger (another woman's baby is in danger or was just hurt)</label>
                 <textarea id="promptFertilityWitnessDanger" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
             </div>
-        </div>
+                </div>
+            </div>

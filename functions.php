@@ -2306,7 +2306,10 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
     // CALL/initiate an OStim/SexLab sex scene with the player. Default 56 = Fond (romance tier). Adjustable in the UI
     // so the player can require a higher tier (e.g. 76 = Devoted) or lower it. Player consent (accepted_sex), slave,
     // paid prostitute, skooma-bargain and NPC-scene routes are separate unlocks and bypass this floor as before.
-    $sceneCallMinAffinity = (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56);
+    // Promiscuous-marked NPCs drop to the Acquaintance(6) floor via aiagentNsfwSceneCallFloorFor.
+    $sceneCallMinAffinity = function_exists('aiagentNsfwSceneCallFloorFor')
+        ? (int)aiagentNsfwSceneCallFloorFor($npcName)
+        : (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56);
 
     // PROSTITUTE RULE: a prostitute may NOT call/drive OStim sex scenes with the player until the service is
     // actually covered - payment confirmed/bartered, auto-waived (bonded), or deliberately given free via
@@ -2352,10 +2355,14 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             // Sticky refusal also blocks re-initiating sex acts until the scene ends.
             if (!$isSlave && !empty($intimacyStatus["refused_until_scene_end"])) { $_consentedFns = false; }
 
-            if (($affinity >= 56 && $affectionOrientationOk) || $isSlave) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; } // affection needs Fond+ and orientation match
-            if ($_consentedFns && $affinity >= 56 && (!function_exists('aiagentNsfwRelTypeSexEligible') || aiagentNsfwRelTypeSexEligible($relGateNpc ?? ($GLOBALS['HERIKA_NAME'] ?? '')))) {
+            // Affection floor is per-NPC: promiscuous mark drops it to Acquaintance(6), everyone else Fond(56).
+            $affectionFloor = function_exists('aiagentNsfwAffectionFloorFor') ? (int)aiagentNsfwAffectionFloorFor($npcName) : 56;
+            if (($affinity >= $affectionFloor && $affectionOrientationOk) || $isSlave) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; } // affection needs the per-NPC floor + orientation match
+            // Initiation autonomy follows the same per-NPC scene-call floor as the toolset (was hardcoded 56,
+            // which left a promiscuous NPC holding sex tools at Acquainted with no cue she may use them).
+            if ($_consentedFns && $affinity >= $sceneCallMinAffinity && (!function_exists('aiagentNsfwRelTypeSexEligible') || aiagentNsfwRelTypeSexEligible($relGateNpc ?? ($GLOBALS['HERIKA_NAME'] ?? '')))) {
                 $GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY'] = true; // context_pre injects the initiation nudge (OStim audit fix 1)
-            } elseif ($affinity >= 56 && $affectionOrientationOk) {
+            } elseif ($affinity >= $affectionFloor && $affectionOrientationOk) {
                 // Fond+ AND orientation-compatible but rel type not eligible: the courtship lane. She holds the
                 // affection tools; chosen affection flips her to crush, which opens the full gate.
                 $GLOBALS['AIAGENTNSFW_AFFECTION_AUTONOMY'] = true;
@@ -2389,7 +2396,9 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             // initiators only unlock once she has consented (AcceptSex / slave / paid prostitute). Until then
             // the model gets only Kiss + Accept/Refuse - so it CANNOT blow past the relationship gate by
             // calling StartSex directly. Marriage/affair/normal all require the explicit AcceptSex.
-            if (($affinity >= 56 && $affectionOrientationOk) || $isSlave) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; }
+            // Affection floor is per-NPC: promiscuous mark drops it to Acquaintance(6), everyone else Fond(56).
+            $affectionFloor = function_exists('aiagentNsfwAffectionFloorFor') ? (int)aiagentNsfwAffectionFloorFor($npcName) : 56;
+            if (($affinity >= $affectionFloor && $affectionOrientationOk) || $isSlave) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; }
             if ($isProstitute) {
                 // Prostitutes: OStim sex acts gated on the service being covered (paid/free), NOT accepted_sex.
                 $_consentedFns = $prostituteServiceUnlocked || $isSlave || $npcSceneGateDisabled || $skoomaBargain;
@@ -2417,10 +2426,11 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             }
         }
 
-        // Affection needs Fond (56) AND orientation compatibility; below that no hugs or hand-holding (slaves
-        // keep theirs - the slavery lane owns compliance; prostitutes bypass orientation via $affectionOrientationOk).
+        // Affection needs the per-NPC floor (Fond 56; Acquaintance 6 for promiscuous marks) AND orientation
+        // compatibility; below that no hugs or hand-holding (slaves keep theirs - the slavery lane owns
+        // compliance; prostitutes bypass orientation via $affectionOrientationOk).
         // Was unconditional, so hostile/stranger NPCs could call hand-holding, blipping OStim idles and the sex-ask machinery.
-        if (($affinity >= 56 && $affectionOrientationOk) || $isSlave) {
+        if (($affinity >= (function_exists('aiagentNsfwAffectionFloorFor') ? (int)aiagentNsfwAffectionFloorFor($npcName) : 56) && $affectionOrientationOk) || $isSlave) {
             $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHug";
             $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHoldHands";
         }
@@ -2536,7 +2546,9 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
         // floor). Hard-locking her to AcceptSex/RefuseSex-only here CONTRADICTS that and is exactly why an eligible
         // Fond+ NPC "only ever got to pick AcceptSex" and could never call/steer a scene herself. She keeps RefuseSex
         // (she can still say no); a refusal already in progress (refused_until_scene_end) re-imposes the lock.
-        $sceneCallMinAffinity = (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56);
+        $sceneCallMinAffinity = function_exists('aiagentNsfwSceneCallFloorFor')
+            ? (int)aiagentNsfwSceneCallFloorFor($npcName)   // promiscuous mark drops her floor to Acquaintance(6)
+            : (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56);
         $isAutonomousFondPlus = ((int)$affinity >= $sceneCallMinAffinity)
             && empty($intimacyStatus["refused_until_scene_end"])
             && function_exists('aiagentNsfwRelTypeSexEligible')
@@ -2691,7 +2703,9 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
 	    // Compute the same values locally.
 	    $fallbackIsSlaveActor = function_exists('isNpcSlave') && isNpcSlave($fallbackNpcName);
 	    $fallbackSkoomaBargain = !$fallbackIsSlaveActor && function_exists('getDrugStageForActor') && (int)getDrugStageForActor($fallbackNpcName, 'skooma') >= 3;
-	    $fallbackSceneCallMin = (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56);
+	    $fallbackSceneCallMin = function_exists('aiagentNsfwSceneCallFloorFor')
+	        ? (int)aiagentNsfwSceneCallFloorFor($fallbackNpcName)   // promiscuous mark drops her floor to Acquaintance(6)
+	        : (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56);
 	    $fallbackIsUnpaidProstitute = $fallbackIsProstitute && empty($fallbackIntimacy["payment_confirmed"]) && !$fallbackSkoomaBargain; // L3 skooma overrides payment
 	    // Orientation affection gate (parity with the main route); slaves/prostitutes bypass, fails open.
 	    $fallbackAffectionOrientationOk = $fallbackIsSlaveActor || $fallbackIsProstitute
@@ -2712,7 +2726,8 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
 	        error_log("[AIAGENTNSFW] Fallback function route - unpaid prostitute locked to negotiation/payment tools for " . $fallbackNpcName);
 	    } else {
 	        $fallbackAffinity = function_exists('getNpcAffinity') ? (int)getNpcAffinity($fallbackNpcName) : 0;
-	        if (($fallbackAffinity >= 56 && $fallbackAffectionOrientationOk) || $fallbackIsSlaveActor) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; } // affection needs Fond+ and orientation match
+	        $fallbackAffectionFloor = function_exists('aiagentNsfwAffectionFloorFor') ? (int)aiagentNsfwAffectionFloorFor($fallbackNpcName) : 56;
+	        if (($fallbackAffinity >= $fallbackAffectionFloor && $fallbackAffectionOrientationOk) || $fallbackIsSlaveActor) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; } // affection needs the per-NPC floor + orientation match
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdRemoveClothes";
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartMassage";
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartSelfMasturbation";
@@ -2721,7 +2736,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartAnalSex";
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartThreesome";
 	        $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStartTitfuck";
-	        if (($fallbackAffinity >= 56 && $fallbackAffectionOrientationOk) || $fallbackIsSlaveActor) {
+	        if (($fallbackAffinity >= $fallbackAffectionFloor && $fallbackAffectionOrientationOk) || $fallbackIsSlaveActor) {
 	            $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHug";
 	            $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdHoldHands";
 	        }
@@ -2852,6 +2867,62 @@ if (isset($GLOBALS["FUNCTIONS"]) && is_array($GLOBALS["FUNCTIONS"]) && function_
 $GLOBALS["IS_NPC"]=isset($GLOBALS["IS_NPC"])?$GLOBALS["IS_NPC"]:false;
 if  (!$GLOBALS["IS_NPC"]) {
    
+}
+
+// ============================================================================
+// FMR NG FAMILY: training send-off action (user request 2026-07-15).
+// The AI can agree to leave home for training when it comes up in conversation.
+// Registration is unconditional (so it shows on the CHIM UI actions page like
+// every other action); OFFERING is gated below to the one case that makes
+// sense: the speaking agent is one of the player's grown children still
+// awaiting assignment (FMRNG_Lineage.json trainingStatus 0 - the same file the
+// Fertility-tab family prompts read). Game side: the CHIM DLL's ExtCmd bridge
+// (Commands.cpp: script name = text between "ExtCmd" and the first "_") calls
+// FMRNGBridge.DispatchExternalCommand, which opens FMR NG's faction-gated
+// training-location picker on the player - the exact flow the in-game
+// send-off dialogue topic uses. The DLL re-validates the lineage record, so a
+// stale lineage file cannot missend anyone.
+// ============================================================================
+
+$GLOBALS["F_NAMES"]["ExtCmdFMRNGBridge_GoTraining"] = "AgreeToGoTraining";
+$GLOBALS["F_TRANSLATIONS"]["ExtCmdFMRNGBridge_GoTraining"] = "{$GLOBALS["HERIKA_NAME"]} agrees it is time to leave home and go away to be trained in a trade (only when going off to training came up in conversation)";
+$GLOBALS["FUNCTIONS"][] =
+[
+    "name" => $GLOBALS["F_NAMES"]["ExtCmdFMRNGBridge_GoTraining"],
+    "description" => $GLOBALS["F_TRANSLATIONS"]["ExtCmdFMRNGBridge_GoTraining"],
+    "parameters" => [
+        "type" => "object",
+        "properties" => [
+            "trade" => [
+                "type" => "string",
+                "description" => "Optional: the trade or place {$GLOBALS["HERIKA_NAME"]} would like to train in, if one was discussed",
+            ],
+        ],
+        "required" => [],
+    ],
+];
+
+if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0] != "instruction" && $GLOBALS["gameRequest"][0] != "funcret"
+        && !empty($GLOBALS["HERIKA_NAME"])) {
+    // fertility_family normally loads in context_pre, which runs after this
+    // file - pull it in ourselves (require_once, so no double load).
+    require_once __DIR__ . "/nsfw_fertility_family.php";
+    $_fmrngTrainLineage = function_exists('aiagentNsfwLineageData') ? aiagentNsfwLineageData() : null;
+    if (is_array($_fmrngTrainLineage)) {
+        foreach (($_fmrngTrainLineage['children'] ?? []) as $_fmrngTrainChild) {
+            // Trainable = awaiting assignment (0) OR adopted and living at home
+            // (3 - the 2026-07-16 un-adopt: the game unwinds the Hearthfire
+            // family state before the send-off). In training (1) / trained (2)
+            // never get the action.
+            $_fmrngTrainStatus = (int)($_fmrngTrainChild['trainingStatus'] ?? -1);
+            if (($_fmrngTrainStatus === 0 || $_fmrngTrainStatus === 3)
+                    && strcasecmp(trim((string)($_fmrngTrainChild['name'] ?? '')), trim((string)$GLOBALS["HERIKA_NAME"])) === 0) {
+                $GLOBALS["ENABLED_FUNCTIONS"][] = "ExtCmdFMRNGBridge_GoTraining";
+                error_log("[AIAGENTNSFW] FMR NG: {$GLOBALS["HERIKA_NAME"]} is a trainable child (status {$_fmrngTrainStatus}) - AgreeToGoTraining offered");
+                break;
+            }
+        }
+    }
 }
 
 // Restore standard behaviour

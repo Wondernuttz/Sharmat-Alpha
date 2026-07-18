@@ -124,6 +124,49 @@ if (isset($GLOBALS["ENABLED_FUNCTIONS"]) && is_array($GLOBALS["ENABLED_FUNCTIONS
 }
 
 // ============================================================
+// FMR NG TRAINED-ADULT RETURN (2026-07-15): a roster child who went off to training comes back as a
+// FULLY GROWN ADULT actor wearing the same display name, and every store here is name-keyed, so the
+// adult would inherit the kid's is_child flag / "Nord Child" race forever (nothing else ever clears
+// them). The moment the returned adult speaks: heal the stored data (idempotent, and it MUST run
+// before Child Protection below reads the flag this same turn) and inject an evergreen #GROWN CHILD
+// frame so she speaks as the young adult she now is while keeping her history - the player raised
+// her, sent her away, and she remembers. Exact-name + lineage trainingStatus 2 only; the vanilla
+// child-name blocklist still wins inside aiagentNsfwIsChildNpc, so real vanilla kids can never be
+// unflagged through this path.
+// ============================================================
+if ($actorName !== "" && isset($GLOBALS["HERIKA_PERS"])
+    && _getNsfwSetting('NSFW_FERTILITY_ENABLED', true)
+    && _getNsfwSetting('NSFW_FERTILITY_FAMILY_ENABLED', true)
+    && (!function_exists('nsfwIsNarratorName') || !nsfwIsNarratorName($actorName))) {
+    require_once __DIR__ . "/nsfw_fertility_family.php";
+    // Familial-bond seed (2026-07-15): ANY lineage child speaking to their own
+    // parent - wandering kid included - gets the CHIM relationship slot seeded
+    // once (affinity 85 Devoted + type 'familial') so touch/affinity reactions
+    // never phrase the player as a stranger. One-time by design: an already
+    // typed relationship is never overwritten.
+    $__fgcAny = aiagentNsfwLineageChildOf($actorName);
+    if (is_array($__fgcAny)) {
+        aiagentNsfwSeedFamilialBond($actorName);
+    }
+    $__fgc = (is_array($__fgcAny) && (int)($__fgcAny['trainingStatus'] ?? -1) === 2) ? $__fgcAny : null;
+    if (is_array($__fgc)) {
+        aiagentNsfwTrainedAdultHeal($actorName, $__fgc);
+        $__fgcTxt = function_exists('getGlobalPrompt') ? trim((string)(getGlobalPrompt('fertility_family_return') ?: '')) : '';
+        if ($__fgcTxt === '') {
+            $__fgcTxt = "#NPC_NAME# is #PLAYER_NAME#'s grown child, home again as a fully grown adult after leaving as a child to train as a #TRADE#. #NPC_NAME# is NOT a child anymore: speak, act and carry yourself as the young adult you now are, shaped by your #TRADE# training. You remember #PLAYER_NAME# raising you and the day you were sent away, and that shared history colors how you treat them - warmth, gratitude, old grudges, or teasing familiarity, per your personality.";
+        }
+        $__fgcTrade = aiagentNsfwFmrClassName((int)($__fgc['trainClass'] ?? -1));
+        $__fgcTxt = strtr($__fgcTxt, [
+            '#PLAYER_NAME#' => $GLOBALS["PLAYER_NAME"] ?? 'the player',
+            '#NPC_NAME#'    => $actorName,
+            '#TRADE#'       => ($__fgcTrade !== '' ? $__fgcTrade : 'their trade'),
+        ]);
+        $GLOBALS["HERIKA_PERS"] .= "\n\n#GROWN CHILD\n" . $__fgcTxt;
+        error_log("[CHIM-NSFW FERTILITY] GROWN-CHILD context injected for '{$actorName}' (trade=" . ($__fgcTrade !== '' ? $__fgcTrade : '?') . ")");
+    }
+}
+
+// ============================================================
 // CHILD PROTECTION (Phase 1): for any NPC flagged as a child by HARD signals (is_child flag, child
 // race, vanilla child-name blocklist), prepend an in-world "you are a child" frame to the character
 // block so the model never reads an adult's attention, gifts, or kindness as romance. Default-on;
@@ -186,7 +229,9 @@ if (!empty($GLOBALS['AIAGENTNSFW_AFFECTION_AUTONOMY']) && isset($GLOBALS['HERIKA
 // it. Without this cue the model never thinks to target another NPC. Normal turns only, and only when someone
 // else is actually present. UI-editable key npc_scene_autonomy_nudge.
 if (isset($GLOBALS['HERIKA_PERS'])
-    && (!empty($GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY']) || (function_exists('isProstitute') && isProstitute($actorName)))
+    && (!empty($GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY'])
+        || (function_exists('isProstitute') && isProstitute($actorName))
+        || (function_exists('aiagentNsfwIsSlutNpc') && aiagentNsfwIsSlutNpc($actorName)))   // promiscuous mark: she thinks of others too
     && (!function_exists('isNpcSlave') || !isNpcSlave($actorName))) {
     $__nnPeople = (string)($GLOBALS['CACHE_PEOPLE'] ?? '');
     $__nnPlayerNm = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
@@ -588,22 +633,9 @@ if (isset($GLOBALS["HERIKA_PERS"]) && function_exists('aiagentNsfwOpenMode') && 
 }
 
 // ============================================
-// SLUT MODE (2026-07-10): the ladder still exists but starts at Acquaintance - inject the
-// UI-editable slut_mode_notice so the model knows the social rules. OPEN MODE supersedes
-// (its notice already covers a fully open world; injecting both would conflict).
-if (isset($GLOBALS["HERIKA_PERS"]) && function_exists('aiagentNsfwSlutMode') && aiagentNsfwSlutMode()
-    && !(function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode())
-    && $actorName !== '' && (!function_exists('nsfwIsNarratorName') || !nsfwIsNarratorName($actorName))
-    && (!function_exists('aiagentNsfwIsChildNpc') || !aiagentNsfwIsChildNpc($actorName))) {
-    $__smTxt = trim((string)(getGlobalPrompt('slut_mode_notice') ?: ''));
-    if ($__smTxt !== '') {
-        $__smTxt = strtr($__smTxt, [
-            '#PLAYER_NAME#' => $GLOBALS["PLAYER_NAME"] ?? 'the player',
-            '#NPC_NAME#'    => $actorName,
-        ]);
-        $GLOBALS["HERIKA_PERS"] .= "\n\n#SLUT MODE\n" . $__smTxt;
-    }
-}
+// PROMISCUOUS is a PER-NPC role mark (is_slut, 2026-07-10) - the global slut-mode notice that
+// lived here was removed with the global switch. A marked NPC gets her framing from the
+// promiscuous relationship overhead family + slut_role_context (nsfw_relationship.php).
 
 if ($drunkStage !== $__lastPromptedDrunk) {
     $__promptState["aiagent_nsfw_prompt_drunk_stage"] = $drunkStage;

@@ -261,7 +261,18 @@ if (!isset($intimacyStatus["level"]))
     $intimacyStatus["level"]=0;
 
 // Process AIAgentNSFW events
+$aiagentNsfwPreSceneEventName = (string)($GLOBALS["gameRequest"][0] ?? '');
 processInfoSexScene();
+
+// IN-SCENE TALKATIVENESS (feature 2026-07-12): "Respond to Orgasms" unchecked = no spoken climax
+// reaction. Gate AFTER processInfoSexScene so all orgasm state (orgasmed flags, arousal, pillow-talk
+// eligibility, out-of-band teardown) is already processed; FORCE_STOP only stops the LLM turn (context.php).
+// Event name captured BEFORE the call - handlers may rewrite gameRequest[0] (e.g. to ext_nsfw_action).
+if (in_array($aiagentNsfwPreSceneEventName, ['ext_nsfw_orgasm', 'chatnf_sl_climax', 'ext_nsfw_npc_orgasm'], true)
+    && !_getNsfwSetting('NSFW_SCENE_SPEAK_ON_ORGASM', true)) {
+    $GLOBALS["AIAGENTNSFW_FORCE_STOP"] = true;
+    error_log("[AIAGENTNSFW] Orgasm response suppressed (Respond to Orgasms off); state processed silently");
+}
 
 $preSideRouteActor = trim((string)($GLOBALS["HERIKA_NAME"] ?? ""));
 if ($preSideRouteActor !== "") {
@@ -493,7 +504,7 @@ if ($isOrgasmEvent) {
             && (
                 in_array(($orgIntimacy["scene_phase"] ?? ''), ['accepted', 'engaged'], true)
                 || !empty($orgIntimacy["sex_started"]) || !empty($orgIntimacy["had_sex_in_scene"])
-                || (function_exists('getNpcAffinity') && (int)getNpcAffinity($actorName) >= (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56))));
+                || (function_exists('getNpcAffinity') && (int)getNpcAffinity($actorName) >= (function_exists('aiagentNsfwSceneCallFloorFor') ? (int)aiagentNsfwSceneCallFloorFor($actorName) : (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56)))));
     $orgConsentBlocked = !$orgConsentConfirmed && empty($orgIntimacy["is_npc_scene"]);
 
     if ($orgRefusedScene || $orgConsentBlocked) {

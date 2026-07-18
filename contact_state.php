@@ -1,8 +1,31 @@
 <?php
 
-function aiagentNsfwContactLedgerPath()
+// STORAGE MOVED to conf_opts 2026-07-11 (Tyler's upstream review: "avoid using files here -
+// conf_opts was created for that"). The ledger is one json object in row
+// 'aiagent_nsfw_contact_state'; shape and TTL pruning are unchanged. In-request static cache,
+// write-through, shared by load and save so both stay coherent.
+function _aiagentNsfwContactLedgerStore($write = null)
 {
-    return sys_get_temp_dir() . "/aiagent_nsfw_contact_state.json";
+    static $ledger = null;
+    if (!isset($GLOBALS['db'])) { return is_array($write) ? $write : []; }
+    if ($ledger === null) {
+        $ledger = [];
+        try {
+            $row = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_contact_state'");
+            if ($row && !empty($row['value'])) {
+                $decoded = json_decode($row['value'], true);
+                if (is_array($decoded)) { $ledger = $decoded; }
+            }
+        } catch (Exception $e) { $ledger = []; }
+    }
+    if (is_array($write)) {
+        $ledger = $write;
+        try {
+            $escaped = $GLOBALS['db']->escape(json_encode($ledger, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            $GLOBALS['db']->execQuery("INSERT INTO conf_opts (id, value) VALUES ('aiagent_nsfw_contact_state', '{$escaped}') ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value");
+        } catch (Exception $e) { /* non-fatal: short-lived contact state */ }
+    }
+    return $ledger;
 }
 
 function aiagentNsfwContactNormalizeToken($value, $fallback = 'unknown')
@@ -47,8 +70,7 @@ function aiagentNsfwContactTtlForAction($action)
 
 function aiagentNsfwContactLoadLedger()
 {
-    $path = aiagentNsfwContactLedgerPath();
-    $data = json_decode((string)@file_get_contents($path), true);
+    $data = _aiagentNsfwContactLedgerStore();
     if (!is_array($data)) {
         $data = [];
     }
@@ -71,7 +93,7 @@ function aiagentNsfwContactLoadLedger()
 
 function aiagentNsfwContactSaveLedger($ledger)
 {
-    @file_put_contents(aiagentNsfwContactLedgerPath(), json_encode($ledger, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    _aiagentNsfwContactLedgerStore(is_array($ledger) ? $ledger : []);
 }
 
 function aiagentNsfwContactKey($actorName, $action, $bodyPart = 'Body', $handSide = '')

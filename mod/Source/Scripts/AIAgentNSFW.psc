@@ -863,6 +863,17 @@ function DoRegister()
 	RegisterForModEvent("ostim_npc_invite", "OStimNpcInvite")
 
 	; ============================================
+	; ACHERON / SIMPLE DEFEAT (feature 2026-07-17): defeating a hostile named NPC marks them as the
+	; player's slave (server toggle NSFW_DEFEAT_AUTO_ENSLAVE decides; same flag as the NPC Settings
+	; checkbox). Event-driven via Acheron's native registration - no polling. Guarded so installs
+	; without Acheron never execute the call.
+	; ============================================
+	if Game.GetModByName("Acheron.esm") != 255 || Game.GetModByName("Acheron.esp") != 255
+		Acheron.RegisterForActorDefeated(self)
+		Debug.Trace("[CHIM-NSFW] Registered for Acheron defeat events (auto-enslave)")
+	endif
+
+	; ============================================
 	; SEXLAB EVENTS - global Hook* ModEvents fire for EVERY SexLab scene (incl NPC-to-NPC).
 	; No SetHook needed. Handlers below mirror the OStim paths.
 	; ============================================
@@ -939,6 +950,9 @@ function DoRegister()
 	UnRegisterForModEvent("FMR_MotherDeath")
 	RegisterForModEvent("FMR_MotherDeath", "OnFMRMotherDeath")
 
+	UnRegisterForModEvent("FMR_BabyTragedy")
+	RegisterForModEvent("FMR_BabyTragedy", "OnFMRBabyTragedy")
+
 	; CBPC Physics Touch Detection
 	playerRef = Game.GetPlayer()
 	InitDeviousDevices()  ; Initialize DD soft dependency
@@ -953,7 +967,11 @@ function DoRegister()
 		JValue.Retain(actorsWithColliders)
 	endif
 
-	if enableCBPC
+	; FLATRIM GUARD (fix 2026-07-11, tester reports: walking past an NPC fired phantom "touch" events
+	; and whole unwanted conversations): CBPC fires body-vs-body collisions on flatscreen too, but the
+	; touch feature models VR HANDS. Require HIGGS (VR-only; every SHARMAT VR touch user runs it) -
+	; flatscreen installs never register the collision events, so phantoms die at the source.
+	if enableCBPC && Game.GetModByName("higgs_vr.esp") != 255
 		Debug.Trace("[CHIM-NSFW] Enabling CBPC Physics Touch Detection")
 		lastPhysicsSpeechTime = 0.0
 		if (touchedLocations == 0)
@@ -975,7 +993,11 @@ function DoRegister()
 
 		RegisterForSingleUpdate(cbpcCooldown)
 	Else
-		Debug.Trace("[CHIM-NSFW] CBPC Physics disabled")
+		if enableCBPC
+			Debug.Trace("[CHIM-NSFW] CBPC touch detection skipped: no HIGGS -> flatscreen, body-vs-body collisions would fire phantom touches")
+		else
+			Debug.Trace("[CHIM-NSFW] CBPC Physics disabled")
+		endif
 		UnRegisterForModEvent("CBPCPlayerCollisionWithFemaleEvent")
 		UnRegisterForModEvent("CBPCPlayerCollisionWithMaleEvent")
 		UnRegisterForModEvent("CBPCPlayerGenitalCollisionWithFemaleEvent")
@@ -1605,6 +1627,19 @@ Event CommandManager(String npcname,String  command, String parameter)
 	endif
 	Debug.Trace("[CHIM NSFW] External command "+command+ " received for "+npcname+" parameter="+parameter)
 	Actor npc=AIAgentFunctions.getAgentByName(npcname);
+
+	; OSLA BRIDGE (feature 2026-07-17): server-authored arousal mirror. The server queues
+	; ExtCmdSyncArousal@<0-100> on the responselog command lane after turns where arousal changed;
+	; apply it to OSL Aroused so OSLA-reliant mods react to the LLM-driven value. Fully silent
+	; (no notification - unknown commands produce none - and no funcret). Guarded on OSL Aroused
+	; being installed, using the same GetFormFromFile probe its own adapters use.
+	if command == "ExtCmdSyncArousal"
+		if npc != None && Game.GetFormFromFile(0x806, "OSLAroused.esp") != None
+			OSLArousedNative.SetArousal(npc, parameter as float)
+			Debug.Trace("[CHIM-NSFW] OSLA sync: " + npcname + " arousal -> " + parameter)
+		endif
+		return
+	endif
 
 	; VAMPIRE DETECTION (report once per NPC): the SERVER cannot detect vampires because Skyrim collapses the race to
 	; its base name ("Nord"), so the stored race never contains "vampire". Report it here the way Fertility Mode
@@ -2868,15 +2903,22 @@ Event CommandManager(String npcname,String  command, String parameter)
 			endif
 			
 
+			; FIX 2026-07-11: unknown act = honest error, never a scene roll. An empty sanitizedTag used
+			; to flow into the scene search and could land anywhere ("direction not followed" reports).
+			if sanitizedTag == ""
+				AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@error: unknown act - valid acts: blowjob,boobjob,analsex,vaginalsex,handjob,frenchkissing,cunnilingus,vaginalfingering - current scene continues","funcret",npcname)
+				return
+			endif
+
 			String actionScene2=OLibrary.GetRandomSceneWithAnyActionCSV(actorsInvolved,sanitizedTag)
 			;String actionScene=OLibrary.GetRandomSceneWithAnyActionCSV(actorsInvolved,"blowjob")
-			
+
 			string furnitureType=OThread.GetFurnitureType(thrId2)
 			if (furnitureType)
+				; FIX 2026-07-11: no random-furniture fallback. If no furniture scene matches the requested
+				; act, fail honestly below instead of warping to an unrelated scene ("vaginal sex" on a bed
+				; used to land on ANY random bed scene).
 				actionScene2=OLibrary.GetRandomFurnitureSceneWithAnyActionCSV(actorsInvolved,furnitureType,sanitizedTag)
-				if !actionScene2 
-					actionScene2=OLibrary.GetRandomFurnitureScene(actorsInvolved,furnitureType)
-				endif
 			endif
 			
 			;String newScene=OLibrary.GetRandomSceneWithMultiActorTagForAnyCSV(actorsInvolved,"reversecowgirl")
@@ -2886,6 +2928,17 @@ Event CommandManager(String npcname,String  command, String parameter)
 			;String newScene=OLibrary.GetRandomScene(actorsInvolved)
 			if actionScene2 != ""
 				OThread.WarpTo(thrId2,actionScene2,true)
+				; FIX 2026-07-11: verify the warp actually TOOK and tell the server honestly. OStimNPCs
+				; auto-mode or an engine rejection can silently keep/replace the scene while the model has
+				; already narrated success ("switched scene to X but nothing changed" tester report).
+				Utility.Wait(0.6)
+				String warpedScene = OThread.GetScene(thrId2)
+				if warpedScene == actionScene2
+					AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@ok: scene is now "+actionScene2,"funcret",npcname)
+				else
+					AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@error: the engine rejected or overrode the scene switch (current scene: "+warpedScene+") - if OStim NPCs auto-mode is on it may be fighting scene control","funcret",npcname)
+					return
+				endif
 			else
 				; no scene matched the requested act - leave the current scene running (same guard as SceneEngine shift)
 				AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@error: no scene matches that act here - current scene continues","funcret",npcname)
@@ -3947,6 +4000,29 @@ EndEvent
 ; - Orgasm handling and pillow talk
 ; ============================================
 
+Event OnActorDefeated(Actor akVictim)
+	; ACHERON DEFEAT -> SLAVERY (feature 2026-07-17). Fires for EVERY Acheron defeat, so guard hard:
+	; never the player, only actors hostile to the player (the player's own fight - follower-vs-npc
+	; defeats elsewhere are not the player's claim), and only agents or unique-named actors (SHARMAT
+	; data is name-keyed; marking a generic "Bandit" would enslave every same-named mob). The server
+	; consumes the marker silently (no LLM turn) and applies its own toggle + child guards.
+	if akVictim == None || akVictim == Game.GetPlayer()
+		return
+	endif
+	if !akVictim.IsHostileToActor(Game.GetPlayer())
+		return
+	endif
+	string victimName = akVictim.GetDisplayName()
+	if victimName == ""
+		return
+	endif
+	if AIAgentFunctions.getAgentByName(victimName) == None && !akVictim.GetActorBase().IsUnique()
+		return
+	endif
+	AIAgentFunctions.logMessageForActor("DEFEAT^" + victimName, "ext_nsfw_defeat", victimName)
+	Debug.Trace("[CHIM-NSFW] Acheron defeat -> enslavement marker sent for " + victimName)
+EndEvent
+
 Event OStimSubthreadStart(string EventName, string SceneID, float SubthreadID, Form Sender)
 	; Subthread started - NPC-to-NPC scene beginning
 	; SceneID contains the scene identifier, SubthreadID is the subthread index
@@ -4328,6 +4404,19 @@ Event OnFMRMotherDeath(Form deadActor, int wasPregnant, int hadBaby)
 	elseif hadBaby
 		AIAgentFunctions.logMessageForActor(motherName + "@mother_death@with_baby", "fertility_notification", motherName)
 	endif
+EndEvent
+
+; Named tragedy with killer attribution (FMR NG additive event, pipeline 6).
+; kind: killed_pregnant / killed_carrying / beaten_miscarriage / beaten_babydeath.
+; Killer form may be None (traps/unknown) - killerName already carries the "someone" fallback.
+Event OnFMRBabyTragedy(Form akMother, Form akKiller, string killerName, string kind)
+	Actor mother = akMother as Actor
+	if !mother
+		return
+	endif
+	string motherName = mother.GetDisplayName()
+	Debug.Trace("[CHIM-NSFW FMR] BabyTragedy: " + motherName + " killer=" + killerName + " kind=" + kind)
+	AIAgentFunctions.logMessageForActor(motherName + "@tragedy@" + kind + "@" + killerName, "fertility_notification", motherName)
 EndEvent
 
 ; UTILITIES

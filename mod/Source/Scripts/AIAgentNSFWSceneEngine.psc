@@ -69,22 +69,54 @@ string Function OStimExactSceneForAct(string sceneAct) global
     return ""
 EndFunction
 
+; Acts where the INITIATOR is the active role (kisser/hugger/masseur/biter) - keep initiator-first
+; order for those. The role sort in StartOStimScene is for sex scenes, where OStim expects
+; dominant/schlong-having actors first regardless of who asked.
+bool Function OStimActKeepsInitiatorOrder(string sceneAct) global
+    return sceneAct == "kiss" || sceneAct == "hug" || sceneAct == "holdhands" || sceneAct == "massage" || sceneAct == "bloodfeed"
+EndFunction
+
+string Function RosterNames(Actor[] actors) global
+    string names = ""
+    int i = 0
+    while i < actors.Length
+        if i > 0
+            names += ", "
+        endif
+        names += actors[i].GetDisplayName()
+        i += 1
+    endwhile
+    return "[" + names + "]"
+EndFunction
+
 string Function SexLabTagsForAct(string sceneAct) global
-    if sceneAct == "vaginal"
+    ; FIX 2026-07-11: accept BOTH the internal act keys (vaginal/anal/oral/...) AND the model-facing
+    ; SexAction vocabulary (vaginalsex/analsex/blowjob/cunnilingus/frenchkissing/vaginalfingering).
+    ; The old exact-match on internal keys made EVERY standard model SexAction a silent no-op on
+    ; SexLab ("vaginalsex" never equals "vaginal"). Substring match mirrors the OStim sanitizer;
+    ; order matters (vaginalfingering before vaginal). Tag lists are OR-matched downstream
+    ; (GetAnimationsByTags RequireAll=false). Acts arrive lowercase from the tool enum.
+    if StringUtil.Find(sceneAct, "vaginalfingering") >= 0
+        return "Fingering,Vaginal"
+    elseif StringUtil.Find(sceneAct, "vaginal") >= 0
         return "Vaginal"
-    elseif sceneAct == "anal"
+    elseif StringUtil.Find(sceneAct, "anal") >= 0
         return "Anal"
-    elseif sceneAct == "oral"
+    elseif StringUtil.Find(sceneAct, "blowjob") >= 0 || StringUtil.Find(sceneAct, "oral") >= 0
         return "Oral,Blowjob"
-    elseif sceneAct == "handjob"
+    elseif StringUtil.Find(sceneAct, "cunnilingus") >= 0
+        return "Oral,Cunnilingus"
+    elseif StringUtil.Find(sceneAct, "handjob") >= 0
         return "Handjob"
-    elseif sceneAct == "boobjob"
+    elseif StringUtil.Find(sceneAct, "boobjob") >= 0 || StringUtil.Find(sceneAct, "titfuck") >= 0
         return "Boobjob"
-    elseif sceneAct == "masturbation"
+    elseif StringUtil.Find(sceneAct, "frenchkissing") >= 0 || StringUtil.Find(sceneAct, "kissing") >= 0
+        return "Kissing,Foreplay,LeadIn"
+    elseif StringUtil.Find(sceneAct, "masturbation") >= 0
         return "Masturbation,Solo"
-    elseif sceneAct == "massage"
+    elseif StringUtil.Find(sceneAct, "massage") >= 0
         return "Massage,Foreplay"
-    elseif sceneAct == "bloodfeed"
+    elseif StringUtil.Find(sceneAct, "bloodfeed") >= 0
         return "Bite,Vampire,VampireFeed,Neck,Nibble,Feeding"
     endif
     return ""
@@ -191,7 +223,7 @@ bool Function StartGroupScene(Actor[] actors, int count, string sceneAct = "") g
             return StartOStimScene(combined, sceneAct) >= 0
         endif
         Debug.Trace("[CHIM-NSFW SceneEngine] OStim: fresh group scene with " + group.Length + " actors, act=" + sceneAct)
-        return StartOStimScene(group, sceneAct) >= 0
+        return StartOStimScene(group, sceneAct, true) >= 0
     endif
     SexLabFramework slf = GetSexLab()
     if slf != None
@@ -290,7 +322,7 @@ bool Function StartOrJoinOStim(Actor akSpeaker, Actor akTarget, bool bAllowJoin,
         pair[0] = akSpeaker
         pair[1] = akTarget
         Debug.Trace("[CHIM-NSFW SceneEngine] OStim: starting new scene " + akSpeaker.GetDisplayName() + " + " + akTarget.GetDisplayName() + " act=" + sceneAct)
-        return StartOStimScene(pair, sceneAct) >= 0
+        return StartOStimScene(pair, sceneAct, true) >= 0
     endif
 
     ; Both already in the SAME scene -> SHIFT the current scene to the requested act (e.g. she's asked for a blowjob
@@ -317,11 +349,77 @@ bool Function StartOrJoinOStim(Actor akSpeaker, Actor akTarget, bool bAllowJoin,
     return AddActorToOStimThread(activeThread, joiner)
 EndFunction
 
-int Function StartOStimScene(Actor[] actors, string sceneAct = "") global
+int Function StartOStimScene(Actor[] actors, string sceneAct = "", bool allowRoleSelect = false) global
+    ; ROLE ORDER FIX (2026-07-12, Revelation0): OStim assigns animation roles by actor-array position
+    ; and expects dominant/schlong-having actors FIRST - its own start paths sort via OActorUtil before
+    ; building the thread. We passed [initiator, target] raw, so a female NPC initiating on a male
+    ; player landed in the male role slot. Sort the same way OStim does. Brand-new scene starts with
+    ; the player present (allowRoleSelect) go through SelectIndexAndSort, so the OStim MCM
+    ; "select role" popups finally apply to SHARMAT starts too; joins/merges/restarts sort silently.
+    ; If the installed OStim predates the sort API the length guard keeps the raw order.
+    if actors.Length > 1 && !OStimActKeepsInitiatorOrder(sceneAct)
+        Actor[] noDoms = PapyrusUtil.ActorArray(0)
+        Actor[] sorted
+        if allowRoleSelect && actors.Find(Game.GetPlayer()) >= 0
+            sorted = OActorUtil.SelectIndexAndSort(actors, noDoms)
+        else
+            sorted = OActorUtil.Sort(actors, noDoms, -1)
+        endif
+        if sorted.Length == actors.Length
+            Debug.Trace("[CHIM-NSFW SceneEngine] role sort: " + RosterNames(actors) + " -> " + RosterNames(sorted) + " (slot 0 = dom/male)")
+            actors = sorted
+        else
+            Debug.Trace("[CHIM-NSFW SceneEngine] role sort UNAVAILABLE (OActorUtil returned " + sorted.Length + " of " + actors.Length + " actors - OStim too old?) - keeping raw order " + RosterNames(actors))
+        endif
+    endif
+    ; NPC-ONLY FURNITURE FIX (2026-07-16, shonohmercy's report): OStim's NPC thread starter
+    ; (NPCThreadStarter.cpp) auto-grabs the nearest furniture per MCM and HARD-FAILS the whole scene
+    ; ("no starting node found", return -1) when no animation fits that furniture + this roster -
+    ; the availability check counts nodes coarsely, the real lookup also filters by actor sexes /
+    ; noRandomSelection / transitions. Player starts have a smarter flow, which is why only NPC-NPC
+    ; scenes die near non-bed furniture. Bypass the broken branch by choosing furniture AND a
+    ; matching animation OURSELVES: with both provided, the engine skips its own lookup entirely,
+    ; and NPC threads drive furniture fine (only camera fades are player-gated in the engine).
+    ; Pass 0 prefers beds (the long-proven case), pass 1 takes any other type with usable content;
+    ; nothing usable nearby -> furniture OFF and a ground scene. Never a dead start.
+    ; Affection/service staples stay furniture-free (their pinned OARE scenes are ground scenes).
+    bool npcOnlyThread = actors.Find(Game.GetPlayer()) < 0
+    ObjectReference npcFurnRef = None
     string scene = ""
-    string actionCSV = OStimActionCSVForAct(sceneAct)
-    if actionCSV != ""
-        scene = OLibrary.GetRandomSceneWithAnyActionCSV(actors, actionCSV)
+    if npcOnlyThread && !OStimActKeepsInitiatorOrder(sceneAct)
+        ObjectReference[] furnCands = OFurniture.FindFurniture(actors.Length, actors[0], 1000.0, 96.0)
+        string furnTagCSV = OStimSceneTagForAct(sceneAct)
+        int fPass = 0
+        while fPass < 2 && npcFurnRef == None
+            int fi = 0
+            while fi < furnCands.Length && npcFurnRef == None
+                ObjectReference cand = furnCands[fi]
+                if cand != None
+                    string fType = OFurniture.GetFurnitureType(cand)
+                    if fType != "" && fType != "none" && (fPass == 1 || fType == "bed")
+                        string fScene = ""
+                        if furnTagCSV != ""
+                            fScene = OLibrary.GetRandomFurnitureSceneWithAnySceneTagCSV(actors, fType, furnTagCSV)
+                        endif
+                        if fScene == ""
+                            fScene = OLibrary.GetRandomFurnitureScene(actors, fType)
+                        endif
+                        if fScene != ""
+                            npcFurnRef = cand
+                            scene = fScene
+                        endif
+                    endif
+                endif
+                fi += 1
+            endwhile
+            fPass += 1
+        endwhile
+    endif
+    if scene == ""
+        string actionCSV = OStimActionCSVForAct(sceneAct)
+        if actionCSV != ""
+            scene = OLibrary.GetRandomSceneWithAnyActionCSV(actors, actionCSV)
+        endif
     endif
     if scene == ""
         string tagCSV = OStimSceneTagForAct(sceneAct)
@@ -338,6 +436,15 @@ int Function StartOStimScene(Actor[] actors, string sceneAct = "") global
     int builderID = OThreadBuilder.Create(actors)
     if scene != ""
         OThreadBuilder.SetStartingAnimation(builderID, scene)
+    endif
+    if npcOnlyThread
+        if npcFurnRef != None
+            OThreadBuilder.SetFurniture(builderID, npcFurnRef)
+            Debug.Trace("[CHIM-NSFW SceneEngine] NPC-only thread: pinned " + OFurniture.GetFurnitureType(npcFurnRef) + " furniture with matching scene " + scene + " (" + RosterNames(actors) + ")")
+        else
+            OThreadBuilder.NoFurniture(builderID)
+            Debug.Trace("[CHIM-NSFW SceneEngine] NPC-only thread: no furniture with usable animations nearby - ground scene (" + RosterNames(actors) + ")")
+        endif
     endif
     return OThreadBuilder.Start(builderID)
 EndFunction

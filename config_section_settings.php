@@ -23,24 +23,6 @@
                 </div>
             </div>
 
-            <!-- SLUT MODE: the ladder still exists, it just starts at Acquaintance -->
-            <div style="padding: 15px 20px; background: #1C1A24; border: 1px solid #3A3545; border-radius: 8px; margin-bottom: 14px;">
-                <div class="settings-checkbox-group" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;">
-                    <div style="flex: 1;">
-                        <label for="nsfwSlutMode">
-                            <input type="checkbox" id="nsfwSlutMode" name="NSFW_SLUT_MODE">
-                            <span>Slut Mode (fast ladder)</span>
-                        </label>
-                        <p class="legend">Regular SHARMAT with the ladder compressed: eligibility becomes affinity-driven from Acquaintance and up - no relationship-type requirement, no Friendly or affair floors, and NPC-to-NPC needs only Acquaintance between the pair. Strangers and disliked people still refuse, and arousal, payment, and everything else behave as normal. Open Mode supersedes this switch. The notice is injected every turn:</p>
-                    </div>
-                    <span class="section-save-btn" onclick="saveSettings(); savePromptSettings();">Save</span>
-                </div>
-                <div class="form-group" style="margin-top: 8px;">
-                    <label>Slut Mode Notice (model-facing)</label>
-                    <textarea id="promptSlutModeNotice" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"></textarea>
-                </div>
-            </div>
-
             <!-- ============================================================ -->
             <!-- CATEGORY: SCENE VOICE & PLAYER GATING -->
             <!-- ============================================================ -->
@@ -152,14 +134,6 @@
                         <span class="slider-value" id="affairMinAffinityValue">56 (Fond)</span>
                     </div>
                     <p class="legend">Affinity an NPC married to someone else needs before an affair with you is even possible. The relationship type must still be a checked sex-eligible one. Default 56 = Fond; raise to 76 (Devoted) for stricter affair rules.</p>
-                </div>
-
-                <div class="settings-checkbox-group">
-                    <label for="nsfwVrTouchEnabled">
-                        <input type="checkbox" id="nsfwVrTouchEnabled" name="NSFW_VR_TOUCH_ENABLED" checked>
-                        <span>VR Touch Reactions (CBPC contact)</span>
-                    </label>
-                    <p class="legend">NPCs react when your VR hands actually touch them (CBPC collision events from the plugin). Turn this OFF if you play flatscreen/2D - without VR hands these events can misfire - or if your collision setup triggers through worn armor. Gaze reactions are separate and stay on.</p>
                 </div>
 
                 <div class="settings-checkbox-group">
@@ -334,11 +308,36 @@
                 </div>
 
                 <div class="settings-checkbox-group">
+                    <label for="sceneSpeakOnSceneChange">
+                        <input type="checkbox" id="sceneSpeakOnSceneChange" name="NSFW_SCENE_SPEAK_ON_SCENE_CHANGE" checked>
+                        <span>Respond to Scene/Position Changes</span>
+                    </label>
+                    <p class="legend">When checked, your partner comments every time the scene position or animation changes. Uncheck if the AI feels too chatty during scenes: position changes then update the scene state silently, while scene starts (the consent decision turn), orgasm reactions, and the Player Scene Chatter Cadence below keep working normally.</p>
+                </div>
+
+                <div class="settings-checkbox-group">
+                    <label for="sceneSpeakOnOrgasm">
+                        <input type="checkbox" id="sceneSpeakOnOrgasm" name="NSFW_SCENE_SPEAK_ON_ORGASM" checked>
+                        <span>Respond to Orgasms</span>
+                    </label>
+                    <p class="legend">When checked, NPCs verbally react to orgasms &mdash; their own, yours, and other participants'. Uncheck for no spoken climax lines: orgasm tracking, arousal, and post-scene pillow talk still process normally, so nothing downstream breaks.</p>
+                </div>
+
+                <div class="settings-checkbox-group">
                     <label for="groupSceneParticipantDialogue">
                         <input type="checkbox" id="groupSceneParticipantDialogue" name="GROUP_SCENE_PARTICIPANT_DIALOGUE" checked>
                         <span>Group-Scene Participant Dialogue</span>
                     </label>
-                    <p class="legend">In a group scene, lets the non-primary partners take their own scene-aware turns (rotated, throttled to the Global Speech Cooldown) instead of only the primary partner speaking. Generates extra NPC turns during group scenes; turn it off if you want only the primary partner to talk.</p>
+                    <p class="legend">In a group scene, lets the non-primary partners take their own scene-aware turns (a RANDOM participant per tick, throttled to the Group-Scene Chatter Tick below) instead of only the primary partner speaking. Generates extra NPC turns during group scenes; turn it off if you want only the primary partner to talk.</p>
+                </div>
+
+                <div class="settings-slider-group">
+                    <span class="slider-title">Group-Scene Chatter Tick</span>
+                    <div class="slider-container">
+                        <input type="range" id="groupSceneTickSeconds" name="GROUP_SCENE_TICK_SECONDS" min="0" max="120" step="5" value="0" oninput="document.getElementById('groupSceneTickSecondsValue').textContent = (this.value == 0) ? 'Global Speech Cooldown' : this.value + ' sec';">
+                        <span class="slider-value" id="groupSceneTickSecondsValue">Global Speech Cooldown</span>
+                    </div>
+                    <p class="legend">How often a random extra participant chimes in during group scenes (threesomes/orgies) when Group-Scene Participant Dialogue is on. 0 = follow the NPC Scene Global Speech Cooldown (default 25s). Raise it for quieter orgies where partners only occasionally speak up.</p>
                 </div>
 
                 <div class="settings-slider-group">
@@ -457,6 +456,14 @@
                 <div style="display: flex; gap: 8px; align-items: center;"><span class="section-save-btn" onclick="event.stopPropagation(); saveSettings();">Save</span><span id="vrPhysicalContactToggle" class="section-toggle-btn">Open</span></div>
             </div>
             <div id="vrPhysicalContactContent" class="collapsible-content" style="display: none; padding: 20px; background: #1C1A24; border: 1px solid #3A3545; border-top: none; border-radius: 0 0 8px 8px;">
+                <div class="settings-checkbox-group">
+                    <label for="nsfwVrTouchEnabled">
+                        <input type="checkbox" id="nsfwVrTouchEnabled" name="NSFW_VR_TOUCH_ENABLED" checked>
+                        <span>VR Touch Reactions (CBPC contact)</span>
+                    </label>
+                    <p class="legend">Master switch for touch reactions. NPCs react when your VR hands actually touch them (CBPC collision events from the plugin). Turn this OFF if you play flatscreen/2D - without VR hands these events can misfire - or if your collision setup triggers through worn armor. Gaze reactions are separate and stay on. (Moved here from the gating section 2026-07-17.)</p>
+                </div>
+
                 <h3 style="margin: 5px 0 15px; color: #FDF5D0; font-size: 16px; animation: subPulse 3s ease-in-out infinite alternate;">VR Touch &amp; Grab Cooldowns</h3>
                 <p class="legend" style="margin-bottom: 15px;">Debounce for VR physical contact (HIGGS grab / CBPC touch / spank). Keep these SHORT - this only stops a single contact firing repeatedly, it is NOT a lockout. NPCs should stay aware of being touched.</p>
 
@@ -551,6 +558,14 @@
             </div>
             <div id="slaverySettingsContent" class="collapsible-content" style="display: none; padding: 20px; background: #1C1A24; border: 1px solid #3A3545; border-top: none; border-radius: 0 0 8px 8px;">
                 <p class="legend" style="margin-bottom: 15px;">Player-only mechanics for slave idles and hostile slave poisoning. These settings do not go to the language model as prompt text.</p>
+
+                <div class="settings-checkbox-group">
+                    <label for="defeatAutoEnslave">
+                        <input type="checkbox" id="defeatAutoEnslave" name="NSFW_DEFEAT_AUTO_ENSLAVE" checked>
+                        <span>Defeated Enemies Become Slaves</span>
+                    </label>
+                    <p class="legend">Requires Acheron (Simple Defeat). When you defeat a hostile named NPC in combat, SHARMAT automatically marks them as your slave - the same as ticking the slave checkbox on their NPC Settings - and the full slavery system (tiers, speak styles, freedom flow) takes over. Generic unnamed mobs are skipped. Uncheck to keep enslavement fully manual.</p>
+                </div>
 
                 <h3 style="margin: 5px 0 15px; color: #FDF5D0; font-size: 16px; animation: subPulse 3s ease-in-out infinite alternate;">Slave Idles</h3>
                 <div class="settings-checkbox-group">
@@ -776,6 +791,14 @@ ingredient</textarea>
                         <span>Enable Arousal Gating</span>
                     </label>
                     <p class="legend">When enabled, intimate actions are progressively unlocked based on the NPC's arousal level. Arousal builds through flirty conversation (rate-limited by the gain cooldown below), affection, and intimate actions - and cools down with GAME time (sleep, waiting, and fast-travel all lower it, like sobering up). Thresholds below control what unlocks when; the scene-engage threshold lives on the Prompts tab (Arousal Gating Threshold). Relationship gates stay separate: the relationship decides IF she ever would (permission), arousal decides if she's in the mood right NOW (readiness) - both must pass. When disabled, all NSFW functions are available immediately.<br><br><strong style="color: #B8A8C8;">Pro tip:</strong> Combine this with the CHIM relationship system for deeply immersive romantic progression. As relationship tiers advance, receptiveness prompts make the AI warm to flirtation faster, so emotional connection and physical attraction develop together over time.</p>
+                </div>
+
+                <div class="settings-checkbox-group">
+                    <label for="oslaSyncEnabled">
+                        <input type="checkbox" id="oslaSyncEnabled" name="NSFW_OSLA_SYNC_ENABLED" checked>
+                        <span>Mirror Arousal to OSL Aroused</span>
+                    </label>
+                    <p class="legend">Pushes SHARMAT's AI-driven arousal into the OSL Aroused framework (scaled to its 0-100 range), so every SexLab/OStim mod that reads OSL Aroused reacts to how your conversations and actions actually went - instead of running its own detached game-engine math. One-way by design: SHARMAT is the author, OSL Aroused mirrors it, no feedback loops. Paused while a scene is running (OStim's own OSL Aroused adapter raises arousal during scenes - we do not fight it). Does nothing if OSL Aroused is not installed.</p>
                 </div>
 
                 <h3 style="margin: 20px 0 10px; color: #FDF5D0; font-size: 16px;">Arousal Tuning</h3>

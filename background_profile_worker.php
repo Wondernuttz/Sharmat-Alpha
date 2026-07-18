@@ -330,6 +330,11 @@ function generateProfileForNpc($npcName, $queueDataJson) {
             $extData['prostitute_pricing']['prostitute_type'] = $extData['prostitute_type'];
         }
 
+        // Promiscuous mark (NOT prostitution - disposition, never charges). Mutually exclusive:
+        // slave/prostitute win; a manually set mark is preserved (generation may add, never strip).
+        $extData['is_slut'] = (!empty($parsed['is_slut']) || !empty($extData['is_slut']))
+            && empty($extData['is_slave']) && empty($extData['is_prostitute']);
+
         $extData['spousal_status'] = $parsed['spousal_status'] ?? 'single';
         $extData['spouse_names'] = $parsed['spouse_names'] ?? '';
         $extData['sexual_orientation'] = $parsed['sexual_orientation'] ?? 'heterosexual';

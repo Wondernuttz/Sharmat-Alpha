@@ -477,3 +477,145 @@ function aiagentNsfwOrdinal($n)
               6 => 'sixth', 7 => 'seventh', 8 => 'eighth', 9 => 'ninth', 10 => 'tenth'];
     return $words[$n] ?? ($n . 'th');
 }
+
+/**
+ * FMR NG trained-adult return (2026-07-15). A lineage child at trainingStatus 2
+ * came back from training as a FULLY GROWN ADULT actor wearing the same display
+ * name, and every store here (plus CHIM's) is name-keyed, so without help the
+ * adult inherits the kid's stored data forever: nothing else in the codebase
+ * ever clears is_child. Exact-name + status-2 match only. The vanilla
+ * child-name blocklist is deliberately untouched and still wins inside
+ * aiagentNsfwIsChildNpc, so a real vanilla kid can never be unflagged through
+ * this path.
+ *
+ * @return array|null The matching lineage child row, or null.
+ */
+function aiagentNsfwReturnedTrainedAdult($actorName)
+{
+    $c = aiagentNsfwLineageChildOf($actorName);
+    return (is_array($c) && (int)($c['trainingStatus'] ?? -1) === 2) ? $c : null;
+}
+
+/**
+ * Exact-name lineage match at ANY trainingStatus: is the speaking NPC one of
+ * the player's FMR NG children at all (wandering kid, in training, returned
+ * adult, or adopted)?
+ *
+ * @return array|null The matching lineage child row, or null.
+ */
+function aiagentNsfwLineageChildOf($actorName)
+{
+    $actorName = trim((string)$actorName);
+    if ($actorName === '') {
+        return null;
+    }
+    $data = aiagentNsfwLineageData();
+    if (!is_array($data)) {
+        return null;
+    }
+    foreach (($data['children'] ?? []) as $c) {
+        if (strcasecmp(trim((string)($c['name'] ?? '')), $actorName) === 0) {
+            return $c;
+        }
+    }
+    return null;
+}
+
+/**
+ * Familial-bond seed (2026-07-15, "she treats me like a stranger"): a fresh
+ * FMR NG child has NO relationship row with the player, so every affinity
+ * read comes back 0/"Neutral" and the reaction prompts phrase her own parent
+ * as a stranger. When the speaking NPC is a lineage child, claim the CHIM
+ * relationship slot once: affinity 85 (Devoted; legacy rank 3 = the engine
+ * rank FMR set) + first-class type 'familial'. Only a virgin slot
+ * (neutral/unknown/empty type) is claimed - once seeded, or once the
+ * relationship LLM has evolved ANY other type, this never overwrites, so
+ * grudges and drift stay possible. 'familial' is not in the sex-eligible
+ * rel-type set unless the user explicitly checks it in the UI.
+ *
+ * @return bool true when the seed was written this request.
+ */
+function aiagentNsfwSeedFamilialBond($actorName)
+{
+    $actorName = trim((string)$actorName);
+    if ($actorName === '') {
+        return false;
+    }
+    if (!class_exists('RelationshipManager')) {
+        @require_once __DIR__ . '/../../lib/relationship_manager.php';
+    }
+    if (!class_exists('RelationshipManager')) {
+        return false;
+    }
+    try {
+        $rel  = RelationshipManager::getPlayerRelationship($actorName);
+        $type = strtolower(trim((string)($rel['type'] ?? 'neutral')));
+        $aff  = (int)($rel['aff'] ?? 0);
+        if ($type !== '' && $type !== 'neutral' && $type !== 'unknown') {
+            return false; // already seeded or evolved - never stomp
+        }
+        $ok = RelationshipManager::setRelationship($actorName, 'Player', max($aff, 85), 'familial');
+        if ($ok) {
+            error_log("[CHIM-NSFW FERTILITY] FAMILIAL BOND seeded for '{$actorName}' (aff " . max($aff, 85) . ", type familial)");
+        }
+        // false usually means the NPC has no core profile row yet (never
+        // talked to) - retried next request, harmless.
+        return (bool)$ok;
+    } catch (Exception $e) {
+        error_log("[CHIM-NSFW FERTILITY] familial seed failed for '{$actorName}': " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * One-time stored-data heal for a returned trained adult: clear is_child, fix
+ * the stored child race ("Nord Child" -> the lineage adult race), stamp the
+ * return, and queue an NSFW profile regeneration so the persona stops
+ * describing a kid. Idempotent: once the stored data no longer says child this
+ * is a cheap no-op, so it is safe to call on every request. setKey updates the
+ * per-request cache, so Child Protection sees the heal on the SAME turn.
+ *
+ * @param string $actorName The speaking NPC (already lineage-matched).
+ * @param array  $child     The lineage child row from aiagentNsfwReturnedTrainedAdult.
+ * @return bool  true when a heal actually ran this request.
+ */
+function aiagentNsfwTrainedAdultHeal($actorName, $child)
+{
+    if (!class_exists('NsfwNpcData')) {
+        @require_once __DIR__ . '/nsfw_data.php';
+    }
+    if (!class_exists('NsfwNpcData')) {
+        return false;
+    }
+    $d            = NsfwNpcData::get($actorName);
+    $storedRace   = is_array($d) ? strtolower(trim((string)($d['race'] ?? ''))) : '';
+    $wasChildFlag = is_array($d) && !empty($d['is_child']);
+    $wasChildRace = $storedRace !== '' && strpos($storedRace, 'child') !== false;
+    if (!$wasChildFlag && !$wasChildRace) {
+        return false;
+    }
+
+    NsfwNpcData::setKey($actorName, 'is_child', 0);
+    $adultRace = trim((string)($child['race'] ?? ''));
+    if ($wasChildRace && $adultRace !== '') {
+        NsfwNpcData::setKey($actorName, 'race', $adultRace);
+    }
+    NsfwNpcData::setKey($actorName, 'fmrng_adult_return', date('Y-m-d H:i:s'));
+
+    // Persona refresh: the old profile text was generated for a kid. The queue
+    // upserts + wakes the background worker, so this is fire-and-forget.
+    @require_once __DIR__ . '/nsfw_profile_queue.php';
+    if (function_exists('_nsfwQueueProfileGeneration')) {
+        $trade = aiagentNsfwFmrClassName((int)($child['trainClass'] ?? -1));
+        _nsfwQueueProfileGeneration($actorName, [
+            'player_name'              => $GLOBALS['PLAYER_NAME'] ?? null,
+            'relationship_with_player' => 'grown child of the player, freshly returned from '
+                . ($trade !== '' ? $trade : 'trade') . ' training',
+            'mod_source'               => 'fmrng_trained_adult_return',
+        ]);
+    }
+    error_log("[CHIM-NSFW FERTILITY] TRAINED-ADULT RETURN heal for '{$actorName}': is_child cleared"
+        . ($wasChildRace && $adultRace !== '' ? ", race '{$storedRace}' -> '{$adultRace}'" : '')
+        . ", profile regen queued");
+    return true;
+}

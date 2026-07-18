@@ -236,7 +236,7 @@
                     <!-- Prostitute Checkbox and Pricing Panel -->
                     <div class="prostitute-section" style="background: #2A2233; border: 2px solid #4A3545; border-radius: 8px; padding: 10px 15px; margin-bottom: 8px;">
                         <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; margin: 0;">
-                            <input type="checkbox" id="isProstitute" style="width: 18px; height: 18px;" onchange="if(this.checked){var s=document.getElementById('isSlave'); if(s){s.checked=false; toggleSlaveOptions();}} toggleProstitutePricing()">
+                            <input type="checkbox" id="isProstitute" style="width: 18px; height: 18px;" onchange="if(this.checked){var s=document.getElementById('isSlave'); if(s){s.checked=false; toggleSlaveOptions();} var sl=document.getElementById('isSlut'); if(sl){sl.checked=false;}} toggleProstitutePricing()">
                             <span class="gold-glow-text">This NPC offers adult entertainment services</span>
                         </label>
 
@@ -311,7 +311,7 @@
                     <!-- Slave Checkbox Section -->
                     <div class="slave-section" style="background: #2A2233; border: 2px solid #4A3545; border-radius: 8px; padding: 10px 15px; margin-bottom: 15px;">
                         <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; margin: 0;">
-                            <input type="checkbox" id="isSlave" onchange="if(this.checked){var p=document.getElementById('isProstitute'); if(p){p.checked=false; toggleProstitutePricing();}} toggleSlaveOptions()">
+                            <input type="checkbox" id="isSlave" onchange="if(this.checked){var p=document.getElementById('isProstitute'); if(p){p.checked=false; toggleProstitutePricing();} var sl=document.getElementById('isSlut'); if(sl){sl.checked=false;}} toggleSlaveOptions()">
                             <span class="gold-glow-text">This NPC is enslaved</span>
                         </label>
                         <p style="color: #886666; font-size: 10px; margin: 5px 0 0 30px; font-style: italic;">
@@ -391,6 +391,18 @@
                                 </div>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- Promiscuous (Slut) Checkbox Section: third role mark beside prostitute and slave.
+                         No sub-options: behavior comes from the Promiscuous Relationship Overhead prompt set. -->
+                    <div class="slut-section" style="background: #2A2233; border: 2px solid #4A3545; border-radius: 8px; padding: 10px 15px; margin-bottom: 15px;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; margin: 0;">
+                            <input type="checkbox" id="isSlut" onchange="if(this.checked){var p=document.getElementById('isProstitute'); if(p){p.checked=false; toggleProstitutePricing();} var s=document.getElementById('isSlave'); if(s){s.checked=false; toggleSlaveOptions();}}">
+                            <span class="gold-glow-text">This NPC is promiscuous (slut)</span>
+                        </label>
+                        <p style="color: #886666; font-size: 10px; margin: 5px 0 0 30px; font-style: italic;">
+                            Sexually available from Acquainted (+6) affinity and up, no relationship-type requirement, no affair floor. Below Acquainted they still refuse. Uses the Promiscuous Relationship Overhead prompts (Prompts tab). Free of charge, unlike a prostitute.
+                        </p>
                     </div>
 
                     <div class="button-group" style="display: flex; gap: 10px;">

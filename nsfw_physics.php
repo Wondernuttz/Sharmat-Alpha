@@ -65,13 +65,9 @@ class NsfwPhysics {
             return aiagentNsfwContactBuildContext($actorName);
         }
 
-        $path = self::lastContactPath($actorName);
-        $raw = is_file($path) ? file_get_contents($path) : false;
-        if ($raw === false || trim($raw) === '') {
-            return '';
-        }
-
-        $data = json_decode($raw, true);
+        $data = function_exists('aiagentNsfwRuntimeStateGet')
+            ? aiagentNsfwRuntimeStateGet('vr_last_contact', $actorName)
+            : null;
         if (!is_array($data)) {
             return '';
         }
@@ -133,7 +129,9 @@ class NsfwPhysics {
             'plain_message' => self::stripPhysicsTags((string)$result['message'])
         ];
 
-        @file_put_contents(self::lastContactPath($actorName), json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        if (function_exists('aiagentNsfwRuntimeStateSet')) {
+            aiagentNsfwRuntimeStateSet('vr_last_contact', $actorName, $payload, self::LAST_CONTACT_TTL_SECONDS + 60);
+        }
     }
 
     private static function stripPhysicsTags($message) {
@@ -251,15 +249,8 @@ class NsfwPhysics {
         return __DIR__ . "/../../log/" . self::VR_PHYSICS_LOG;
     }
 
-    private static function lastContactPath($actorName) {
-        $key = strtolower(trim((string)$actorName));
-        return sys_get_temp_dir() . "/" . self::LAST_CONTACT_FILE_PREFIX . md5($key) . ".json";
-    }
-
-    private static function sustainedTouchPath($actorName, $bodyPart) {
-        $key = strtolower(trim((string)$actorName)) . '|' . strtolower(trim((string)$bodyPart));
-        return sys_get_temp_dir() . "/" . self::SUSTAINED_TOUCH_FILE_PREFIX . md5($key) . ".json";
-    }
+    // (lastContactPath / sustainedTouchPath tmp-file helpers removed 2026-07-11: this state now
+    // lives in the conf_opts runtime-state row via aiagentNsfwRuntimeStateGet/Set - Tyler's review.)
 
     private static function normalizeBodyPart($bodyPart) {
         $raw = trim((string)$bodyPart);
@@ -624,12 +615,11 @@ class NsfwPhysics {
         $threshold = self::sustainedBreastTouchThresholdSeconds();
         $touchCooldown = function_exists('_getNsfwSetting') ? max(1, (int)_getNsfwSetting('PHYSICS_TOUCH_COOLDOWN', 2)) : 2;
         $continuityWindow = max($threshold, $touchCooldown + 1);
-        $path = self::sustainedTouchPath($actorName, $normalized);
+        $sustainedKey = strtolower(trim((string)$actorName)) . '|' . strtolower(trim((string)$normalized));
 
         $state = [];
-        $raw = is_file($path) ? @file_get_contents($path) : false;
-        if ($raw !== false && trim($raw) !== '') {
-            $decoded = json_decode($raw, true);
+        if (function_exists('aiagentNsfwRuntimeStateGet')) {
+            $decoded = aiagentNsfwRuntimeStateGet('vr_sustained', $sustainedKey);
             if (is_array($decoded)) {
                 $state = $decoded;
             }
@@ -668,15 +658,17 @@ class NsfwPhysics {
             $suppressModelRoute = $accumulating || ($sustained && !$sustainedPromptAllowed);
         }
 
-        @file_put_contents($path, json_encode([
-            'startedAt' => $startedAt,
-            'lastAt' => $now,
-            'count' => $count,
-            'threshold' => $threshold,
-            'continuityWindow' => $continuityWindow,
-            'sustainedPrompted' => $sustainedPrompted,
-            'sustainedPromptedAt' => $sustainedPromptedAt,
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        if (function_exists('aiagentNsfwRuntimeStateSet')) {
+            aiagentNsfwRuntimeStateSet('vr_sustained', $sustainedKey, [
+                'startedAt' => $startedAt,
+                'lastAt' => $now,
+                'count' => $count,
+                'threshold' => $threshold,
+                'continuityWindow' => $continuityWindow,
+                'sustainedPrompted' => $sustainedPrompted,
+                'sustainedPromptedAt' => $sustainedPromptedAt,
+            ], max(600, $continuityWindow * 3));
+        }
 
         return [
             'sustained' => $sustained,
@@ -710,9 +702,10 @@ class NsfwPhysics {
         if (function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($actorName)) { return; }
 
         // Server-side per-actor cooldown (on top of the DLL's) so reactions do not spam.
+        // Stored in the conf_opts runtime-state row (was a tmp file - Tyler's review 2026-07-11).
         $cd = function_exists('_getNsfwSetting') ? (int)_getNsfwSetting('NSFW_GAZE_COOLDOWN_SECONDS', 25) : 25;
-        $cdFile = sys_get_temp_dir() . '/nsfw_gaze_' . md5(strtolower($actorName)) . '.txt';
-        if ($cd > 0 && is_file($cdFile) && (time() - (int)@file_get_contents($cdFile)) < $cd) { return; }
+        $gazeLast = function_exists('aiagentNsfwRuntimeStateGet') ? (int)(aiagentNsfwRuntimeStateGet('gaze_cd', $actorName) ?? 0) : 0;
+        if ($cd > 0 && $gazeLast > 0 && (time() - $gazeLast) < $cd) { return; }
 
         $affinity  = function_exists('getNpcAffinity') ? (int)getNpcAffinity($actorName) : 0;
         $tierLabel = class_exists('RelationshipManager') ? RelationshipManager::getTierLabel($affinity) : 'Neutral';
@@ -734,7 +727,9 @@ class NsfwPhysics {
             '#AFFINITY#'    => (string)$affinity,
         ]);
         $GLOBALS["HERIKA_PERSONALITY"] .= "\n<gaze_reaction>\n" . $prompt . "\n</gaze_reaction>";
-        @file_put_contents($cdFile, (string)time());
+        if (function_exists('aiagentNsfwRuntimeStateSet')) {
+            aiagentNsfwRuntimeStateSet('gaze_cd', $actorName, time(), max(300, $cd * 4));
+        }
         error_log("[AIAGENTNSFW] GAZE reaction injected for {$actorName}: region={$region} tier={$tierLabel}");
     }
 

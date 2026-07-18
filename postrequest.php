@@ -295,4 +295,13 @@ try {
     error_log("[AIAGENTNSFW] Sap timer postrequest failed: " . $e->getMessage());
 }
 
+// OSLA BRIDGE: after every turn, mirror this actor's (possibly changed) arousal into OSL Aroused.
+try {
+    if (function_exists('aiagentNsfwQueueOslaArousalSyncForTurn')) {
+        aiagentNsfwQueueOslaArousalSyncForTurn();
+    }
+} catch (Throwable $e) {
+    error_log("[AIAGENTNSFW] OSLA sync postrequest failed: " . $e->getMessage());
+}
+
 ?>

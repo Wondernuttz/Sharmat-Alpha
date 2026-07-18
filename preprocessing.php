@@ -4,6 +4,16 @@
 // These events are NOT fast commands - they trigger NPC dialogue responses
 // Fast commands bypass normal LLM flow and don't generate dialogue
 
+// DLL EVENT NAMING (2026-07-11, Tyler's upstream review): DLL-emitted events are NOT ext_* -
+// the DLL sends the neutral name "physics_raw" and SHARMAT opts in by renaming it HERE
+// (this file is included before main.php builds its fast-command list, so with SHARMAT the
+// event takes the full dialogue path). Core lists "physics_raw" as a fast command, so WITHOUT
+// SHARMAT it is just logged: no LLM, no mystery dialogue, fully trackable. Older DLLs still
+// emit "ext_nsfw_physics_raw" directly; both names keep working through the transition.
+if (isset($GLOBALS["gameRequest"][0]) && $GLOBALS["gameRequest"][0] === 'physics_raw') {
+    $GLOBALS["gameRequest"][0] = 'ext_nsfw_physics_raw';
+}
+
 // These events trigger dialogue:
 // - ext_nsfw_sexcene: Scene changes
 // - ext_nsfw_npc_scene: NPC-to-NPC scenes
@@ -16,6 +26,7 @@ $GLOBALS["external_fast_commands"][]="fertility_notification";
 $GLOBALS["external_fast_commands"][]="ext_nsfw_devices";    // Devious Devices worn-device state (silent store)
 $GLOBALS["external_fast_commands"][]="ext_nsfw_player_drink"; // player consumed a drink/potion (silent: track alcohol + roll whiskey dick)
 $GLOBALS["external_fast_commands"][]="ext_nsfw_vampire";      // Papyrus reports an NPC's vampire race-keyword status (silent: store is_vampire)
+$GLOBALS["external_fast_commands"][]="ext_nsfw_defeat";       // Acheron defeat report -> auto-enslave (silent: set is_slave)
 $GLOBALS["external_fast_commands"][]="_speech_abort";       // Client speech interrupts must not wait behind MAIN.
 // CONSENT BARK: the game fires this the instant a PLAYER scene turns explicit (tier 3). Registering it as a fast
 // command lets it BYPASS the MAIN semaphore so the accept/refuse decision resolves instantly. prerequest.php then
@@ -971,6 +982,26 @@ if (isset($GLOBALS["gameRequest"])) {
         }
     }
 
+    // DEFEAT -> SLAVERY (feature 2026-07-17, user directive "Defeat should become checked slaves"):
+    // Acheron (Simple Defeat) reports a hostile NPC the player defeated (payload "DEFEAT^<npc name>").
+    // Sets the SAME is_slave flag as the NPC Settings checkbox, so the whole slavery system (tiers,
+    // overheads, speak styles, freedom flow) takes over on the next interaction. Silent: no LLM turn.
+    // Children never; already-slaves untouched. Pex-side guards: player excluded, hostiles only,
+    // generic non-unique non-agent mobs skipped (name-keyed data would mark every same-named mob).
+    if ($currentEvent === "ext_nsfw_defeat") {
+        if (_getNsfwSetting('NSFW_DEFEAT_AUTO_ENSLAVE', true)) {
+            $dRaw = (string)($GLOBALS["gameRequest"][3] ?? '');
+            $dParts = explode("^", $dRaw);   // [0]=...DEFEAT (any context prefix lands here), [1]=npc name
+            $dName = isset($dParts[1]) ? trim($dParts[1]) : '';
+            if ($dName !== '' && function_exists('setNpcSlaveStatus')
+                && (!function_exists('aiagentNsfwIsChildNpc') || !aiagentNsfwIsChildNpc($dName))
+                && (!function_exists('isNpcSlave') || !isNpcSlave($dName))) {
+                setNpcSlaveStatus($dName, true);
+                error_log("[AIAGENTNSFW] DEFEAT ENSLAVE: {$dName} marked as slave (Acheron defeat by player)");
+            }
+        }
+    }
+
     // SILENT MARKER PURGE (2026-07-06): core main.php logs EVERY incoming request into the eventlog
     // (people-scoped), including these machine-only markers - and they are fully consumed right here
     // at arrival (profile flags / tmp state). Left in the eventlog, they leak into people-scoped
@@ -978,7 +1009,7 @@ if (isset($GLOBALS["gameRequest"])) {
     // model read a raw "VAMPIRE^Name^0" row as if it were lore. Purge prior rows on every request;
     // the current request's row is inserted after preprocessing and gets swept on the next one.
     try {
-        $GLOBALS["db"]->delete("eventlog", "type in ('ext_nsfw_vampire','ext_nsfw_physics_raw','ext_nsfw_player_drink','ext_nsfw_devices')");
+        $GLOBALS["db"]->delete("eventlog", "type in ('ext_nsfw_vampire','ext_nsfw_physics_raw','physics_raw','ext_nsfw_player_drink','ext_nsfw_devices','ext_nsfw_defeat')");
     } catch (Exception $e) { /* non-fatal */ }
 
     // BACKLOG FIX — Scene end early detection.
@@ -1813,9 +1844,13 @@ if (isset($GLOBALS["gameRequest"])) {
         foreach (glob(sys_get_temp_dir() . "/nsfw_physics_*") ?: [] as $tmpFile) {
             if (is_file($tmpFile)) { @unlink($tmpFile); }
         }
+        // Legacy tmp-file sweep (harmless once empty) + the conf_opts runtime state that replaced
+        // those files 2026-07-11 (VR contact snapshots, sustained-touch accumulators, gaze
+        // cooldowns, contact ledger): a game load is a full physics reset.
         foreach (glob(sys_get_temp_dir() . "/nsfw_last_physics_contact_*") ?: [] as $tmpFile) {
             if (is_file($tmpFile)) { @unlink($tmpFile); }
         }
+        if (function_exists('aiagentNsfwRuntimeStateClear')) { aiagentNsfwRuntimeStateClear(); }
 
         // Clear active scene data - OStim scenes don't persist across save/load
         try {
@@ -1903,42 +1938,11 @@ if (isset($GLOBALS["gameRequest"])) {
     }
 }
 
-// Hook to inject FMR fertility prompts into personality context
-// This runs after prompts.php is loaded and gives the AI behavioral guidance
-$GLOBALS["HOOKS"]["PERSONALITY_BUILDER"]["fmr_fertility_prompt"]=function($currentPersonality, $currentNpcData) {
-    // Check if fertility tracking is enabled in settings
-    if (function_exists('isFertilityTrackingEnabled') && !isFertilityTrackingEnabled()) {
-        return $currentPersonality;
-    }
-
-    // Get NPC name from current NPC data
-    $npcName = $currentNpcData["npc_name"] ?? ($GLOBALS["HERIKA_NAME"] ?? null);
-    if (!$npcName) {
-        return $currentPersonality;
-    }
-
-    // Get NSFW data from nsfw_npc_data table (NOT core_npc_master.extended_data)
-    require_once __DIR__ . "/nsfw_data.php";
-    $extended = NsfwNpcData::get($npcName);
-    if (!$extended || empty($extended)) return $currentPersonality;
-
-    // Check if prompts.php has been loaded (has the getFertilityPromptForNpc function)
-    if (!function_exists('getFertilityPromptForNpc')) {
-        // Prompts.php not loaded yet - this is preprocessing, will be loaded later
-        // Store for later injection via the BIOGRAPHY_BUILDER hook instead
-        return $currentPersonality;
-    }
-
-    $fertilityPrompt = getFertilityPromptForNpc($extended, $npcName);
-
-    if ($fertilityPrompt) {
-        // Wrap in XML tag and append to personality
-        $currentPersonality .= "\n<fertility_state>\n" . $fertilityPrompt . "\n</fertility_state>";
-        error_log("[AIAGENTNSFW FMR] Injected fertility prompt for {$npcName}");
-    }
-
-    return $currentPersonality;
-};
+// Legacy FMR fertility-prompt hook RETIRED 2026-07-10: it read the same per-NPC fertility state
+// as the Fertility-tab pipeline (context_pre.php, NSFW_FERTILITY_ENABLED) and injected a second
+// <fertility_state> block on top of the #FERTILITY prompts every turn - a pregnant NPC got her
+// state twice. The Fertility tab is the single fertility prompt pipeline now. The factual
+// BIOGRAPHY_BUILDER summary below stays (facts, not behavior prompts - no duplication).
 
 // Hook into BIOGRAPHY_BUILDER - Fertility Mode Reloaded integration
 $GLOBALS["HOOKS"]["BIOGRAPHY_BUILDER"]["fertility_handler"]=function($currentBio,$currentNpcData) {
