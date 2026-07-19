@@ -10,8 +10,23 @@
 // event takes the full dialogue path). Core lists "physics_raw" as a fast command, so WITHOUT
 // SHARMAT it is just logged: no LLM, no mystery dialogue, fully trackable. Older DLLs still
 // emit "ext_nsfw_physics_raw" directly; both names keep working through the transition.
-if (isset($GLOBALS["gameRequest"][0]) && $GLOBALS["gameRequest"][0] === 'physics_raw') {
-    $GLOBALS["gameRequest"][0] = 'ext_nsfw_physics_raw';
+if (isset($GLOBALS["gameRequest"][0]) && in_array($GLOBALS["gameRequest"][0], ['physics_raw', 'ext_nsfw_physics_raw'], true)) {
+    // MALFORMED-EMIT GUARD (fix 2026-07-19, runaway "yapping"/token-burn): the DLL sends the neutral
+    // "physics_raw" (older DLLs send "ext_nsfw_physics_raw" directly) and SHARMAT opts these into the full
+    // dialogue path below so a real touch/grab makes the NPC react. But an EMPTY or truncated emit - no actor,
+    // or fewer than the 4 required actor^bodypart^action^blocked... fields - is NOT a real contact. Promoted
+    // anyway it lands on the ext_nsfw_physics_raw TEMPLATE_DIALOG placeholder cue (prompts.php:627) - or, if it
+    // reaches core unrenamed, core's empty-cue TEMPLATE_DIALOG fallback (request.php) - and fires a contextless
+    // NPC turn with no new input: the repetition testers reported. A genuine emit ALWAYS carries an actor plus
+    // >=4 fields (AIAgentNSFW.psc emit format; NsfwPhysics::processPhysicsEvent's own count()<4 reject), so
+    // gating here cannot suppress any real touch/grab/spank/release/gaze. Blocked -> silent fast command.
+    $physRawParts = explode('^', (string)($GLOBALS["gameRequest"][3] ?? ''));
+    if (trim((string)($physRawParts[0] ?? '')) === '' || count($physRawParts) < 4) {
+        error_log("[AIAGENTNSFW] Dropped malformed " . $GLOBALS["gameRequest"][0] . " emit (no actor / <4 fields): '" . substr((string)($GLOBALS["gameRequest"][3] ?? ''), 0, 80) . "'");
+        $GLOBALS["gameRequest"][0] = 'nsfw_blocked_blank_input';
+    } else {
+        $GLOBALS["gameRequest"][0] = 'ext_nsfw_physics_raw';
+    }
 }
 
 // These events trigger dialogue:
@@ -1841,6 +1856,18 @@ if (isset($GLOBALS["gameRequest"])) {
             } elseif ($result && !empty($result['suppressModelRoute'])) {
                 $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
                 $currentEvent = "nsfw_blocked_cooldown";
+            } elseif (!$result) {
+                // processPhysicsEvent returned no result. GAZE legitimately returns null: it injects its own
+                // <gaze_reaction> into HERIKA_PERSONALITY and rides the ext_nsfw_physics_raw placeholder cue so
+                // the NPC reacts to being stared at - it MUST be left alone. Every OTHER null is a deliberate
+                // rejection (VR touch disabled, flatscreen platform gate, sub-threshold spank): block it so it
+                // can't fall through to the TEMPLATE_DIALOG placeholder and fire a contextless turn (fix 2026-07-19).
+                $physNullAction = strtolower(trim((string)(explode('^', $rawData)[2] ?? '')));
+                if ($physNullAction !== 'gaze') {
+                    $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
+                    $currentEvent = "nsfw_blocked_cooldown";
+                    error_log("[AIAGENTNSFW] Blocked filtered physics event (processPhysicsEvent rejected it; action='{$physNullAction}')");
+                }
             }
         }
     }
