@@ -1426,6 +1426,36 @@ if ($isPillowTalkMode) {
     error_log("[AIAGENTNSFW] Pillow talk mode - skipping all scene phase handling for $actorName");
 }
 
+// OPEN MODE DIRECT ACCEPTANCE: the permission framework is off, so an active explicit adult
+// player scene must not enter the normal affinity-tier AcceptSex/RefuseSex decision machine.
+// This deliberately changes state without calling the AcceptSex FUNCSERV: no arousal bonus,
+// crush, payment, cooldown, or other tool side effects. Existing/sticky refusals still win.
+$openModeChild = function_exists('aiagentNsfwIsChildNpc') ? aiagentNsfwIsChildNpc($actorName) : true;
+$openModeSceneEvent = in_array($gameRequest[0] ?? '', [
+    'chatnf_sl', 'chatnf_sl_climax', 'chatnf_sl_moan', 'chatnf_sl_naked',
+    'ext_nsfw_sexcene', 'ext_nsfw_action', 'ext_nsfw_scene', 'ext_nsfw_orgasm',
+    'ext_nsfw_npc_scene', 'ext_nsfw_npc_invite', 'ext_nsfw_npc_orgasm'
+], true);
+if (!$isPillowTalkMode
+    && function_exists('aiagentNsfwShouldAutoAcceptOpenModePlayerScene')
+    && aiagentNsfwShouldAutoAcceptOpenModePlayerScene(
+        $intimacyStatus,
+        function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode(),
+        $openModeChild,
+        $isProstitute,
+        $isSlave,
+        $isSkoomaAddictionBargain,
+        $openModeSceneEvent,
+        $GLOBALS['PLAYER_NAME'] ?? ''
+    )) {
+    $openModeAffinity = function_exists('getNpcAffinity') ? (int)getNpcAffinity($actorName) : 0;
+    $intimacyStatus = aiagentNsfwApplyOpenModeAcceptedState($intimacyStatus, $openModeAffinity);
+    $scenePhase = 'accepted';
+    $GLOBALS['AIAGENTNSFW_OPEN_MODE_AUTO_ACCEPTED'] = true;
+    updateIntimacyForActor($actorName, $intimacyStatus);
+    error_log("[AIAGENTNSFW] OPEN MODE: directly accepted explicit player scene for {$actorName} (affinity {$openModeAffinity}); skipped tier decision machine");
+}
+
 // ============================================
 // AROUSAL GATING OFF - BYPASS ALL PHASE/LEVEL COMPLEXITY
 // ============================================
@@ -2525,7 +2555,16 @@ if ($shouldInjectEngagedContent) {
     if (!empty($intimacyStatus["accepted_sex"]) && empty($intimacyStatus["is_npc_scene"]) && !$isProstitute
         && (int)($intimacyStatus["intensity_tier"] ?? 0) >= 3 && empty($intimacyStatus["scene_is_idle"])) {
         $consentStatusPrompt = '';
-        if (class_exists('NsfwData')) { $consentStatusPrompt = trim((string)NsfwData::getPrompt('consent_accepted_status')); }
+        if (function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode()
+            && function_exists('aiagentNsfwIsChildNpc') && !aiagentNsfwIsChildNpc($actorName)
+            && function_exists('aiagentNsfwBuildOpenModeScenePrompt')) {
+            $openModePartner = (string)($GLOBALS["PLAYER_NAME"] ?? 'the player');
+            $openModeAffinity = function_exists('getNpcAffinity') ? (int)getNpcAffinity($actorName) : 0;
+            $openModeTier = function_exists('getAffinityTierName') ? getAffinityTierName($openModeAffinity) : '';
+            $consentStatusPrompt = aiagentNsfwBuildOpenModeScenePrompt($actorName, $openModePartner, $openModeAffinity, $openModeTier);
+        } else if (class_exists('NsfwData')) {
+            $consentStatusPrompt = trim((string)NsfwData::getPrompt('consent_accepted_status'));
+        }
         if ($consentStatusPrompt === '') {
             $consentStatusPrompt = "You have ALREADY chosen to be with #PLAYER_NAME# in this encounter - this was YOUR decision and it stands for the rest of this scene. You are a willing, present participant. Do not re-question or renegotiate consent, do not act surprised or violated, and do not pull back unless something genuinely new gives you a real reason. Stay in it.";
         }

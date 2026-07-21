@@ -1,5 +1,6 @@
 <?php
 
+require_once __DIR__ . "/open_mode_policy.php";  // Pure Open Mode state/prompt policy (unit-testable without CHIM bootstrap)
 require_once __DIR__ . "/../../lib/chat_helper_functions.php";
 require_once __DIR__ . "/nsfw_data.php";  // NsfwNpcData class - MUST be loaded first (functions.php uses it on include)
 require_once __DIR__ . "/helpers.php";  // Helper functions (isSexDisposalEnabled, etc.) - separated from function definitions
@@ -1836,8 +1837,9 @@ function aiagentNsfwAffectionOnCooldown($npcName) {
 // === OPEN MODE (2026-07-10) =========================================================
 // One master switch that turns the consent/eligibility FRAMEWORK off while leaving the
 // information machinery (scene state, tiers, physics, gaze, drugs, fertility) running:
-// anyone adult can engage anyone adult, and the model keeps full in-character agency
-// (RefuseSex stays offered; sticky refusals still dominate). CHILD PROTECTION IS NEVER
+// anyone adult can engage anyone adult. Explicit adult, non-commercial player scenes enter
+// accepted state directly; RefuseSex stays available for genuine in-character agency and any
+// sticky refusal still dominates. CHILD PROTECTION IS NEVER
 // PART OF THIS SWITCH - every child gate checks independently of open mode. Relationship
 // learning keeps running in the background so turning open mode off later lands in a
 // coherent world. PROSTITUTES STILL REQUIRE PAYMENT (user directive 2026-07-10): the
@@ -1845,7 +1847,8 @@ function aiagentNsfwAffectionOnCooldown($npcName) {
 // arousal threshold for everyone else. Checked at the choke points:
 // aiagentNsfwRelTypeSexEligible, aiagentNsfwOrientationAllowsPlayer,
 // aiagentNsfwNpcToNpcSexEligible, the stranger fallback gate (functions.php), and the
-// two arousal-gate sites in prerequest.php (warmup decline + engage threshold).
+// two arousal-gate sites in prerequest.php (warmup decline + engage threshold), the player-scene
+// acceptance choke point, and the Open Mode tier-cue replacement.
 function aiagentNsfwOpenMode() {
     static $cached = null;
     if ($cached === null) { $cached = (bool)_getNsfwSetting('NSFW_OPEN_MODE', false); }

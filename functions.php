@@ -2301,6 +2301,9 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
     // L3 skooma overrides the sex pathway (addict bargain) even for a prostitute: unlock the sex acts
     // independent of the payment gate. Slaves excluded (separate override). L3-gated, so no effect otherwise.
     $skoomaBargain = !$isSlave && function_exists('getDrugStageForActor') && (int)getDrugStageForActor($npcName, 'skooma') >= 3;
+    $openModeAdultPlayerRoute = !$isSlave && !$isProstitute && !$isNpcScene && !$skoomaBargain
+        && function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode()
+        && function_exists('aiagentNsfwIsChildNpc') && !aiagentNsfwIsChildNpc($npcName);
 
     // SCENE-CALL AFFINITY GATE (user directive 2026-06-29): the relationship floor at which an NPC may autonomously
     // CALL/initiate an OStim/SexLab sex scene with the player. Default 56 = Fond (romance tier). Adjustable in the UI
@@ -2457,7 +2460,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             // All functions available, LLM decides based on tier prompts
 
             // === REGULAR NPC FUNCTIONS ===
-            if (!$isProstitute && !$isRejectedPhase && !$npcSceneGateDisabled && !$isNpcScene && $isExplicitTierPrompt) {
+            if (!$isProstitute && !$isRejectedPhase && !$npcSceneGateDisabled && !$isNpcScene && !$openModeAdultPlayerRoute && $isExplicitTierPrompt) {
                 $GLOBALS["ENABLED_FUNCTIONS"][]= "ExtCmdAcceptSex";
             }
 
@@ -2480,7 +2483,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
 
         } else {
             // Affinity gating disabled - all affinity functions available
-            if (!$isRejectedPhase && !$npcSceneGateDisabled && !$isNpcScene && ($isExplicitTierPrompt || $isProstitute)) {
+            if (!$isRejectedPhase && !$npcSceneGateDisabled && !$isNpcScene && !$openModeAdultPlayerRoute && ($isExplicitTierPrompt || $isProstitute)) {
                 $GLOBALS["ENABLED_FUNCTIONS"][]= "ExtCmdAcceptSex";
             }
             if ($isProstitute && !$isRejectedPhase) {
@@ -2549,10 +2552,11 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
         $sceneCallMinAffinity = function_exists('aiagentNsfwSceneCallFloorFor')
             ? (int)aiagentNsfwSceneCallFloorFor($npcName)   // promiscuous mark drops her floor to Acquaintance(6)
             : (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56);
-        $isAutonomousFondPlus = ((int)$affinity >= $sceneCallMinAffinity)
-            && empty($intimacyStatus["refused_until_scene_end"])
-            && function_exists('aiagentNsfwRelTypeSexEligible')
-            && aiagentNsfwRelTypeSexEligible($npcName);
+        $isAutonomousFondPlus = empty($intimacyStatus["refused_until_scene_end"])
+            && ($openModeAdultPlayerRoute
+                || (((int)$affinity >= $sceneCallMinAffinity)
+                    && function_exists('aiagentNsfwRelTypeSexEligible')
+                    && aiagentNsfwRelTypeSexEligible($npcName)));
         $playerNeedsDecision =
             empty($intimacyStatus["is_npc_scene"])
             && (int)($intimacyStatus["intensity_tier"] ?? 0) >= 3
@@ -2590,7 +2594,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             // Regular/marriage/affair. Fond+ (>=56) = her own autonomy (no AcceptSex needed). AND once a scene
             // is underway it STAYS consented until it ends (sex_started/had_sex_in_scene) - never re-gate her
             // mid-scene. Low-affinity NPCs (< Fond, e.g. a despising spouse) still gate on accepted_sex.
-            $_consented = $isSlave || $npcSceneGateDisabled || !empty($intimacyStatus["accepted_sex"])
+            $_consented = $isSlave || $npcSceneGateDisabled || $openModeAdultPlayerRoute || !empty($intimacyStatus["accepted_sex"])
                 || ($affinity >= 56) || !empty($intimacyStatus["sex_started"]) || !empty($intimacyStatus["had_sex_in_scene"]);
             // REFUSAL DOMINATES: once she refuses, she stays non-consenting (no SexCommand, gets the refuse prompt)
             // until the engine scene actually ends - even though sex_started/had_sex_in_scene above would otherwise
@@ -2619,7 +2623,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
                 $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdQuickenPace";
                 $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdSlowPace";
             }
-        } else if (!$isSlave && !$isNpcScene && (int)($intimacyStatus["intensity_tier"] ?? 0) >= 3) {
+        } else if (!$isSlave && !$isNpcScene && !$openModeAdultPlayerRoute && (int)($intimacyStatus["intensity_tier"] ?? 0) >= 3) {
             // Not consented yet AND the scene has reached EXPLICIT (tier 3): can opt IN (Accept), but CANNOT drive the
             // scene. Below tier 3 (standing/affection - e.g. an additional partner in a multi-partner/orgy scene who is
             // "just standing there") AcceptSex is NOT offered: it only unlocks at the tier-3 prompt (which opens the

@@ -35,6 +35,31 @@ class NsfwRelationship {
         return "<{$tag}>\n{$content}\n</{$tag}>";
     }
 
+    private static function shouldUseOpenModePlayerScenePrompt($npcName, $isProstitute, $promptContext = 'player') {
+        if ($isProstitute || strtolower(trim((string)$promptContext)) === 'npc') {
+            return false;
+        }
+        $npcName = trim((string)$npcName);
+        if ($npcName === ''
+            || !function_exists('aiagentNsfwOpenMode')
+            || !aiagentNsfwOpenMode()
+            || !function_exists('aiagentNsfwIsChildNpc')
+            || aiagentNsfwIsChildNpc($npcName)
+            || !function_exists('aiagentNsfwBuildOpenModeScenePrompt')) {
+            return false;
+        }
+        return true;
+    }
+
+    private static function getOpenModePlayerScenePrompt($npcName, $partnerName, $affinity, $tier) {
+        return aiagentNsfwBuildOpenModeScenePrompt(
+            $npcName,
+            $partnerName ?: 'Player',
+            (int)$affinity,
+            ucfirst(strtolower((string)$tier))
+        );
+    }
+
     /**
      * Get the appropriate tier prompt for an NPC based on their relationship with the player
      *
@@ -47,6 +72,10 @@ class NsfwRelationship {
         // Get relationship with player
         $relationship = RelationshipManager::getPlayerRelationship($npcName);
         $tier = strtolower($relationship['tier']); // e.g., "hostile", "friendly", "bonded"
+
+        if (self::shouldUseOpenModePlayerScenePrompt($npcName, $isProstitute, 'player')) {
+            return self::getOpenModePlayerScenePrompt($npcName, $partnerName ?? 'Player', $relationship['aff'] ?? 0, $tier);
+        }
 
         // Load prompt settings
         $prompts = self::loadPromptSettings();
@@ -95,6 +124,10 @@ class NsfwRelationship {
     public static function getTierPromptByAffinity($affinity, $isProstitute = false, $partnerName = 'Player', $npcName = null, $promptContext = 'player') {
         $tier = strtolower(RelationshipManager::getTierLabel($affinity));
         $isNpcPromptContext = (strtolower((string)$promptContext) === 'npc');
+
+        if (self::shouldUseOpenModePlayerScenePrompt($npcName, $isProstitute, $promptContext)) {
+            return self::getOpenModePlayerScenePrompt($npcName, $partnerName, $affinity, $tier);
+        }
 
         // Check for marriage/affair scenarios if NPC name is provided
         if ($npcName) {
@@ -1620,6 +1653,10 @@ class NsfwRelationship {
     private static function getTierPromptForRelationship($relationship, $isProstitute, $partnerName, $npcName = null, $promptContext = 'player') {
         $tier = strtolower($relationship['tier']);
         $isNpcPromptContext = (strtolower((string)$promptContext) === 'npc');
+
+        if (self::shouldUseOpenModePlayerScenePrompt($npcName, $isProstitute, $promptContext)) {
+            return self::getOpenModePlayerScenePrompt($npcName, $partnerName, $relationship['aff'] ?? 0, $tier);
+        }
 
         if ($npcName) {
             // MARRIAGE: Partner IS the spouse - use marriage-specific prompts
