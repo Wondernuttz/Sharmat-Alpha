@@ -82,6 +82,43 @@ function aiagentNsfwBoolForPreprocess($value)
     return false;
 }
 
+function aiagentNsfwAcquireFileCooldownForPreprocess($path, $cooldownSeconds)
+{
+    $cooldownSeconds = max(1, (int)$cooldownSeconds);
+    $now = time();
+    $handle = @fopen($path, 'c+');
+    if (!$handle) {
+        // Fail closed when the cooldown state cannot be opened. A missing reaction is safer than
+        // turning a burst of CBPC contacts into simultaneous model requests.
+        error_log("[NSFW Physics] Could not open cooldown state {$path}; suppressing event");
+        return ['allowed' => false, 'last' => 0, 'remaining' => $cooldownSeconds];
+    }
+
+    if (!@flock($handle, LOCK_EX)) {
+        @fclose($handle);
+        error_log("[NSFW Physics] Could not lock cooldown state {$path}; suppressing event");
+        return ['allowed' => false, 'last' => 0, 'remaining' => $cooldownSeconds];
+    }
+
+    @rewind($handle);
+    $last = (int)trim((string)stream_get_contents($handle));
+    $allowed = $last <= 0 || ($now - $last) >= $cooldownSeconds;
+    if ($allowed) {
+        @ftruncate($handle, 0);
+        @rewind($handle);
+        @fwrite($handle, (string)$now);
+        @fflush($handle);
+    }
+
+    @flock($handle, LOCK_UN);
+    @fclose($handle);
+    return [
+        'allowed' => $allowed,
+        'last' => $last,
+        'remaining' => $allowed ? 0 : max(1, $cooldownSeconds - ($now - $last)),
+    ];
+}
+
 function aiagentNsfwPlayerInputSpeechTextForPreprocess($rawInput)
 {
     $speech = trim((string)$rawInput);
@@ -112,49 +149,51 @@ function aiagentNsfwIsBlankPlayerInputForPreprocess($event, $rawInput)
 function aiagentNsfwActorHasActiveSceneForPreprocess($actorName, $timeoutSeconds = 300)
 {
     $timeoutSeconds = max(1, (int)$timeoutSeconds);
-    if (!aiagentNsfwIsSceneActiveForPreprocess($timeoutSeconds)) {
-        return false;
-    }
+    $globalSceneActive = aiagentNsfwIsSceneActiveForPreprocess($timeoutSeconds);
 
     $actorName = trim((string)$actorName);
     if ($actorName === '' || strcasecmp($actorName, 'unknown') === 0) {
-        return true;
+        return $globalSceneActive;
     }
     if (empty($GLOBALS["db"]) || !class_exists('NsfwNpcData')) {
-        return true;
+        return $globalSceneActive;
     }
 
     try {
         $extended = NsfwNpcData::get($actorName);
     } catch (Exception $e) {
         error_log("[AIAGENTNSFW] Active scene actor lookup failed for {$actorName}: " . $e->getMessage());
-        return true;
+        return $globalSceneActive;
     }
 
     $intimacy = $extended["aiagent_nsfw_intimacy_data"] ?? [];
     if (!is_array($intimacy) || empty($intimacy)) {
-        return false;
+        return $globalSceneActive;
     }
 
     $sceneStart = (int)($intimacy["scene_start_time"] ?? 0);
     $lastNpcUpdate = (int)($intimacy["last_npc_scene_update_time"] ?? 0);
-    $lastSceneTouch = max($sceneStart, $lastNpcUpdate);
-    if ($lastSceneTouch > 0 && (time() - $lastSceneTouch) > $timeoutSeconds) {
-        return false;
-    }
+    $lastSceneUpdate = (int)($intimacy["last_scene_update_time"] ?? 0);
+    $lastSceneTouch = max($sceneStart, $lastNpcUpdate, $lastSceneUpdate);
+    $actorStateIsRecent = $lastSceneTouch > 0 && (time() - $lastSceneTouch) <= $timeoutSeconds;
 
     $phase = strtolower(trim((string)($intimacy["scene_phase"] ?? '')));
     $level = (int)($intimacy["level"] ?? 0);
     $hasSceneActors = is_array($intimacy["scene_actors"] ?? null) && !empty($intimacy["scene_actors"]);
     $hasSceneText = !empty($intimacy["current_scene_name"]) || !empty($intimacy["current_scene_desc"]);
 
-    return $level > 0
+    $actorStateIsActive = $level > 0
         || aiagentNsfwBoolForPreprocess($intimacy["sex_started"] ?? false)
         || aiagentNsfwBoolForPreprocess($intimacy["had_sex_in_scene"] ?? false)
         || aiagentNsfwBoolForPreprocess($intimacy["is_active_participant"] ?? false)
+        || (int)($intimacy["intensity_tier"] ?? 0) >= 3
         || $hasSceneActors
         || $hasSceneText
         || in_array($phase, ['affection', 'tier_prompt', 'accepted', 'engaged', 'invite', 'rejected'], true);
+
+    // The global scene marker is authoritative. The per-actor state is a fallback for integrations
+    // whose scene event arrived but whose global marker was lost or cleaned up early.
+    return $globalSceneActive || ($actorStateIsRecent && $actorStateIsActive);
 }
 
 function aiagentNsfwNpcSceneStaleSecondsForPreprocess()
@@ -1006,7 +1045,9 @@ if (isset($GLOBALS["gameRequest"])) {
         $vsParts = explode("^", $vsRaw);   // [0]=...VRSTATUS (any context prefix lands here), [1]=1|0
         if (isset($vsParts[1]) && function_exists('aiagentNsfwRuntimeStateSet')) {
             $vsIsVr = (trim($vsParts[1]) === '1') ? 1 : 0;
-            aiagentNsfwRuntimeStateSet('platform', 'is_vr', ['v' => $vsIsVr], 604800);
+            // Platform is installation-level state, not save-game state. Keep it for a year and
+            // preserve it across init resets below; the pex refreshes it whenever DoRegister runs.
+            aiagentNsfwRuntimeStateSet('platform', 'is_vr', ['v' => $vsIsVr], 31536000);
             error_log("[AIAGENTNSFW] Platform reported by game: " . ($vsIsVr ? "VR" : "flatscreen") . " (touch lanes " . ($vsIsVr ? "enabled" : "hard-off") . ")");
         }
     }
@@ -1363,6 +1404,63 @@ if (isset($GLOBALS["gameRequest"])) {
             $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
             $currentEvent = "nsfw_blocked_cooldown";
         }
+
+        // SCENE CONTACT POLICY (2026-07-23): animation-driven CBPC collisions are continuous, not
+        // deliberate player input. During an OStim/SexLab scene, suppress every ordinary touch and
+        // every grab except an intentional breast grab. Intentional ass slaps keep their own lane.
+        // Gaze is separate from contact physics and is handled by handleGaze(), which suppresses it
+        // during scenes without accidentally creating a contextless model request.
+        $physicsSceneActor = $physicsActor !== '' ? $physicsActor : (string)$currentActor;
+        $physicsSceneActive = aiagentNsfwActorHasActiveSceneForPreprocess(
+            $physicsSceneActor,
+            (int)_getNsfwSetting('BLOCK_RECHAT_TIMEOUT', 300)
+        );
+        $sceneBreastGrab = $isGrab && $physicsBodyPart === 'breasts';
+        $sceneContactBlocked = $physicsSceneActive
+            && ($isTouch || ($isGrab && !$sceneBreastGrab));
+        if ($GLOBALS["gameRequest"][0] !== "nsfw_blocked_cooldown" && $sceneContactBlocked) {
+            if ($currentEvent === 'ext_nsfw_physics_raw' && !empty($rawData)) {
+                require_once(__DIR__."/nsfw_physics.php");
+                NsfwPhysics::logRawPhysicsEvent(
+                    $rawData,
+                    'scene_policy',
+                    $isTouch
+                        ? 'ordinary touch is disabled during active scenes'
+                        : 'only breast grabs and intentional ass slaps are enabled during active scenes'
+                );
+            }
+            error_log("[NSFW Physics] {$physAction} blocked by active-scene contact policy for {$physicsSceneActor} {$physicsBodyPart}");
+            $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
+            $currentEvent = "nsfw_blocked_cooldown";
+        }
+
+        // A penetration collision is sustained body overlap, not a fresh action every few seconds.
+        // If a scene integration failed to provide its marker, allow the first notification and apply
+        // the same long circuit breaker used for scene effects. This specifically stops the repeated
+        // "inserted ... into ..." flood visible in the 2026-07-21 diagnostics.
+        $isPenetratingTouch = $isTouch && filter_var($parts[5] ?? 'false', FILTER_VALIDATE_BOOLEAN);
+        if ($GLOBALS["gameRequest"][0] !== "nsfw_blocked_cooldown"
+            && !$physicsSceneActive
+            && $isPenetratingTouch
+        ) {
+            $penetrationCooldown = max(90, (int)_getNsfwSetting('PHYSICS_SCENE_EFFECT_COOLDOWN', 90));
+            $penetrationActor = $physicsSceneActor !== '' ? $physicsSceneActor : 'unknown';
+            $penetrationPath = sys_get_temp_dir() . "/nsfw_physics_penetration_" . md5(strtolower($penetrationActor)) . ".txt";
+            $penetrationDecision = aiagentNsfwAcquireFileCooldownForPreprocess($penetrationPath, $penetrationCooldown);
+            if (empty($penetrationDecision['allowed'])) {
+                if ($currentEvent === 'ext_nsfw_physics_raw' && !empty($rawData)) {
+                    require_once(__DIR__."/nsfw_physics.php");
+                    NsfwPhysics::processPhysicsEvent(
+                        $rawData,
+                        'penetration_cooldown',
+                        "sustained penetration cooldown {$penetrationCooldown}s still active for {$penetrationActor}"
+                    );
+                }
+                error_log("[NSFW Physics] Repeated penetration touch suppressed for {$penetrationActor}; {$penetrationDecision['remaining']}s remain");
+                $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
+                $currentEvent = "nsfw_blocked_cooldown";
+            }
+        }
         if ($isSpank) {
             $spankEnabled = (bool) _getNsfwSetting('PHYSICS_SPANK_ENABLED', true);
             $spankSpeed = isset($parts[7]) ? floatval($parts[7]) : 0.0;
@@ -1483,8 +1581,8 @@ if (isset($GLOBALS["gameRequest"])) {
             }
             $lowConfidencePhysicsParts = ['body', 'other', 'arm', 'shoulder', 'back', 'belly', 'leg', 'foot'];
             $cooldownFile = sys_get_temp_dir() . "/nsfw_physics_" . $cooldownKind . "_" . md5($currentActor) . "_" . md5($cooldownBodyPart) . ".txt";
-            $lastTime = @file_get_contents($cooldownFile);
-            if ($lastTime !== false && (time() - (int)$lastTime) < $cooldownSeconds) {
+            $cooldownDecision = aiagentNsfwAcquireFileCooldownForPreprocess($cooldownFile, $cooldownSeconds);
+            if (empty($cooldownDecision['allowed'])) {
                 // Suppress repeat model calls but keep the latest valid contact available
                 // as context for the next normal turn. This is especially important for
                 // CBPC touches, which can arrive right after HIGGS release.
@@ -1494,8 +1592,6 @@ if (isset($GLOBALS["gameRequest"])) {
                 }
                 error_log("[NSFW Physics] {$physAction} ignored before prompt routing: {$cooldownKind} cooldown {$cooldownSeconds}s still active for {$currentActor} {$cooldownBodyPart}");
                 $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
-            } else {
-                @file_put_contents($cooldownFile, time());
             }
 
             // HIGGS/CBPC often jitters through generic nodes for the same real hand motion
@@ -1514,16 +1610,14 @@ if (isset($GLOBALS["gameRequest"])) {
                     $lowConfidenceActor = 'unknown';
                 }
                 $lowConfidenceFile = sys_get_temp_dir() . "/nsfw_physics_low_confidence_" . md5(strtolower($lowConfidenceActor)) . ".txt";
-                $lastLowConfidence = @file_get_contents($lowConfidenceFile);
-                if ($lastLowConfidence !== false && (time() - (int)$lastLowConfidence) < $lowConfidenceCooldown) {
+                $lowConfidenceDecision = aiagentNsfwAcquireFileCooldownForPreprocess($lowConfidenceFile, $lowConfidenceCooldown);
+                if (empty($lowConfidenceDecision['allowed'])) {
                     if ($currentEvent === 'ext_nsfw_physics_raw' && !empty($rawData)) {
                         require_once(__DIR__."/nsfw_physics.php");
                         NsfwPhysics::processPhysicsEvent($rawData, 'low_confidence_cooldown', "low-confidence physics cooldown {$lowConfidenceCooldown}s still active for {$lowConfidenceActor}");
                     }
                     error_log("[NSFW Physics] {$physAction} ignored before prompt routing: low-confidence physics cooldown {$lowConfidenceCooldown}s still active for {$lowConfidenceActor}");
                     $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
-                } else {
-                    @file_put_contents($lowConfidenceFile, time());
                 }
             }
 
@@ -1533,6 +1627,7 @@ if (isset($GLOBALS["gameRequest"])) {
             // use their own PHYSICS_SPANK_COOLDOWN instead, so they stay responsive in scenes.
             $scenePhysicsActor = $physicsActor !== '' ? $physicsActor : (string)$currentActor;
             if (!$isSpank
+                && !$sceneBreastGrab
                 && $GLOBALS["gameRequest"][0] !== "nsfw_blocked_cooldown"
                 && aiagentNsfwActorHasActiveSceneForPreprocess($scenePhysicsActor, (int)_getNsfwSetting('BLOCK_RECHAT_TIMEOUT', 300))
             ) {
@@ -1541,16 +1636,14 @@ if (isset($GLOBALS["gameRequest"])) {
                     $scenePhysicsActor = 'unknown';
                 }
                 $sceneCooldownFile = sys_get_temp_dir() . "/nsfw_physics_scene_effect_" . md5(strtolower($scenePhysicsActor)) . ".txt";
-                $lastSceneEffect = @file_get_contents($sceneCooldownFile);
-                if ($lastSceneEffect !== false && (time() - (int)$lastSceneEffect) < $sceneEffectCooldown) {
+                $sceneCooldownDecision = aiagentNsfwAcquireFileCooldownForPreprocess($sceneCooldownFile, $sceneEffectCooldown);
+                if (empty($sceneCooldownDecision['allowed'])) {
                     if ($currentEvent === 'ext_nsfw_physics_raw' && !empty($rawData)) {
                         require_once(__DIR__."/nsfw_physics.php");
                         NsfwPhysics::processPhysicsEvent($rawData, 'scene_cooldown', "scene physics cooldown {$sceneEffectCooldown}s still active for {$scenePhysicsActor}");
                     }
                     error_log("[NSFW Physics] {$physAction} ignored before prompt routing: scene physics cooldown {$sceneEffectCooldown}s still active for {$scenePhysicsActor}");
                     $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
-                } else {
-                    @file_put_contents($sceneCooldownFile, time());
                 }
             }
         }
@@ -1839,7 +1932,11 @@ if (isset($GLOBALS["gameRequest"])) {
         $rawData = $GLOBALS["gameRequest"][3] ?? '';
         if (!empty($rawData)) {
             $result = NsfwPhysics::processPhysicsEvent($rawData);
-            if ($result && empty($result['suppressModelRoute'])) {
+            if ($result && !empty($result['gazeInjected'])) {
+                // Successful gaze injected <gaze_reaction> into HERIKA_PERSONALITY. Keep the raw
+                // placeholder request so the model performs that one reaction.
+                error_log("[AIAGENTNSFW] GAZE routed to model after successful prompt injection");
+            } elseif ($result && empty($result['suppressModelRoute'])) {
                 $cleanMessage = function_exists('aiagentNsfwContactStripTags')
                     ? aiagentNsfwContactStripTags($result['message'])
                     : $result['message'];
@@ -1856,18 +1953,17 @@ if (isset($GLOBALS["gameRequest"])) {
             } elseif ($result && !empty($result['suppressModelRoute'])) {
                 $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
                 $currentEvent = "nsfw_blocked_cooldown";
-            } elseif (!$result) {
-                // processPhysicsEvent returned no result. GAZE legitimately returns null: it injects its own
-                // <gaze_reaction> into HERIKA_PERSONALITY and rides the ext_nsfw_physics_raw placeholder cue so
-                // the NPC reacts to being stared at - it MUST be left alone. Every OTHER null is a deliberate
-                // rejection (VR touch disabled, flatscreen platform gate, sub-threshold spank): block it so it
-                // can't fall through to the TEMPLATE_DIALOG placeholder and fire a contextless turn (fix 2026-07-19).
-                $physNullAction = strtolower(trim((string)(explode('^', $rawData)[2] ?? '')));
-                if ($physNullAction !== 'gaze') {
-                    $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
-                    $currentEvent = "nsfw_blocked_cooldown";
-                    error_log("[AIAGENTNSFW] Blocked filtered physics event (processPhysicsEvent rejected it; action='{$physNullAction}')");
+                if (($result['action'] ?? '') === 'gaze') {
+                    error_log("[AIAGENTNSFW] GAZE model route blocked: " . ($result['suppressReason'] ?? 'gaze handler rejected event'));
                 }
+            } elseif (!$result) {
+                // Every null is a deliberate rejection (VR touch disabled, unconfirmed/flatscreen
+                // platform, malformed data, sub-threshold spank). Gaze now returns an explicit
+                // injected/suppressed result, so a null must never reach TEMPLATE_DIALOG.
+                $physNullAction = strtolower(trim((string)(explode('^', $rawData)[2] ?? '')));
+                $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
+                $currentEvent = "nsfw_blocked_cooldown";
+                error_log("[AIAGENTNSFW] Blocked filtered physics event (processPhysicsEvent rejected it; action='{$physNullAction}')");
             }
         }
     }
@@ -1891,7 +1987,24 @@ if (isset($GLOBALS["gameRequest"])) {
         foreach (glob(sys_get_temp_dir() . "/nsfw_last_physics_contact_*") ?: [] as $tmpFile) {
             if (is_file($tmpFile)) { @unlink($tmpFile); }
         }
-        if (function_exists('aiagentNsfwRuntimeStateClear')) { aiagentNsfwRuntimeStateClear(); }
+        if (function_exists('aiagentNsfwRuntimeStateClear')) {
+            // Contact state is save-specific, but the VR/flatscreen platform is not. Preserve the
+            // last explicit VRSTATUS report so a normal game-load init cannot disable VR touch or
+            // turn an old flatscreen client back into an "unknown platform" contact source.
+            $platformState = function_exists('aiagentNsfwRuntimeStateGet')
+                ? aiagentNsfwRuntimeStateGet('platform', 'is_vr')
+                : null;
+            aiagentNsfwRuntimeStateClear();
+            if (is_array($platformState) && array_key_exists('v', $platformState)
+                && function_exists('aiagentNsfwRuntimeStateSet')) {
+                aiagentNsfwRuntimeStateSet(
+                    'platform',
+                    'is_vr',
+                    ['v' => ((int)$platformState['v'] === 1 ? 1 : 0)],
+                    31536000
+                );
+            }
+        }
 
         // Clear active scene data - OStim scenes don't persist across save/load
         try {

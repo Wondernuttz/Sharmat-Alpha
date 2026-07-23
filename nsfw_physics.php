@@ -687,25 +687,59 @@ class NsfwPhysics {
      * modulated by relationship. Self-contained: injects into HERIKA_PERSONALITY, no scene state, no tools.
      * Regions: eyes | tits | ass | crotch | person. The DLL already gates lewd regions to male-player->female-NPC.
      */
+    private static function suppressedGazeResult($actorName, $region, $reason) {
+        $actorName = trim((string)$actorName);
+        $region = strtolower(trim((string)$region));
+        error_log("[AIAGENTNSFW] GAZE suppressed for " . ($actorName !== '' ? $actorName : '<unknown>') . ": {$reason}");
+        return [
+            'action' => 'gaze',
+            'actorName' => $actorName,
+            'bodyPart' => $region !== '' ? $region : 'person',
+            'gazeInjected' => false,
+            'suppressModelRoute' => true,
+            'suppressReason' => $reason,
+        ];
+    }
+
     private static function handleGaze($parts) {
         $actorName = trim((string)($parts[0] ?? ''));
         $region    = strtolower(trim((string)($parts[1] ?? 'person')));
-        if ($actorName === '' || !isset($GLOBALS["HERIKA_PERSONALITY"])) { return; }
-        if (function_exists('_getNsfwSetting') && !_getNsfwSetting('NSFW_GAZE_ENABLED', true)) { return; }
+        if ($actorName === '') {
+            return self::suppressedGazeResult($actorName, $region, 'missing actor name');
+        }
+        if (!isset($GLOBALS["HERIKA_PERSONALITY"])) {
+            return self::suppressedGazeResult($actorName, $region, 'NPC personality was not loaded');
+        }
+        if (function_exists('_getNsfwSetting') && !_getNsfwSetting('NSFW_GAZE_ENABLED', true)) {
+            return self::suppressedGazeResult($actorName, $region, 'gaze reactions are disabled');
+        }
 
         require_once __DIR__ . '/common.php';
         // Never react to staring DURING an active scene (you are supposed to look then), and never for children.
+        $sceneActivePath = sys_get_temp_dir() . "/nsfw_scene_active.txt";
+        $sceneEndedPath = sys_get_temp_dir() . "/nsfw_scene_ended.txt";
+        $sceneActiveTime = is_file($sceneActivePath) ? (int)(file_get_contents($sceneActivePath) ?: 0) : 0;
+        $sceneEndedTime = is_file($sceneEndedPath) ? (int)(file_get_contents($sceneEndedPath) ?: 0) : 0;
+        if ($sceneActiveTime > 0 && (time() - $sceneActiveTime) < 600 && $sceneActiveTime >= $sceneEndedTime) {
+            return self::suppressedGazeResult($actorName, $region, 'an OStim/SexLab scene is active');
+        }
         if (function_exists('getIntimacyForActor')) {
             $ix = getIntimacyForActor($actorName);
-            if ((int)($ix['level'] ?? 0) >= 1 || !empty($ix['sex_started']) || (int)($ix['intensity_tier'] ?? 0) >= 3) { return; }
+            if ((int)($ix['level'] ?? 0) >= 1 || !empty($ix['sex_started']) || (int)($ix['intensity_tier'] ?? 0) >= 3) {
+                return self::suppressedGazeResult($actorName, $region, 'the target is participating in an active scene');
+            }
         }
-        if (function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($actorName)) { return; }
+        if (function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($actorName)) {
+            return self::suppressedGazeResult($actorName, $region, 'the target is a child');
+        }
 
         // Server-side per-actor cooldown (on top of the DLL's) so reactions do not spam.
         // Stored in the conf_opts runtime-state row (was a tmp file - Tyler's review 2026-07-11).
         $cd = function_exists('_getNsfwSetting') ? (int)_getNsfwSetting('NSFW_GAZE_COOLDOWN_SECONDS', 25) : 25;
         $gazeLast = function_exists('aiagentNsfwRuntimeStateGet') ? (int)(aiagentNsfwRuntimeStateGet('gaze_cd', $actorName) ?? 0) : 0;
-        if ($cd > 0 && $gazeLast > 0 && (time() - $gazeLast) < $cd) { return; }
+        if ($cd > 0 && $gazeLast > 0 && (time() - $gazeLast) < $cd) {
+            return self::suppressedGazeResult($actorName, $region, 'server gaze cooldown is still active');
+        }
 
         $affinity  = function_exists('getNpcAffinity') ? (int)getNpcAffinity($actorName) : 0;
         $tierLabel = class_exists('RelationshipManager') ? RelationshipManager::getTierLabel($affinity) : 'Neutral';
@@ -718,7 +752,9 @@ class NsfwPhysics {
         $prompt  = trim((string)($prompts["gaze_{$region}"] ?? ''));
         if ($prompt === '') { $prompt = self::defaultGazePrompt($region); }   // fresh-install fallback
         if ($prompt === '') { $prompt = self::defaultGazePrompt('person'); }
-        if ($prompt === '') { return; }
+        if ($prompt === '') {
+            return self::suppressedGazeResult($actorName, $region, 'no gaze prompt is configured');
+        }
 
         $prompt = strtr($prompt, [
             '#PLAYER_NAME#' => $playerName,
@@ -731,6 +767,13 @@ class NsfwPhysics {
             aiagentNsfwRuntimeStateSet('gaze_cd', $actorName, time(), max(300, $cd * 4));
         }
         error_log("[AIAGENTNSFW] GAZE reaction injected for {$actorName}: region={$region} tier={$tierLabel}");
+        return [
+            'action' => 'gaze',
+            'actorName' => $actorName,
+            'bodyPart' => $region,
+            'gazeInjected' => true,
+            'suppressModelRoute' => false,
+        ];
     }
 
     // Fresh-install fallbacks; the UI-editable gaze_* prompt keys override these.
@@ -763,7 +806,7 @@ class NsfwPhysics {
             return null;
         }
 
-        $action = $parts[2]; // touch, grab, release
+        $action = strtolower(trim((string)$parts[2])); // touch, grab, spank, gaze, release
 
         // VR TOUCH TOGGLE (2026-07-06): flat/2D players get phantom CBPC contact events (no VR hands),
         // and some setups fire collisions through worn armor. This kills the CONTACT lanes only -
@@ -773,16 +816,22 @@ class NsfwPhysics {
             return null;
         }
 
-        // PLATFORM GATE (2026-07-18, user directive "detect VR and have it ON, flatrim OFF"): the pex
-        // reports the platform (VRSTATUS marker, SkyrimVR.esm detection). Known-flatscreen installs get
-        // contact lanes dropped HERE regardless of the toggle, so stale game mods that still register
-        // CBPC on flatscreen cannot spam phantom touches. VR or unknown platform (old pex, no report
-        // yet) keeps existing behavior - the toggle above remains the manual control.
-        if (in_array($action, ['touch', 'grab', 'spank', 'release'], true)
-            && function_exists('aiagentNsfwRuntimeStateGet')) {
-            $platform = aiagentNsfwRuntimeStateGet('platform', 'is_vr');
-            if (is_array($platform) && array_key_exists('v', $platform) && (int)$platform['v'] === 0) {
-                error_log("[NSFW Physics] Dropped {$action} event: platform is flatscreen (VR touch is VR-only)");
+        // PLATFORM GATE (2026-07-23): contact physics fail closed. A current SHARMAT pex reports
+        // VRSTATUS^1 at startup. Treat both flatscreen (0) and a missing/legacy report as non-VR so an
+        // old flatscreen pex cannot register CBPC body-vs-body collisions and flood the model. Gaze is
+        // deliberately excluded: the DLL supports it on flatscreen while the camera is first-person.
+        if (in_array($action, ['touch', 'grab', 'spank', 'release'], true)) {
+            $platform = function_exists('aiagentNsfwRuntimeStateGet')
+                ? aiagentNsfwRuntimeStateGet('platform', 'is_vr')
+                : null;
+            $confirmedVr = is_array($platform)
+                && array_key_exists('v', $platform)
+                && (int)$platform['v'] === 1;
+            if (!$confirmedVr) {
+                $platformReason = is_array($platform) && array_key_exists('v', $platform)
+                    ? 'flatscreen'
+                    : 'missing VRSTATUS report';
+                error_log("[NSFW Physics] Dropped {$action} event: {$platformReason} (contact physics require confirmed VR)");
                 return null;
             }
         }
@@ -801,8 +850,7 @@ class NsfwPhysics {
                 $result = self::handleSpank($parts);
                 break;
             case 'gaze':
-                self::handleGaze($parts);   // self-contained: injects its own reaction, no contact/tier machinery
-                return null;
+                return self::handleGaze($parts); // explicit injected/suppressed result controls model routing
             case 'release':
                 $result = self::handleRelease($parts);
                 break;
