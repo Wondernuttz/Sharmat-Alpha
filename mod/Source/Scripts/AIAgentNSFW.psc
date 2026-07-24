@@ -3672,7 +3672,9 @@ Event OStimSceneChanged(string EventName, string SceneID, float NumArg, Form Sen
 		float excitement = OActor.GetExcitement(participantTalk)
 		float currentRealTime = Utility.GetCurrentRealTime()
 		float lastMoanTime = StorageUtil.GetFloatValue(participantTalk, "chim_ostim_moan_cooldown", 0)
-		bool moanDue = excitement > 80 && (currentRealTime - lastMoanTime) > 8.0
+		; GetCurrentRealTime resets when Skyrim restarts, while StorageUtil survives in the save.
+		bool timerReset = currentRealTime < lastMoanTime
+		bool moanDue = excitement > 80 && (lastMoanTime <= 0 || timerReset || (currentRealTime - lastMoanTime) > 8.0)
 
 		if moanDue
 			; Stamp before dispatch so rapid duplicate OStim scene events cannot race another moan request.
