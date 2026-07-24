@@ -3656,47 +3656,35 @@ Event OStimSceneChanged(string EventName, string SceneID, float NumArg, Form Sen
 	; ONCE per thread so the server resolves the NPC's accept/refuse decision INSTANTLY (it is a fast command and
 	; bypasses the MAIN semaphore) instead of waiting on the scene queue. Player scenes only (playerInScene). The
 	; server treats it exactly like the scene's sexcene turn, so the model decides with full context and no player input.
+	bool consentBarkFired = false
 	if (participantTalk && playerInScene && threadId != consentBarkThreadId)
 		consentBarkThreadId = threadId
 		AIAgentFunctions.requestMessageForActor(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "ext_nsfw_consent_bark", participantTalk.GetDisplayName())
+		consentBarkFired = true
 		Debug.Trace("[CHIM-NSFW] CONSENT BARK fired for thread " + threadId + " -> " + participantTalk.GetDisplayName())
 	endif
 
-	; Also route scene event to NPC for dialogue response (only when mouth is free)
-	if (participantTalk)
-		AIAgentFunctions.requestMessageForActor(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "ext_nsfw_sexcene", participantTalk.GetDisplayName())
-	endif
+	; Emit exactly ONE vocal response per scene change. The old loop requested chatnf_sl/chatnf_sl_moan
+	; for every participant and even requested another moan while already in cooldown, causing back-to-back spam.
+	; At high excitement use the server-controlled lightweight moan route; otherwise use normal scene dialogue.
+	; A consent bark already owns this turn and must not be doubled.
+	if (participantTalk && !consentBarkFired)
+		float excitement = OActor.GetExcitement(participantTalk)
+		float currentRealTime = Utility.GetCurrentRealTime()
+		float lastMoanTime = StorageUtil.GetFloatValue(participantTalk, "chim_ostim_moan_cooldown", 0)
+		bool moanDue = excitement > 80 && (currentRealTime - lastMoanTime) > 8.0
 
-	; Send chatnf_sl to ALL participants — each has their own 30s cooldown
-	; Removed mouth-lock restriction so NPCs comment during active sex positions
-	if participants != None
-		int k = 0
-		while (k < participants.Length)
-			Actor talkActor = participants[k]
-			if (talkActor != None && talkActor != Game.GetPlayer())
-				float daysPassed = Utility.GetCurrentGameTime()
-				float lastTalkedTime = StorageUtil.GetFloatValue(talkActor, "chim_ostim_talk_cooldown", 0)
-				if ((daysPassed - lastTalkedTime) > 0.00694)	;30 irl seconds
-					float excitement = OActor.GetExcitement(talkActor)
-					Debug.Trace("[CHIM-NSFW] " + talkActor.GetDisplayName() + " auto-talk, excitement:" + excitement)
-					if (excitement <= 80)
-						; Legacy chatnf_sl auto-talk disabled. ext_nsfw_sexcene owns model prompting.
-						; AIAgentFunctions.requestMessageForActor("", "chatnf_sl", talkActor.GetDisplayName())
-						StorageUtil.SetFloatValue(talkActor, "chim_ostim_talk_cooldown", daysPassed)
-					else
-						; Legacy chatnf_sl auto-talk disabled. ext_nsfw_sexcene owns model prompting.
-						; AIAgentFunctions.requestMessageForActor("", "chatnf_sl_moan", talkActor.GetDisplayName())
-					endif
-				else
-					Debug.Trace("[CHIM-NSFW] Auto talk in cooldown for " + talkActor.GetDisplayName())
-					; Legacy chatnf_sl auto-talk disabled. ext_nsfw_sexcene owns model prompting.
-					; AIAgentFunctions.requestMessageForActor("", "chatnf_sl_moan", talkActor.GetDisplayName())
-				endif
-			endif
-			k += 1
-		endWhile
-	else
-		Debug.Trace("[CHIM-NSFW] OStimSceneChanged: No participants for auto-talk")
+		if moanDue
+			; Stamp before dispatch so rapid duplicate OStim scene events cannot race another moan request.
+			StorageUtil.SetFloatValue(participantTalk, "chim_ostim_moan_cooldown", currentRealTime)
+			AIAgentFunctions.requestMessageForActor("", "chatnf_sl_moan", participantTalk.GetDisplayName())
+			Debug.Trace("[CHIM-NSFW] Server-controlled scene moan -> " + participantTalk.GetDisplayName() + ", excitement:" + excitement)
+		else
+			AIAgentFunctions.requestMessageForActor(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "ext_nsfw_sexcene", participantTalk.GetDisplayName())
+			Debug.Trace("[CHIM-NSFW] Scene dialogue -> " + participantTalk.GetDisplayName() + ", excitement:" + excitement)
+		endif
+	elseif (!participantTalk)
+		Debug.Trace("[CHIM-NSFW] OStimSceneChanged: No mouth-free participant available for CHIM speech")
 	endif
 	
 EndEvent
