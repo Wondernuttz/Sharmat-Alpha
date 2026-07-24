@@ -3647,8 +3647,9 @@ Event OStimSceneChanged(string EventName, string SceneID, float NumArg, Form Sen
 			i += 1
 		endwhile
 	endif
-	
-	; Always send scene data to Narrator for state tracking (updates current_scene_desc for all actors, no LLM call)
+
+	; Authoritative scene beat. The SHARMAT server rewrites info_sexscene to ext_nsfw_sexcene,
+	; updates scene state, and decides whether this beat speaks from NSFW_SCENE_SPEAK_ON_SCENE_CHANGE.
 	AIAgentFunctions.logMessage(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "info_sexscene")
 
 	; CONSENT BARK (fast accept/refuse decision). participantTalk is only set when the scene is at an explicit
@@ -3656,39 +3657,24 @@ Event OStimSceneChanged(string EventName, string SceneID, float NumArg, Form Sen
 	; ONCE per thread so the server resolves the NPC's accept/refuse decision INSTANTLY (it is a fast command and
 	; bypasses the MAIN semaphore) instead of waiting on the scene queue. Player scenes only (playerInScene). The
 	; server treats it exactly like the scene's sexcene turn, so the model decides with full context and no player input.
-	bool consentBarkFired = false
 	if (participantTalk && playerInScene && threadId != consentBarkThreadId)
 		consentBarkThreadId = threadId
 		AIAgentFunctions.requestMessageForActor(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "ext_nsfw_consent_bark", participantTalk.GetDisplayName())
-		consentBarkFired = true
 		Debug.Trace("[CHIM-NSFW] CONSENT BARK fired for thread " + threadId + " -> " + participantTalk.GetDisplayName())
 	endif
 
-	; Emit exactly ONE vocal response per scene change. The old loop requested chatnf_sl/chatnf_sl_moan
-	; for every participant and even requested another moan while already in cooldown, causing back-to-back spam.
-	; At high excitement use the server-controlled lightweight moan route; otherwise use normal scene dialogue.
-	; A consent bark already owns this turn and must not be doubled.
-	if (participantTalk && !consentBarkFired)
-		float excitement = OActor.GetExcitement(participantTalk)
-		float currentRealTime = Utility.GetCurrentRealTime()
-		float lastMoanTime = StorageUtil.GetFloatValue(participantTalk, "chim_ostim_moan_cooldown", 0)
-		; GetCurrentRealTime resets when Skyrim restarts, while StorageUtil survives in the save.
-		bool timerReset = currentRealTime < lastMoanTime
-		bool moanDue = excitement > 80 && (lastMoanTime <= 0 || timerReset || (currentRealTime - lastMoanTime) > 8.0)
-
-		if moanDue
-			; Stamp before dispatch so rapid duplicate OStim scene events cannot race another moan request.
-			StorageUtil.SetFloatValue(participantTalk, "chim_ostim_moan_cooldown", currentRealTime)
-			AIAgentFunctions.requestMessageForActor("", "chatnf_sl_moan", participantTalk.GetDisplayName())
-			Debug.Trace("[CHIM-NSFW] Server-controlled scene moan -> " + participantTalk.GetDisplayName() + ", excitement:" + excitement)
-		else
-			AIAgentFunctions.requestMessageForActor(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "ext_nsfw_sexcene", participantTalk.GetDisplayName())
-			Debug.Trace("[CHIM-NSFW] Scene dialogue -> " + participantTalk.GetDisplayName() + ", excitement:" + excitement)
-		endif
-	elseif (!participantTalk)
-		Debug.Trace("[CHIM-NSFW] OStimSceneChanged: No mouth-free participant available for CHIM speech")
+	; Keep the direct NPC route for the normal mouth-free scene turn and compatibility with servers that
+	; do not canonicalize info_sexscene. This is separate from the fast consent decision above; server-side
+	; authoritative dedup/cooldowns own duplicate suppression.
+	if (participantTalk)
+		AIAgentFunctions.requestMessageForActor(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "ext_nsfw_sexcene", participantTalk.GetDisplayName())
 	endif
-	
+
+	; Do not create another client-side scene ticker here. Long-held player-scene chatter comes from
+	; CHIM rechat and is gated by PLAYER_SCENE_RECHAT_CADENCE_SECONDS; group-scene chime-ins use
+	; GROUP_SCENE_TICK_SECONDS. Random moans/gasps are injected into those scene lines by the server's
+	; XTTS modifier and its affinity/toggle settings. The server remains the single pacing authority.
+
 EndEvent
 
 Event OStimEnd(string EventName, string Json, float NumArg, Form Sender)
