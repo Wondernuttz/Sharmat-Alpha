@@ -742,7 +742,7 @@ SQL;
                 'NSFW_SCENE_SPEAK_ON_ORGASM' => true,  // Spoken climax reactions (orgasm state always processed)
                 'GROUP_SCENE_TICK_SECONDS' => 0,  // Group-scene chime-in interval; 0 = follow NPC_SCENE_GLOBAL_COOLDOWN_SECONDS
                 'NSFW_DEFEAT_AUTO_ENSLAVE' => true,  // Acheron defeat of a hostile named NPC sets is_slave automatically
-                'NSFW_OSLA_SYNC_ENABLED' => true,  // Mirror SHARMAT arousal into OSL Aroused (one-way, paused mid-scene)
+                'NSFW_OSLA_SYNC_ENABLED' => true,  // Publish SHARMAT arousal to OSL/OStim consumers (one-way, including scenes)
                 'LEGACY_SCENE_SPEAK_POLICY' => 'authoritative',
                 'NSFW_EVENT_AUDIT_LOG' => true,
                 'SCENE_CONSENT_CARRYOVER_SECONDS' => 1800,

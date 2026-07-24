@@ -295,13 +295,13 @@ try {
     error_log("[AIAGENTNSFW] Sap timer postrequest failed: " . $e->getMessage());
 }
 
-// OSLA BRIDGE: after every turn, mirror this actor's (possibly changed) arousal into OSL Aroused.
+// SHARMAT AROUSAL AUTHORITY: publish this actor's canonical state to game-side consumers.
 try {
-    if (function_exists('aiagentNsfwQueueOslaArousalSyncForTurn')) {
-        aiagentNsfwQueueOslaArousalSyncForTurn();
+    if (function_exists('aiagentNsfwQueueAuthoritativeArousalSyncForTurn')) {
+        aiagentNsfwQueueAuthoritativeArousalSyncForTurn();
     }
 } catch (Throwable $e) {
-    error_log("[AIAGENTNSFW] OSLA sync postrequest failed: " . $e->getMessage());
+    error_log("[AIAGENTNSFW] SHARMAT arousal publish postrequest failed: " . $e->getMessage());
 }
 
 ?>

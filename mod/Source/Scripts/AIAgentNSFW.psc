@@ -765,30 +765,16 @@ string Function MapNodeByPattern(string nodeName)
 EndFunction
 
 ; ============================================
-; AROUSAL INTEGRATION (SLO Aroused NG)
+; SHARMAT AROUSAL AUTHORITY
 ; ============================================
-; Safely get arousal level for an actor
-; Returns -1 if SLO Aroused is not installed
+; Returns the last server-authored 0-100 value, or -1 until SHARMAT publishes one.
+; Never read OSL/SLA/OStim back into canonical state.
 int Function GetActorArousalLevel(Actor akActor)
 	if (!akActor)
 		return -1
 	endif
-
-	; Check if SexLabAroused.esm is loaded
-	if (Game.GetModByName("SexLabAroused.esm") == 255)
-		return -1
-	endif
-
-	; Get OAroused quest and call GetArousal
-	Form oArousedForm = Game.GetFormFromFile(0x0A5BA8, "SexLabAroused.esm")
-	if (!oArousedForm)
-		return -1
-	endif
-
-	; Use faction rank as fallback (slaArousal faction stores arousal 0-100)
-	Faction arousalFaction = Game.GetFormFromFile(0x027877, "SexLabAroused.esm") as Faction
-	if (arousalFaction && akActor.IsInFaction(arousalFaction))
-		return akActor.GetFactionRank(arousalFaction)
+	if StorageUtil.GetIntValue(akActor, "sharmat_authoritative_arousal_known", 0) == 1
+		return ClampSharmatArousal(StorageUtil.GetFloatValue(akActor, "sharmat_authoritative_arousal", 0.0)) as int
 	endif
 
 	return -1
@@ -1528,6 +1514,80 @@ Event OnSleepStart(float afSleepStartTime, float afDesiredSleepEndTime)
 	DoRegister()
 EndEvent
 
+float Function ClampSharmatArousal(float value)
+	if value < 0.0
+		return 0.0
+	elseif value > 100.0
+		return 100.0
+	endif
+	return value
+EndFunction
+
+; SHARMAT is the arousal authority. The server publishes its canonical 0-100 value through
+; ExtCmdSyncArousal; OSL mirrors that value and OStim consumes it as a scene baseline/tempo.
+; OStim's live excitement may advance above the floor, but it is never read back into SHARMAT.
+Function ApplySharmatArousalToOStim(Actor akActor, bool enforceFloor = false)
+	if akActor == None || akActor == Game.GetPlayer() || !OActor.IsInOStim(akActor)
+		return
+	endif
+	if StorageUtil.GetIntValue(akActor, "sharmat_authoritative_arousal_known", 0) != 1
+		return
+	endif
+	if StorageUtil.GetIntValue(akActor, "sharmat_ostim_multiplier_overridden", 0) != 1
+		StorageUtil.SetFloatValue(akActor, "sharmat_ostim_original_multiplier", OActor.GetExcitementMultiplier(akActor))
+		StorageUtil.SetIntValue(akActor, "sharmat_ostim_multiplier_overridden", 1)
+	endif
+
+	float authoritativeArousal = ClampSharmatArousal(StorageUtil.GetFloatValue(akActor, "sharmat_authoritative_arousal", 0.0))
+	; Reassert the canonical value at every OStim boundary. OStim/OSL adapters may perform their
+	; own calculations internally, but SHARMAT wins whenever it publishes or observes a scene beat.
+	if Game.GetFormFromFile(0x806, "OSLAroused.esp") != None
+		OSLArousedNative.SetArousal(akActor, authoritativeArousal)
+	endif
+	; Keep progression alive at every arousal level while making SHARMAT control tempo relative to
+	; the user's original OStim rate: 0 arousal = 0.5x, 50 = 1.0x, 100 = 1.5x.
+	float originalMultiplier = StorageUtil.GetFloatValue(akActor, "sharmat_ostim_original_multiplier", 1.0)
+	float excitementMultiplier = originalMultiplier * (0.5 + (authoritativeArousal / 100.0))
+	OActor.SetExcitementMultiplier(akActor, excitementMultiplier)
+
+	if enforceFloor
+		; A fully aroused actor starts close to climax, not already across OStim's 100-point trigger.
+		float excitementFloor = authoritativeArousal
+		if excitementFloor > 90.0
+			excitementFloor = 90.0
+		endif
+		float currentExcitement = OActor.GetExcitement(akActor)
+		if currentExcitement < excitementFloor
+			OActor.SetExcitement(akActor, excitementFloor)
+		endif
+	endif
+
+	Debug.Trace("[CHIM-NSFW] SHARMAT arousal authority -> OStim: " + akActor.GetDisplayName() + " arousal=" + authoritativeArousal + " multiplier=" + excitementMultiplier + " floor=" + enforceFloor)
+EndFunction
+
+Function ResetSharmatOStimActorState(Actor akActor)
+	if akActor == None || akActor == Game.GetPlayer()
+		return
+	endif
+
+	; Preserve the cached authoritative value for the next scene; restore the exact OStim rate that
+	; existed before SHARMAT overrode it (including a custom user MCM value).
+	if StorageUtil.GetIntValue(akActor, "sharmat_ostim_multiplier_overridden", 0) == 1
+		float originalMultiplier = StorageUtil.GetFloatValue(akActor, "sharmat_ostim_original_multiplier", 1.0)
+		OActor.SetExcitementMultiplier(akActor, originalMultiplier)
+		StorageUtil.SetIntValue(akActor, "sharmat_ostim_multiplier_overridden", 0)
+	endif
+	if StorageUtil.GetIntValue(akActor, "sharmat_authoritative_arousal_known", 0) == 1 && Game.GetFormFromFile(0x806, "OSLAroused.esp") != None
+		float authoritativeArousal = ClampSharmatArousal(StorageUtil.GetFloatValue(akActor, "sharmat_authoritative_arousal", 0.0))
+		OSLArousedNative.SetArousal(akActor, authoritativeArousal)
+	endif
+	if StorageUtil.GetIntValue(akActor, "sharmat_ostim_speech_muted", 0) == 1
+		OActor.UnMute(akActor)
+		akActor.RemoveFromFaction(noFacialExpressionsFaction)
+		StorageUtil.SetIntValue(akActor, "sharmat_ostim_speech_muted", 0)
+	endif
+EndFunction
+
 Event HelperSpeechStart(Form npc)
 	Debug.Trace("[CHIM NSFW] HelperSpeechStart")
 
@@ -1540,21 +1600,18 @@ Event HelperSpeechStart(Form npc)
 	endif
 
 	StorageUtil.SetIntValue(npc, "IS_SPEAKING", 1)
-	int running=OThread.GetThreadCount();
-	if (running==0)
-		return
-	endif
 	Actor akActor=npc as Actor
-	if (akActor)
+	if akActor && OActor.IsInOStim(akActor)
+		; Only suppress OStim's built-in moan/expression while CHIM speech is playing. Speech must
+		; never stall climax, zero SHARMAT's multiplier, or rewrite the excitement bar.
 		OActor.Mute(akActor)
 		OActor.ClearExpression(akActor)
-		OActor.StallClimax(akActor)
-		OActor.SetExcitementMultiplier(akActor,0)
 		akActor.SetFactionRank(noFacialExpressionsFaction,1)
+		StorageUtil.SetIntValue(akActor, "sharmat_ostim_speech_muted", 1)
 
-		Debug.Trace("[CHIM NSFW] "+akActor.GetDisplayName()+" is muted for moan (is speaking)")
+		Debug.Trace("[CHIM NSFW] "+akActor.GetDisplayName()+" OStim moan muted during CHIM speech; excitement remains live")
 	else
-		Debug.Trace("[CHIM NSFW] no actor")
+		Debug.Trace("[CHIM NSFW] speaker is not an actor in an OStim scene; no OStim state changed")
 	EndIf
 
 EndEvent
@@ -1563,25 +1620,15 @@ Event HelperSpeechStop(Form npc)
 
 	Debug.Trace("[CHIM NSFW] HelperSpeechStop")
 	StorageUtil.SetIntValue(npc, "IS_SPEAKING", 0)
-		
-	int running=OThread.GetThreadCount();
-	if (running==0)
-		return
-	endif
-	
+
 	Actor akActor=npc as Actor
-	if (akActor)
-	
-		OActor.SetExcitementMultiplier(akActor,1)
+	if akActor && StorageUtil.GetIntValue(akActor, "sharmat_ostim_speech_muted", 0) == 1
+		; Unmute even if the scene ended during the line; otherwise a late SpeechStop could leave
+		; the actor muted. Do not touch climax permission, multiplier, or excitement here.
 		OActor.UnMute(akActor)
-		OActor.PermitClimax(akActor)
 		akActor.RemoveFromFaction(noFacialExpressionsFaction)
-		float excitement=OActor.GetExcitement(akActor)
-		Debug.Trace("[CHIM NSFW] "+akActor.GetDisplayName()+" is unmuted for moan, excitement:"+excitement)
-		if (excitement>=100)
-			;OActor.Climax(akActor,true)
-			OActor.SetExcitement(akActor, 99)
-		endif
+		StorageUtil.SetIntValue(akActor, "sharmat_ostim_speech_muted", 0)
+		Debug.Trace("[CHIM NSFW] "+akActor.GetDisplayName()+" OStim moan unmuted after CHIM speech; excitement was untouched")
 	EndIf
 EndEvent
 
@@ -1642,15 +1689,23 @@ Event CommandManager(String npcname,String  command, String parameter)
 	Debug.Trace("[CHIM NSFW] External command "+command+ " received for "+npcname+" parameter="+parameter)
 	Actor npc=AIAgentFunctions.getAgentByName(npcname);
 
-	; OSLA BRIDGE (feature 2026-07-17): server-authored arousal mirror. The server queues
-	; ExtCmdSyncArousal@<0-100> on the responselog command lane after turns where arousal changed;
-	; apply it to OSL Aroused so OSLA-reliant mods react to the LLM-driven value. Fully silent
-	; (no notification - unknown commands produce none - and no funcret). Guarded on OSL Aroused
-	; being installed, using the same GetFormFromFile probe its own adapters use.
+	; SHARMAT AROUSAL AUTHORITY: cache the server-authored value whether or not OSL is installed,
+	; mirror it one-way into OSL, and drive OStim's current scene from the same canonical state.
+	; Neither consumer is ever read back into SHARMAT. This command is intentionally silent.
 	if command == "ExtCmdSyncArousal"
-		if npc != None && Game.GetFormFromFile(0x806, "OSLAroused.esp") != None
-			OSLArousedNative.SetArousal(npc, parameter as float)
-			Debug.Trace("[CHIM-NSFW] OSLA sync: " + npcname + " arousal -> " + parameter)
+		if npc != None
+			float authoritativeArousal = ClampSharmatArousal(parameter as float)
+			StorageUtil.SetFloatValue(npc, "sharmat_authoritative_arousal", authoritativeArousal)
+			StorageUtil.SetIntValue(npc, "sharmat_authoritative_arousal_known", 1)
+
+			if Game.GetFormFromFile(0x806, "OSLAroused.esp") != None
+				OSLArousedNative.SetArousal(npc, authoritativeArousal)
+				Debug.Trace("[CHIM-NSFW] SHARMAT arousal authority -> OSLA: " + npcname + " arousal=" + authoritativeArousal)
+			endif
+
+			; If a scene is already running, immediately refresh its floor/tempo. Otherwise the
+			; registered OStim thread-start/scene-change paths consume it when the actor enters a scene.
+			ApplySharmatArousalToOStim(npc, true)
 		endif
 		return
 	endif
@@ -3199,6 +3254,8 @@ Event OStimStart(string eventName, string strArg, float numArg, Form sender)
 				playerInScene = true
 				Debug.Trace("[CHIM-NSFW] OStimStart: Player is in scene")
 			else
+				; Seed each NPC from SHARMAT's last server-authored value. No cache means no override.
+				ApplySharmatArousalToOStim(Actors[i], true)
 				if firstNpcInScene == None
 					firstNpcInScene = Actors[i]
 					Debug.Trace("[CHIM-NSFW] OStimStart: First NPC is " + Actors[i].GetDisplayName())
@@ -3629,6 +3686,9 @@ Event OStimSceneChanged(string EventName, string SceneID, float NumArg, Form Sen
 					playerInScene = true
 					Debug.Trace("[CHIM-NSFW] Participant is player " + participant.GetDisplayName())
 				else
+					; Reassert SHARMAT's floor/tempo on position changes without lowering any excitement
+					; OStim has legitimately accumulated above that floor.
+					ApplySharmatArousalToOStim(participant, true)
 					bool isMouthOpen=OActor.HasExpressionOverride(participant)
 					if (isMouthOpen)
 						Debug.Trace("[CHIM-NSFW] Participant is 'mouth busy' :" + participant.GetDisplayName())
@@ -3713,6 +3773,7 @@ Event OStimEnd(string EventName, string Json, float NumArg, Form Sender)
 				Debug.Trace("[CHIM-NSFW] OStimEnd. Participant is player " + participant.GetDisplayName())
 				playerInScene = true
 			else
+				ResetSharmatOStimActorState(participant)
 				AIAgentFunctions.setLocked(0,participant.GetDisplayName())
 				AIAgentFunctions.setAnimationBusy(0,participant.GetDisplayName())
 			endif
@@ -3807,8 +3868,8 @@ Function RequestNpcSceneTurn(Actor[] participants, string npcSceneData, string r
 EndFunction
 
 Event OStimThreadStart(string EventName, string Json, float ThreadID, Form Sender)
-	; NOTE: Player scene start is handled by OStimStart event instead
-	; This event handles NPC-to-NPC scenes only
+	; Registered start path for both player and NPC-only threads. Dialogue routing below remains
+	; NPC-only, but SHARMAT arousal authority applies to every NPC participant here.
 
 	int threadIDInt = ThreadID as int
 	Actor[] Actors = None
@@ -3833,8 +3894,12 @@ Event OStimThreadStart(string EventName, string Json, float ThreadID, Form Sende
 	bool playerInScene = false
 	int i = 0
 	while i < Actors.Length
-		if Actors[i] != None && Actors[i] == Game.GetPlayer()
-			playerInScene = true
+		if Actors[i] != None
+			if Actors[i] == Game.GetPlayer()
+				playerInScene = true
+			else
+				ApplySharmatArousalToOStim(Actors[i], true)
+			endif
 		endif
 		i += 1
 	endwhile
@@ -3885,6 +3950,7 @@ Event OStimThreadSceneChanged(string EventName, string SceneID, float ThreadID, 
 			if participants[i] == Game.GetPlayer()
 				playerInScene = true
 			else
+				ApplySharmatArousalToOStim(participants[i], true)
 				AIAgentFunctions.setAnimationBusy(1, participants[i].GetDisplayName())
 				if OActor.HasExpressionOverride(participants[i])
 					AIAgentFunctions.setLocked(1, participants[i].GetDisplayName())
@@ -3957,6 +4023,7 @@ Event OStimThreadEnd(string EventName, string Json, float ThreadID, Form Sender)
 			if (participant == Game.GetPlayer())
 				Debug.Trace("[CHIM-NSFW] OStimThreadEnd. Participant is player " + participant.GetDisplayName())
 			else
+				ResetSharmatOStimActorState(participant)
 				AIAgentFunctions.setLocked(0,participant.GetDisplayName())
 				AIAgentFunctions.setAnimationBusy(0,participant.GetDisplayName())
 			endif
@@ -4043,6 +4110,7 @@ Event OStimSubthreadStart(string EventName, string SceneID, float SubthreadID, F
 			i += 1
 		else
 			actorList = actorList + "/" + participant.GetDisplayName()
+			ApplySharmatArousalToOStim(participant, true)
 
 			; Set animation busy for all NPC participants
 			AIAgentFunctions.setAnimationBusy(1, participant.GetDisplayName())
@@ -4103,6 +4171,7 @@ Event OStimSubthreadEnd(string EventName, string SceneID, float SubthreadID, For
 		else
 
 			; Clear animation and lock states
+			ResetSharmatOStimActorState(participant)
 			AIAgentFunctions.setLocked(0, participant.GetDisplayName())
 			AIAgentFunctions.setAnimationBusy(0, participant.GetDisplayName())
 

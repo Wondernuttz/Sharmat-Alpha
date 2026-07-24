@@ -796,9 +796,9 @@ ingredient</textarea>
                 <div class="settings-checkbox-group">
                     <label for="oslaSyncEnabled">
                         <input type="checkbox" id="oslaSyncEnabled" name="NSFW_OSLA_SYNC_ENABLED" checked>
-                        <span>Mirror Arousal to OSL Aroused</span>
+                        <span>Publish SHARMAT Arousal to OSL/OStim</span>
                     </label>
-                    <p class="legend">Pushes SHARMAT's AI-driven arousal into the OSL Aroused framework (scaled to its 0-100 range), so every SexLab/OStim mod that reads OSL Aroused reacts to how your conversations and actions actually went - instead of running its own detached game-engine math. One-way by design: SHARMAT is the author, OSL Aroused mirrors it, no feedback loops. Paused while a scene is running (OStim's own OSL Aroused adapter raises arousal during scenes - we do not fight it). Does nothing if OSL Aroused is not installed.</p>
+                    <p class="legend">Publishes SHARMAT's AI-driven arousal on a 0-100 game scale. OSL Aroused mirrors the exact value when installed; OStim uses the same authoritative value as the NPC's scene excitement floor and progression tempo. One-way by design: SHARMAT is the authority, neither mod can write back, and NPC speech never pauses the excitement bar. Works with OStim even when OSL Aroused is not installed.</p>
                 </div>
 
                 <h3 style="margin: 20px 0 10px; color: #FDF5D0; font-size: 16px;">Arousal Tuning</h3>

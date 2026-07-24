@@ -1432,13 +1432,14 @@ function aiagentNsfwQueuePlayerSceneStop($actorName, $command = 'ExtCmdStopScene
     return true;
 }
 
-// OSLA BRIDGE (feature 2026-07-17, user go): mirror SHARMAT's server-authored arousal into OSL
-// Aroused so OSLA-reliant SexLab/OStim mods react to the LLM-driven value instead of detached
-// game-engine math. ONE-WAY by design: SHARMAT is the author, no read-back, no feedback loops.
+// SHARMAT AROUSAL AUTHORITY: publish SHARMAT's server-authored arousal to the game so OSL can
+// mirror it and OStim can use it for its excitement floor/tempo. ONE-WAY by design: SHARMAT is
+// the author; neither consumer is ever read back and neither can overwrite the canonical state.
 // Rides the responselog command lane (same as the refusal hard-stop): ExtCmdSyncArousal@<0-100>.
-// Skipped mid-scene (OStim's own OSLA adapter raises arousal during scenes - do not fight it);
-// debounced via runtime-state (only pushes when the mapped value changed or 5+ min passed).
-function aiagentNsfwQueueOslaArousalSyncForTurn() {
+// Player-input-only delivery prevents the old command/rechat feedback loop; meaningful-value
+// debounce prevents redundant rows. Active scenes are deliberately NOT excluded: SHARMAT remains
+// authoritative during them, and the client applies updates without resetting live progression.
+function aiagentNsfwQueueAuthoritativeArousalSyncForTurn() {
     if (!_getNsfwSetting('NSFW_OSLA_SYNC_ENABLED', true)) { return; }
     // HOTFIX (DemodiX 2026-07-18, runaway rechat/token burn): sync ONLY on real player-input turns.
     // The v1 pushed after EVERY turn incl. rechat - each responselog row reads as NPC activity to the
@@ -1452,14 +1453,13 @@ function aiagentNsfwQueueOslaArousalSyncForTurn() {
     if (function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($actorName)) { return; }
     $st = getIntimacyForActor($actorName);
     if (!is_array($st)) { return; }
-    if (!empty($st['sex_started']) || !empty($st['is_active_participant']) || (int)($st['level'] ?? 0) > 0) { return; }
     $oslaValue = (int)max(0, min(100, round(((float)($st['sex_disposal'] ?? 0)) * 3.3)));
     $prev = aiagentNsfwRuntimeStateGet('osla_sync', $actorName);
     $prevValue = is_array($prev) ? (int)($prev['value'] ?? -1) : -1;
     $prevTs = is_array($prev) ? (int)($prev['ts'] ?? 0) : 0;
-    // HOTFIX part 2: meaningful changes only, hard-capped to one row per actor per minute.
+    // Meaningful changes only. Because delivery is player-input-only, a command row cannot trigger
+    // another sync; a hard time cap would merely leave SHARMAT's consumers stale during fast scenes.
     if ($prevValue >= 0 && abs($oslaValue - $prevValue) < 4 && (time() - $prevTs) < 300) { return; }
-    if ((time() - $prevTs) < 60) { return; }
     $GLOBALS["db"]->insert(
         'responselog',
         [
@@ -1472,7 +1472,7 @@ function aiagentNsfwQueueOslaArousalSyncForTurn() {
         ]
     );
     aiagentNsfwRuntimeStateSet('osla_sync', $actorName, ['value' => $oslaValue, 'ts' => time()], 86400);
-    error_log("[AIAGENTNSFW] OSLA sync queued for {$actorName}: arousal " . ($st['sex_disposal'] ?? 0) . " -> OSLA {$oslaValue}");
+    error_log("[AIAGENTNSFW] SHARMAT arousal authority queued for {$actorName}: canonical " . ($st['sex_disposal'] ?? 0) . " -> game {$oslaValue}");
 }
 
 function aiagentNsfwQueueWhiskeyDick($actorName, $localts = null, $param = 'player') {
