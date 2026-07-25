@@ -770,7 +770,7 @@ SQL;
                 'PHYSICS_LOW_CONFIDENCE_COOLDOWN' => 8,  // Debounce approximate Body/Arm/Shoulder/Back/Belly collider jitter
                 'PHYSICS_SUSTAINED_BREAST_TOUCH_SECONDS' => 5,  // Continuous breast/chest touch before it stops being accidental
                 'PHYSICS_SPANK_ENABLED' => true,  // VR ass slap detection enabled by default
-                'PHYSICS_SPANK_MIN_SPEED' => 30,  // Minimum measured hand speed for slap prompt
+                'PHYSICS_SPANK_MIN_SPEED' => 100, // Minimum measured controller speed for slap prompt
                 'PHYSICS_SPANK_COOLDOWN' => 5,  // VR ass slap reaction debounce (seconds)
                 // Slavery mechanics (player-only settings; not prompt text)
                 'SLAVERY_IDLES_ENABLED' => true,
@@ -1162,7 +1162,7 @@ SQL;
                 'PHYSICS_LOW_CONFIDENCE_COOLDOWN' => isset($_POST['PHYSICS_LOW_CONFIDENCE_COOLDOWN']) ? max(1, intval($_POST['PHYSICS_LOW_CONFIDENCE_COOLDOWN'])) : 8,
                 'PHYSICS_SUSTAINED_BREAST_TOUCH_SECONDS' => isset($_POST['PHYSICS_SUSTAINED_BREAST_TOUCH_SECONDS']) ? max(1, min(60, intval($_POST['PHYSICS_SUSTAINED_BREAST_TOUCH_SECONDS']))) : 5,
                 'PHYSICS_SPANK_ENABLED' => isset($_POST['PHYSICS_SPANK_ENABLED']) ? filter_var($_POST['PHYSICS_SPANK_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
-                'PHYSICS_SPANK_MIN_SPEED' => isset($_POST['PHYSICS_SPANK_MIN_SPEED']) ? max(10, min(380, intval($_POST['PHYSICS_SPANK_MIN_SPEED']))) : 30,
+                'PHYSICS_SPANK_MIN_SPEED' => isset($_POST['PHYSICS_SPANK_MIN_SPEED']) ? max(80, min(380, intval($_POST['PHYSICS_SPANK_MIN_SPEED']))) : 100,
                 'PHYSICS_SPANK_COOLDOWN' => isset($_POST['PHYSICS_SPANK_COOLDOWN']) ? max(1, intval($_POST['PHYSICS_SPANK_COOLDOWN'])) : 5,
                 // Slavery mechanics
                 'SLAVERY_IDLES_ENABLED' => isset($_POST['SLAVERY_IDLES_ENABLED']) ? filter_var($_POST['SLAVERY_IDLES_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
@@ -5415,6 +5415,49 @@ PROMPT;
             color: #D8C8E8;
         }
 
+        .section-save-btn.has-unsaved-changes {
+            border-color: #F4C95D;
+            color: #FFF2B2;
+            box-shadow: 0 0 12px rgba(244, 201, 93, 0.45);
+        }
+
+        .unsaved-changes-indicator {
+            position: fixed;
+            top: 18px;
+            right: 18px;
+            z-index: 20000;
+            display: none;
+            align-items: center;
+            gap: 9px;
+            max-width: min(420px, calc(100vw - 36px));
+            padding: 10px 14px;
+            border: 2px solid #F4C95D;
+            border-radius: 8px;
+            background: rgba(28, 26, 36, 0.97);
+            color: #FFF2B2;
+            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45), 0 0 14px rgba(244, 201, 93, 0.25);
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.2px;
+        }
+
+        .unsaved-changes-indicator.visible {
+            display: flex;
+        }
+
+        .unsaved-changes-indicator::before {
+            content: '!';
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 22px;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #F4C95D;
+            color: #1C1A24;
+        }
+
         .pricing-type-btn {
             display: inline-flex;
             align-items: center;
@@ -6011,6 +6054,8 @@ PROMPT;
             <button class="tab-button" onclick="switchTab('info')">Info</button>
         </div>
 
+        <div id="unsavedChangesIndicator" class="unsaved-changes-indicator" role="status" aria-live="polite"></div>
+
 <?php include __DIR__ . '/config_section_scenes.php'; ?>
 
 <?php include __DIR__ . '/config_section_npc_settings.php'; ?>
@@ -6072,6 +6117,60 @@ PROMPT;
         let currentPage = 1;
         const itemsPerPage = 50;
 
+        const nsfwUnsavedGroups = new Set();
+        const nsfwUnsavedGeneration = { settings: 0, prompts: 0 };
+        let nsfwUnsavedTrackingReady = false;
+
+        function nsfwUnsavedGroupLabel(group) {
+            return group === 'prompts' ? 'Prompts' : 'Settings';
+        }
+
+        function renderNsfwUnsavedState() {
+            const indicator = document.getElementById('unsavedChangesIndicator');
+            const groups = Array.from(nsfwUnsavedGroups);
+            if (indicator) {
+                indicator.textContent = groups.length
+                    ? 'Unsaved changes: ' + groups.map(nsfwUnsavedGroupLabel).join(', ') + '. Click Save.'
+                    : '';
+                indicator.classList.toggle('visible', groups.length > 0);
+            }
+
+            ['settings', 'prompts'].forEach(group => {
+                document.querySelectorAll('#' + group + ' .section-save-btn').forEach(button => {
+                    button.classList.toggle('has-unsaved-changes', nsfwUnsavedGroups.has(group));
+                });
+            });
+        }
+
+        function markNsfwChangesUnsaved(group) {
+            if (!nsfwUnsavedTrackingReady || (group !== 'settings' && group !== 'prompts')) return;
+            nsfwUnsavedGeneration[group]++;
+            nsfwUnsavedGroups.add(group);
+            renderNsfwUnsavedState();
+        }
+
+        function markNsfwChangesSaved(group, savedGeneration) {
+            if (savedGeneration !== undefined && nsfwUnsavedGeneration[group] !== savedGeneration) return;
+            nsfwUnsavedGroups.delete(group);
+            renderNsfwUnsavedState();
+        }
+
+        function trackNsfwControlChange(event) {
+            const control = event.target;
+            if (!control || !control.matches || !control.matches('input, select, textarea')) return;
+            if (control.disabled || control.readOnly || control.type === 'hidden') return;
+            const groupContainer = control.closest('#settings, #prompts');
+            if (groupContainer) markNsfwChangesUnsaved(groupContainer.id);
+        }
+
+        document.addEventListener('input', trackNsfwControlChange);
+        document.addEventListener('change', trackNsfwControlChange);
+        window.addEventListener('beforeunload', function(event) {
+            if (nsfwUnsavedGroups.size === 0) return;
+            event.preventDefault();
+            event.returnValue = '';
+        });
+
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             loadScenes();
@@ -6104,6 +6203,11 @@ PROMPT;
                 // Initialize size on page load
                 autoResizeTextarea(textarea);
             });
+
+            // Loading functions assign values directly and do not emit input/change.
+            // From this point forward, actual user edits are tracked until their save succeeds.
+            nsfwUnsavedTrackingReady = true;
+            renderNsfwUnsavedState();
         });
 
         // Tab switching
@@ -7410,7 +7514,7 @@ PROMPT;
                         elSet('physicsSustainedBreastTouch', 'value', physSustainedBreastTouch);
                         elSet('physicsSustainedBreastTouchValue', 'textContent', physSustainedBreastTouch + ' sec');
                         elSet('physicsSpankEnabled', 'checked', data.data.PHYSICS_SPANK_ENABLED !== false);
-                        const physSpankSpeed = data.data.PHYSICS_SPANK_MIN_SPEED !== undefined ? data.data.PHYSICS_SPANK_MIN_SPEED : 30;
+                        const physSpankSpeed = Math.max(80, Math.min(380, data.data.PHYSICS_SPANK_MIN_SPEED !== undefined ? data.data.PHYSICS_SPANK_MIN_SPEED : 100));
                         elSet('physicsSpankMinSpeed', 'value', physSpankSpeed);
                         elSet('physicsSpankMinSpeedValue', 'textContent', physSpankSpeed + ' speed');
                         const physSpankCd = data.data.PHYSICS_SPANK_COOLDOWN !== undefined ? data.data.PHYSICS_SPANK_COOLDOWN : 5;
@@ -7595,6 +7699,7 @@ PROMPT;
         }
 
         function saveSettings() {
+            const settingsSaveGeneration = nsfwUnsavedGeneration.settings;
             const formData = new FormData();
             // Null-safe reads: one missing element (version-skewed section HTML) must not
             // silently kill the whole save.
@@ -7786,6 +7891,7 @@ PROMPT;
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
+                    markNsfwChangesSaved('settings', settingsSaveGeneration);
                     showAlert('settingsSuccessAlert', data.message, 'success');
                 } else {
                     showAlert('settingsErrorAlert', 'Error saving settings: ' + data.error, 'error');
@@ -11344,6 +11450,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
     }
 
     function savePromptSettings() {
+        const promptsSaveGeneration = nsfwUnsavedGeneration.prompts;
         const formData = new FormData();
 
         // Helper to safely get element value
@@ -11658,6 +11765,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         .then(result => {
             hideProcessing();
             if (result.success) {
+                markNsfwChangesSaved('prompts', promptsSaveGeneration);
                 showAlert('promptsSuccessAlert', 'Prompt settings saved successfully!', 'success');
             } else {
                 showAlert('promptsErrorAlert', 'Error: ' + (result.error || 'Unknown error'), 'error');
@@ -11946,6 +12054,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
 
         // Legacy FMR prompt cards removed 2026-07-10 (Fertility tab owns fertility now)
 
+        markNsfwChangesUnsaved('prompts');
         showAlert('promptsSuccessAlert', 'Prompts reset to defaults. Click Save to apply.', 'success');
     }
 
@@ -11953,7 +12062,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
     const originalSwitchTab = switchTab;
     switchTab = function(tabName) {
         originalSwitchTab(tabName);
-        if (tabName === 'prompts') {
+        if (tabName === 'prompts' && !nsfwUnsavedGroups.has('prompts')) {
             loadPromptSettings();
         }
     };

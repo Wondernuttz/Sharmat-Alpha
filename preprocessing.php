@@ -1462,19 +1462,17 @@ if (isset($GLOBALS["gameRequest"])) {
             }
         }
         if ($isSpank) {
+            require_once(__DIR__."/nsfw_physics.php");
             $spankEnabled = (bool) _getNsfwSetting('PHYSICS_SPANK_ENABLED', true);
-            $spankSpeed = isset($parts[7]) ? floatval($parts[7]) : 0.0;
-            $spankMinSpeed = max(10, min(380, (int) _getNsfwSetting('PHYSICS_SPANK_MIN_SPEED', 30)));
+            $spankMotion = aiagentNsfwValidateSpankMotion($parts);
             if (!$spankEnabled) {
-                require_once(__DIR__."/nsfw_physics.php");
                 NsfwPhysics::logRawPhysicsEvent($rawData, 'disabled', 'PHYSICS_SPANK_ENABLED is off');
                 error_log("[NSFW Physics] Spank ignored before prompt routing: PHYSICS_SPANK_ENABLED is off");
                 $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
                 $currentEvent = "nsfw_blocked_cooldown";
-            } elseif ($spankSpeed > 0 && $spankSpeed < $spankMinSpeed) {
-                require_once(__DIR__."/nsfw_physics.php");
-                NsfwPhysics::logRawPhysicsEvent($rawData, 'threshold', "speed {$spankSpeed} below threshold {$spankMinSpeed}");
-                error_log("[NSFW Physics] Spank ignored before prompt routing: speed {$spankSpeed} below threshold {$spankMinSpeed}");
+            } elseif (empty($spankMotion['allowed'])) {
+                NsfwPhysics::logRawPhysicsEvent($rawData, 'threshold', $spankMotion['reason']);
+                error_log("[NSFW Physics] Spank ignored before prompt routing: {$spankMotion['reason']}");
                 $GLOBALS["gameRequest"][0] = "nsfw_blocked_cooldown";
                 $currentEvent = "nsfw_blocked_cooldown";
             }

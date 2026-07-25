@@ -45,6 +45,7 @@
 // Include Logger for CHIM log output
 require_once(__DIR__ . '/../../lib/logger.php');
 require_once(__DIR__ . '/contact_state.php');
+require_once(__DIR__ . '/spank_motion_policy.php');
 
 class NsfwPhysics {
 
@@ -1076,7 +1077,6 @@ class NsfwPhysics {
         $isBlocked = filter_var($parts[3] ?? 'false', FILTER_VALIDATE_BOOLEAN);
         $blockedBy = $parts[4] ?? '';
         $handSide = self::normalizeHandSide($parts[5] ?? '');
-        $handSpeed = isset($parts[7]) ? floatval($parts[7]) : 0.0;
 
         $spankEnabled = function_exists('_getNsfwSetting') ? (bool)_getNsfwSetting('PHYSICS_SPANK_ENABLED', true) : true;
         if (!$spankEnabled) {
@@ -1084,11 +1084,12 @@ class NsfwPhysics {
             return null;
         }
 
-        $minSpeed = function_exists('_getNsfwSetting') ? max(10, min(380, (int)_getNsfwSetting('PHYSICS_SPANK_MIN_SPEED', 30))) : 30;
-        if ($handSpeed > 0 && $handSpeed < $minSpeed) {
-            error_log("[NSFW Physics] Spank ignored: speed {$handSpeed} below threshold {$minSpeed}");
+        $motion = aiagentNsfwValidateSpankMotion($parts);
+        if (empty($motion['allowed'])) {
+            error_log("[NSFW Physics] Spank ignored: {$motion['reason']}");
             return null;
         }
+        $handSpeed = (float) $motion['speed'];
 
         $playerName = $GLOBALS["PLAYER_NAME"] ?? "Player";
         $isSensitive = self::isSensitiveBodyPart($bodyPart);

@@ -512,15 +512,15 @@
                         <input type="checkbox" id="physicsSpankEnabled" name="PHYSICS_SPANK_ENABLED" checked>
                         <span>Enable Ass Slap Detection</span>
                     </label>
-                    <p class="legend">When enabled, VR hand movement into an NPC's butt area can be classified as an ass slap if it crosses the speed threshold.</p>
+                    <p class="legend">When enabled, VR controller movement into an NPC's butt area can be classified as an ass slap only when the bridge reports a valid distance crossing and SHARMAT accepts its controller speed.</p>
                 </div>
                 <div class="settings-slider-group">
                     <span class="slider-title">Ass Slap Speed Threshold</span>
                     <div class="slider-container">
-                        <input type="range" id="physicsSpankMinSpeed" name="PHYSICS_SPANK_MIN_SPEED" min="10" max="380" step="5" value="30" oninput="document.getElementById('physicsSpankMinSpeedValue').textContent = this.value + ' speed';">
-                        <span class="slider-value" id="physicsSpankMinSpeedValue">30 speed</span>
+                        <input type="range" id="physicsSpankMinSpeed" name="PHYSICS_SPANK_MIN_SPEED" min="80" max="380" step="5" value="100" oninput="document.getElementById('physicsSpankMinSpeedValue').textContent = this.value + ' speed';">
+                        <span class="slider-value" id="physicsSpankMinSpeedValue">100 speed</span>
                     </div>
-                    <p class="legend">How fast your hand must move before a butt contact counts as a slap. Higher values require a sharper motion. Default: 30.</p>
+                    <p class="legend">How fast the controller must move before a butt contact counts as a slap. Higher values require a sharper hand motion. SHARMAT rejects missing speed data and enforces a safety floor of 80. Default: 100.</p>
                 </div>
                 <div class="settings-slider-group">
                     <span class="slider-title">Ass Slap Cooldown</span>

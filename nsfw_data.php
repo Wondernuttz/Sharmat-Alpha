@@ -1448,7 +1448,7 @@ function nsfw_default_settings_config() {
         'PHYSICS_LOW_CONFIDENCE_COOLDOWN' => 8,
         'PHYSICS_SUSTAINED_BREAST_TOUCH_SECONDS' => 5,
         'PHYSICS_SPANK_ENABLED' => true,
-        'PHYSICS_SPANK_MIN_SPEED' => 30,
+        'PHYSICS_SPANK_MIN_SPEED' => 100,
         'PHYSICS_SPANK_COOLDOWN' => 5,
         'PHYSICS_SCENE_EFFECT_COOLDOWN' => 90,
         'REFUSAL_SPEECH_COOLDOWN_SECONDS' => 15,
