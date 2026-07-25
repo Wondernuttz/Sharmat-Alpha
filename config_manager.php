@@ -5415,21 +5415,10 @@ PROMPT;
             color: #D8C8E8;
         }
 
-        @keyframes unsavedGoldTextPulse {
-            0% {
-                color: #D8B85A;
-                text-shadow: 0 0 4px rgba(216, 184, 90, 0.38);
-            }
-            100% {
-                color: #FDF5D0;
-                text-shadow: 0 0 7px rgba(253, 245, 208, 0.9), 0 0 16px rgba(218, 165, 32, 0.65);
-            }
-        }
-
         .section-unsaved-indicator {
             align-items: center;
             align-self: center;
-            animation: unsavedGoldTextPulse 1.5s ease-in-out infinite alternate;
+            animation: neonPulse 3s ease-in-out infinite alternate;
             background: none;
             border: none;
             border-radius: 0;
@@ -5445,6 +5434,7 @@ PROMPT;
             margin-right: 14px;
             padding: 0;
             white-space: nowrap;
+            word-spacing: 8px;
         }
 
         [data-unsaved-section] .section-unsaved-indicator {
@@ -5457,6 +5447,7 @@ PROMPT;
                 font-size: 14px;
                 letter-spacing: 0.75px;
                 margin-right: 8px;
+                word-spacing: 6px;
             }
         }
 

@@ -23,6 +23,7 @@ const chrome = spawn(chromePath, [
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profilePath}`,
     '--disable-gpu',
+    '--window-size=1280,900',
     '--no-first-run',
     '--no-default-browser-check',
     pageUrl,
@@ -111,6 +112,7 @@ try {
         const badgeBackgroundColor = badgeStyles ? badgeStyles.backgroundColor : null;
         const badgeBorderRadius = badgeStyles ? badgeStyles.borderRadius : null;
         const badgeTextShadow = badgeStyles ? badgeStyles.textShadow : null;
+        const badgeWordSpacing = badgeStyles ? badgeStyles.wordSpacing : null;
         const promptGeneration = nsfwUnsavedGeneration.prompts;
         markNsfwChangesSaved('prompts', promptGeneration);
         const promptClearedAfterSave = !header.querySelector('.section-unsaved-indicator');
@@ -148,6 +150,7 @@ try {
             badgeBackgroundColor,
             badgeBorderRadius,
             badgeTextShadow,
+            badgeWordSpacing,
             floatingIndicatorExists: Boolean(document.getElementById('unsavedChangesIndicator')),
             promptClearedAfterSave,
             settingsExactHeaderMarked,
@@ -172,7 +175,9 @@ try {
     check(result.exactHeaderMarked, 'edited section header did not receive the dirty state');
     check(result.topLevelBadgeCount === 1, 'an edit marked more than the exact changed section');
     check(result.badgeBetweenTitleAndButtons, 'badge is not between the section title and Save/Open controls');
+    check(result.badgeColor === 'rgb(253, 245, 208)', 'warning color does not exactly match the active top tab');
     check(result.badgeFontFamily && result.badgeFontFamily.includes('MagicCards'), 'warning does not use the elegant SHARMAT display font');
+    check(result.badgeWordSpacing === '8px', 'warning words do not have the required visual spacing');
     check(result.badgeBorderStyle === 'none', 'warning is still pillboxed with a border');
     check(result.badgeBackgroundImage === 'none', 'warning is still pillboxed with a background image');
     check(result.badgeBackgroundColor === 'rgba(0, 0, 0, 0)', 'warning is still pillboxed with a background color');
