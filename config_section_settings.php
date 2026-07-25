@@ -6,7 +6,7 @@
             <h2 class="section-header" style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;"><img src="images/ChimNSFWsoulgem.png" style="width: 32px; height: 32px; vertical-align: middle; position: relative; top: -5px;"> General Settings</h2>
 
             <!-- OPEN MODE: top-level, across from the General Settings header -->
-            <div style="padding: 15px 20px; background: #1C1A24; border: 1px solid #3A3545; border-radius: 8px; margin-bottom: 14px;">
+            <div data-unsaved-section style="padding: 15px 20px; background: #1C1A24; border: 1px solid #3A3545; border-radius: 8px; margin-bottom: 14px;">
                 <div class="settings-checkbox-group" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;">
                     <div style="flex: 1;">
                         <label for="nsfwOpenMode">

@@ -5415,47 +5415,66 @@ PROMPT;
             color: #D8C8E8;
         }
 
-        .section-save-btn.has-unsaved-changes {
-            border-color: #F4C95D;
-            color: #FFF2B2;
-            box-shadow: 0 0 12px rgba(244, 201, 93, 0.45);
+        @keyframes unsavedGoldPulse {
+            0% {
+                border-color: #B9903D;
+                box-shadow: 0 0 7px rgba(244, 201, 93, 0.24), inset 0 0 8px rgba(244, 201, 93, 0.05);
+            }
+            100% {
+                border-color: #FDF5D0;
+                box-shadow: 0 0 18px rgba(253, 245, 208, 0.62), inset 0 0 15px rgba(244, 201, 93, 0.12);
+            }
         }
 
-        .unsaved-changes-indicator {
-            position: fixed;
-            top: 18px;
-            right: 18px;
-            z-index: 20000;
-            display: none;
+        .collapsible-header.has-unsaved-changes,
+        [data-unsaved-section].has-unsaved-changes {
+            border-color: #F4C95D !important;
+            background: linear-gradient(135deg, rgba(84, 66, 35, 0.78) 0%, rgba(42, 37, 64, 0.96) 45%, rgba(28, 26, 36, 0.98) 100%) !important;
+            animation: unsavedGoldPulse 1.35s ease-in-out infinite alternate !important;
+        }
+
+        .section-unsaved-indicator {
             align-items: center;
-            gap: 9px;
-            max-width: min(420px, calc(100vw - 36px));
-            padding: 10px 14px;
-            border: 2px solid #F4C95D;
-            border-radius: 8px;
-            background: rgba(28, 26, 36, 0.97);
-            color: #FFF2B2;
-            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45), 0 0 14px rgba(244, 201, 93, 0.25);
-            font-size: 13px;
-            font-weight: 700;
-            letter-spacing: 0.2px;
-        }
-
-        .unsaved-changes-indicator.visible {
-            display: flex;
-        }
-
-        .unsaved-changes-indicator::before {
-            content: '!';
+            align-self: center;
+            background: linear-gradient(135deg, rgba(84, 66, 35, 0.92), rgba(42, 37, 64, 0.96));
+            border: 1px solid #F4C95D;
+            border-radius: 18px;
+            box-shadow: 0 0 12px rgba(244, 201, 93, 0.45), inset 0 0 7px rgba(253, 245, 208, 0.12);
+            color: #FDF5D0;
             display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            flex: 0 0 22px;
-            width: 22px;
-            height: 22px;
-            border-radius: 50%;
-            background: #F4C95D;
-            color: #1C1A24;
+            flex: 0 0 auto;
+            font-size: 10px;
+            font-weight: 800;
+            gap: 6px;
+            letter-spacing: 0.75px;
+            margin-left: auto;
+            margin-right: 14px;
+            padding: 6px 11px;
+            text-shadow: 0 0 7px rgba(253, 245, 208, 0.85);
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        .section-unsaved-indicator::before {
+            content: '◆';
+            color: #F4C95D;
+            display: inline-block;
+            font-size: 9px;
+            text-shadow: 0 0 8px rgba(244, 201, 93, 0.95);
+        }
+
+        [data-unsaved-section] .section-unsaved-indicator {
+            margin-left: auto;
+            margin-right: 0;
+        }
+
+        @media (max-width: 900px) {
+            .section-unsaved-indicator {
+                font-size: 8px;
+                letter-spacing: 0.35px;
+                margin-right: 8px;
+                padding: 5px 8px;
+            }
         }
 
         .pricing-type-btn {
@@ -6054,8 +6073,6 @@ PROMPT;
             <button class="tab-button" onclick="switchTab('info')">Info</button>
         </div>
 
-        <div id="unsavedChangesIndicator" class="unsaved-changes-indicator" role="status" aria-live="polite"></div>
-
 <?php include __DIR__ . '/config_section_scenes.php'; ?>
 
 <?php include __DIR__ . '/config_section_npc_settings.php'; ?>
@@ -6121,38 +6138,75 @@ PROMPT;
         const nsfwUnsavedGeneration = { settings: 0, prompts: 0 };
         let nsfwUnsavedTrackingReady = false;
 
-        function nsfwUnsavedGroupLabel(group) {
-            return group === 'prompts' ? 'Prompts' : 'Settings';
-        }
+        function findNsfwUnsavedSectionHost(control, groupRoot) {
+            let node = control;
+            while (node && node !== groupRoot) {
+                if (node.classList && node.classList.contains('collapsible-section')) {
+                    const header = Array.from(node.children).find(child =>
+                        child.classList && child.classList.contains('collapsible-header') && child.querySelector('.section-save-btn')
+                    );
+                    if (header) return header;
+                }
 
-        function renderNsfwUnsavedState() {
-            const indicator = document.getElementById('unsavedChangesIndicator');
-            const groups = Array.from(nsfwUnsavedGroups);
-            if (indicator) {
-                indicator.textContent = groups.length
-                    ? 'Unsaved changes: ' + groups.map(nsfwUnsavedGroupLabel).join(', ') + '. Click Save.'
-                    : '';
-                indicator.classList.toggle('visible', groups.length > 0);
+                if (node.classList && node.classList.contains('collapsible-content')) {
+                    const header = node.previousElementSibling;
+                    if (header && header.classList.contains('collapsible-header') && header.querySelector('.section-save-btn')) {
+                        return header;
+                    }
+                }
+
+                if (node.hasAttribute && node.hasAttribute('data-unsaved-section')) return node;
+                node = node.parentElement;
             }
-
-            ['settings', 'prompts'].forEach(group => {
-                document.querySelectorAll('#' + group + ' .section-save-btn').forEach(button => {
-                    button.classList.toggle('has-unsaved-changes', nsfwUnsavedGroups.has(group));
-                });
-            });
+            return null;
         }
 
-        function markNsfwChangesUnsaved(group) {
+        function showNsfwSectionUnsaved(host) {
+            if (!host || host.querySelector(':scope > .section-unsaved-indicator')) return;
+            host.classList.add('has-unsaved-changes');
+
+            const badge = document.createElement('span');
+            badge.className = 'section-unsaved-indicator';
+            badge.setAttribute('role', 'status');
+            badge.setAttribute('aria-live', 'polite');
+            badge.textContent = 'You Have Unsaved Changes';
+
+            if (host.classList.contains('collapsible-header')) {
+                const actionArea = Array.from(host.children).find(child => child.querySelector && child.querySelector('.section-save-btn'));
+                host.insertBefore(badge, actionArea || null);
+            } else {
+                const saveButton = host.querySelector('.section-save-btn');
+                if (saveButton && saveButton.parentElement) saveButton.parentElement.insertBefore(badge, saveButton);
+                else host.appendChild(badge);
+            }
+        }
+
+        function clearNsfwSectionIndicators(group) {
+            const groupRoot = document.getElementById(group);
+            if (!groupRoot) return;
+            groupRoot.querySelectorAll('.section-unsaved-indicator').forEach(badge => badge.remove());
+            groupRoot.querySelectorAll('.has-unsaved-changes').forEach(host => host.classList.remove('has-unsaved-changes'));
+        }
+
+        function markNsfwChangesUnsaved(group, control) {
             if (!nsfwUnsavedTrackingReady || (group !== 'settings' && group !== 'prompts')) return;
             nsfwUnsavedGeneration[group]++;
             nsfwUnsavedGroups.add(group);
-            renderNsfwUnsavedState();
+            const groupRoot = document.getElementById(group);
+            if (control && groupRoot) {
+                showNsfwSectionUnsaved(findNsfwUnsavedSectionHost(control, groupRoot));
+            } else if (groupRoot) {
+                groupRoot.querySelectorAll('.collapsible-header').forEach(header => {
+                    if (header.querySelector('.section-save-btn')) showNsfwSectionUnsaved(header);
+                });
+                groupRoot.querySelectorAll('[data-unsaved-section]').forEach(showNsfwSectionUnsaved);
+            }
         }
 
         function markNsfwChangesSaved(group, savedGeneration) {
             if (savedGeneration !== undefined && nsfwUnsavedGeneration[group] !== savedGeneration) return;
             nsfwUnsavedGroups.delete(group);
-            renderNsfwUnsavedState();
+            clearNsfwSectionIndicators(group);
         }
 
         function trackNsfwControlChange(event) {
@@ -6160,7 +6214,7 @@ PROMPT;
             if (!control || !control.matches || !control.matches('input, select, textarea')) return;
             if (control.disabled || control.readOnly || control.type === 'hidden') return;
             const groupContainer = control.closest('#settings, #prompts');
-            if (groupContainer) markNsfwChangesUnsaved(groupContainer.id);
+            if (groupContainer) markNsfwChangesUnsaved(groupContainer.id, control);
         }
 
         document.addEventListener('input', trackNsfwControlChange);
@@ -6207,7 +6261,6 @@ PROMPT;
             // Loading functions assign values directly and do not emit input/change.
             // From this point forward, actual user edits are tracked until their save succeeds.
             nsfwUnsavedTrackingReady = true;
-            renderNsfwUnsavedState();
         });
 
         // Tab switching
