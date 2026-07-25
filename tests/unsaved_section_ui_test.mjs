@@ -105,6 +105,12 @@ try {
         );
         const badgeColor = badgeStyles ? badgeStyles.color : null;
         const badgeBorderColor = badgeStyles ? badgeStyles.borderColor : null;
+        const badgeFontFamily = badgeStyles ? badgeStyles.fontFamily : null;
+        const badgeBorderStyle = badgeStyles ? badgeStyles.borderStyle : null;
+        const badgeBackgroundImage = badgeStyles ? badgeStyles.backgroundImage : null;
+        const badgeBackgroundColor = badgeStyles ? badgeStyles.backgroundColor : null;
+        const badgeBorderRadius = badgeStyles ? badgeStyles.borderRadius : null;
+        const badgeTextShadow = badgeStyles ? badgeStyles.textShadow : null;
         const promptGeneration = nsfwUnsavedGeneration.prompts;
         markNsfwChangesSaved('prompts', promptGeneration);
         const promptClearedAfterSave = !header.querySelector('.section-unsaved-indicator');
@@ -136,6 +142,12 @@ try {
             badgeBetweenTitleAndButtons,
             badgeColor,
             badgeBorderColor,
+            badgeFontFamily,
+            badgeBorderStyle,
+            badgeBackgroundImage,
+            badgeBackgroundColor,
+            badgeBorderRadius,
+            badgeTextShadow,
             floatingIndicatorExists: Boolean(document.getElementById('unsavedChangesIndicator')),
             promptClearedAfterSave,
             settingsExactHeaderMarked,
@@ -160,8 +172,12 @@ try {
     check(result.exactHeaderMarked, 'edited section header did not receive the dirty state');
     check(result.topLevelBadgeCount === 1, 'an edit marked more than the exact changed section');
     check(result.badgeBetweenTitleAndButtons, 'badge is not between the section title and Save/Open controls');
-    check(result.badgeColor === 'rgb(253, 245, 208)', 'badge does not use the SHARMAT cream-gold text color');
-    check(result.badgeBorderColor === 'rgb(244, 201, 93)', 'badge does not use the SHARMAT gold border');
+    check(result.badgeFontFamily && result.badgeFontFamily.includes('MagicCards'), 'warning does not use the elegant SHARMAT display font');
+    check(result.badgeBorderStyle === 'none', 'warning is still pillboxed with a border');
+    check(result.badgeBackgroundImage === 'none', 'warning is still pillboxed with a background image');
+    check(result.badgeBackgroundColor === 'rgba(0, 0, 0, 0)', 'warning is still pillboxed with a background color');
+    check(result.badgeBorderRadius === '0px', 'warning still has a rounded pill shape');
+    check(result.badgeTextShadow && result.badgeTextShadow !== 'none', 'warning is missing the gold text glow');
     check(!result.floatingIndicatorExists, 'old floating unsaved indicator still exists');
     check(result.promptClearedAfterSave, 'successful prompt save did not clear its section badge');
     check(result.settingsExactHeaderMarked, 'Settings edit did not mark its exact owning section');

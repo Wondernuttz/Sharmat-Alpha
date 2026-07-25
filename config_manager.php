@@ -5415,52 +5415,36 @@ PROMPT;
             color: #D8C8E8;
         }
 
-        @keyframes unsavedGoldPulse {
+        @keyframes unsavedGoldTextPulse {
             0% {
-                border-color: #B9903D;
-                box-shadow: 0 0 7px rgba(244, 201, 93, 0.24), inset 0 0 8px rgba(244, 201, 93, 0.05);
+                color: #D8B85A;
+                text-shadow: 0 0 4px rgba(216, 184, 90, 0.38);
             }
             100% {
-                border-color: #FDF5D0;
-                box-shadow: 0 0 18px rgba(253, 245, 208, 0.62), inset 0 0 15px rgba(244, 201, 93, 0.12);
+                color: #FDF5D0;
+                text-shadow: 0 0 7px rgba(253, 245, 208, 0.9), 0 0 16px rgba(218, 165, 32, 0.65);
             }
-        }
-
-        .collapsible-header.has-unsaved-changes,
-        [data-unsaved-section].has-unsaved-changes {
-            border-color: #F4C95D !important;
-            background: linear-gradient(135deg, rgba(84, 66, 35, 0.78) 0%, rgba(42, 37, 64, 0.96) 45%, rgba(28, 26, 36, 0.98) 100%) !important;
-            animation: unsavedGoldPulse 1.35s ease-in-out infinite alternate !important;
         }
 
         .section-unsaved-indicator {
             align-items: center;
             align-self: center;
-            background: linear-gradient(135deg, rgba(84, 66, 35, 0.92), rgba(42, 37, 64, 0.96));
-            border: 1px solid #F4C95D;
-            border-radius: 18px;
-            box-shadow: 0 0 12px rgba(244, 201, 93, 0.45), inset 0 0 7px rgba(253, 245, 208, 0.12);
+            animation: unsavedGoldTextPulse 1.5s ease-in-out infinite alternate;
+            background: none;
+            border: none;
+            border-radius: 0;
+            box-shadow: none;
             color: #FDF5D0;
             display: inline-flex;
             flex: 0 0 auto;
-            font-size: 10px;
-            font-weight: 800;
-            gap: 6px;
-            letter-spacing: 0.75px;
+            font-family: 'MagicCards', 'Segoe UI', sans-serif;
+            font-size: 18px;
+            font-weight: 600;
+            letter-spacing: 1.5px;
             margin-left: auto;
             margin-right: 14px;
-            padding: 6px 11px;
-            text-shadow: 0 0 7px rgba(253, 245, 208, 0.85);
-            text-transform: uppercase;
+            padding: 0;
             white-space: nowrap;
-        }
-
-        .section-unsaved-indicator::before {
-            content: '◆';
-            color: #F4C95D;
-            display: inline-block;
-            font-size: 9px;
-            text-shadow: 0 0 8px rgba(244, 201, 93, 0.95);
         }
 
         [data-unsaved-section] .section-unsaved-indicator {
@@ -5470,10 +5454,9 @@ PROMPT;
 
         @media (max-width: 900px) {
             .section-unsaved-indicator {
-                font-size: 8px;
-                letter-spacing: 0.35px;
+                font-size: 14px;
+                letter-spacing: 0.75px;
                 margin-right: 8px;
-                padding: 5px 8px;
             }
         }
 
