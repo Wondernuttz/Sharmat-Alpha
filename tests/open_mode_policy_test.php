@@ -1,6 +1,7 @@
 <?php
 
 require_once dirname(__DIR__) . '/open_mode_policy.php';
+require_once dirname(__DIR__) . '/scene_threads.php';
 
 $failures = [];
 $assertions = 0;
@@ -64,6 +65,25 @@ checkOpenModePolicy(!$mayAccept(array_replace($base, ['is_npc_scene' => true])),
 checkOpenModePolicy(!$mayAccept(array_replace($base, ['scene_actors' => ['Fruki', 'Lydia']])), 'scene must actually include the player');
 checkOpenModePolicy(!$mayAccept(array_replace($base, ['scene_actors' => []])), 'missing scene actors must fail closed');
 checkOpenModePolicy(!$mayAccept(array_replace($base, ['accepted_sex' => true])), 'already accepted state must not transition twice');
+checkOpenModePolicy($mayAccept(array_replace($base, ['scene_actors' => ['Fruki', 'Player']])), 'canonical Player actor must match a resolved player name');
+
+$canonicalPlayerStatus = array_replace($base, ['scene_actors' => ['Fruki', 'Player']]);
+$canonicalPlayerWithMissingName = aiagentNsfwShouldAutoAcceptOpenModePlayerScene(
+    $canonicalPlayerStatus,
+    true,
+    false,
+    false,
+    false,
+    false,
+    true,
+    ''
+);
+checkOpenModePolicy($canonicalPlayerWithMissingName, 'canonical Player actor must work before PLAYER_NAME resolves');
+
+checkOpenModePolicy(aiagentNsfwCanonicalRelationshipType('Romance') === 'romantic', 'legacy romance label must canonicalize to romantic');
+checkOpenModePolicy(aiagentNsfwCanonicalRelationshipType('Marriage') === 'romantic', 'marriage wording must canonicalize to romantic');
+checkOpenModePolicy(aiagentNsfwCanonicalRelationshipType('Enemies') === 'enemy', 'plural enemies label must canonicalize to enemy');
+checkOpenModePolicy(aiagentNsfwCanonicalRelationshipType('trusted') === 'trusted', 'custom relationship labels must remain unchanged');
 
 $acceptedLow = aiagentNsfwApplyOpenModeAcceptedState($base, 20);
 checkOpenModePolicy(($acceptedLow['scene_phase'] ?? '') === 'accepted', 'transition must set accepted phase');
@@ -82,6 +102,37 @@ $prompt = aiagentNsfwBuildOpenModeScenePrompt('Fruki', 'Yoshua', 42, 'Friendly')
 checkOpenModePolicy(strpos($prompt, 'do not call AcceptSex') !== false, 'Open Mode prompt must suppress the redundant decision tool');
 checkOpenModePolicy(strpos($prompt, 'relationship type') !== false && strpos($prompt, 'arousal rules') !== false, 'Open Mode prompt must neutralize the disabled gates');
 checkOpenModePolicy(strpos($prompt, 'standing or intro beat') !== false, 'Open Mode prompt must keep intro beats non-explicit');
+
+checkOpenModePolicy(aiagentNsfwPlayerStandingPromptMode(false, false, false) === 'scene', 'non-standing stages must retain normal scene framing');
+checkOpenModePolicy(aiagentNsfwPlayerStandingPromptMode(true, false, false) === 'entry', 'fresh standing entry must receive the one-shot entry framing');
+checkOpenModePolicy(aiagentNsfwPlayerStandingPromptMode(true, true, false) === 'ongoing', 'repeat standing beat must not repeat the entry framing');
+checkOpenModePolicy(aiagentNsfwPlayerStandingPromptMode(true, false, true) === 'breather', 'post-sex standing beat must be a breather even when the entry latch is absent');
+checkOpenModePolicy(aiagentNsfwPlayerStandingPromptMode(true, false, false, true) === 'affection', 'fresh affection beat must keep non-sexual affection framing');
+checkOpenModePolicy(aiagentNsfwPlayerStandingPromptMode(true, true, true, true) === 'breather', 'sex history must dominate affection and entry framing');
+checkOpenModePolicy(aiagentNsfwShouldLatchPlayerSceneSexHistory(3, true, false, false, false, false, true), 'model-driven regular NPC sex must latch scene history');
+checkOpenModePolicy(aiagentNsfwShouldLatchPlayerSceneSexHistory(3, true, false, true, false, false, false), 'explicitly accepted sex must latch scene history');
+checkOpenModePolicy(!aiagentNsfwShouldLatchPlayerSceneSexHistory(3, true, true, true, true, true, true), 'active refusal must dominate every sex-history consent path');
+checkOpenModePolicy(!aiagentNsfwShouldLatchPlayerSceneSexHistory(2, true, false, true, false, false, false), 'non-sex affection tiers must never latch sex history');
+checkOpenModePolicy(!aiagentNsfwShouldLatchPlayerSceneSexHistory(3, false, false, true, false, false, false), 'sex history must not latch before sex actually starts');
+checkOpenModePolicy(aiagentNsfwSceneSpeechCadenceAllows(100, 105, 15, true), 'opening decision bypasses scene speech cadence');
+checkOpenModePolicy(!aiagentNsfwSceneSpeechCadenceAllows(100, 105, 15, false), 'rapid scene change is speech-throttled');
+checkOpenModePolicy(aiagentNsfwSceneSpeechCadenceAllows(100, 115, 15, false), 'scene change speaks when cadence elapses');
+checkOpenModePolicy(aiagentNsfwSceneSpeechCadenceAllows(100, 101, 0, false), 'zero scene speech cooldown disables throttle');
+
+$legacySafeOverhead = aiagentNsfwBuildNonGatingRelationshipOverhead('Fruki', 'Yoshua', [
+    'type' => 'Friend',
+    'tier' => 'Bonded',
+    'aff' => 95,
+], true);
+checkOpenModePolicy(strpos($legacySafeOverhead, 'Open Mode is active') !== false, 'Open Mode overhead must explicitly neutralize stored relationship gates');
+checkOpenModePolicy(strpos($legacySafeOverhead, 'non-romantic label forbids') !== false, 'Open Mode overhead must prevent legacy type text from becoming a refusal');
+
+$disabledTypeGateOverhead = aiagentNsfwBuildNonGatingRelationshipOverhead('Fruki', 'Yoshua', [
+    'type' => 'Friend',
+    'tier' => 'Bonded',
+    'aff' => 95,
+], false);
+checkOpenModePolicy(strpos($disabledTypeGateOverhead, 'Relationship-type gating is disabled') !== false, 'disabled type gate must produce descriptive-only overhead');
 
 if ($failures) {
     fwrite(STDERR, "Open Mode policy regression failures:\n - " . implode("\n - ", $failures) . "\n");

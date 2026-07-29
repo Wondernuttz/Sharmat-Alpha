@@ -3426,6 +3426,15 @@ Function ClearStashedNpcSceneActors(int threadID)
 	JMap.RemoveKey(GetNpcSceneStashMap(), "thr_" + threadID)
 EndFunction
 
+Function SendSceneEndWithHardSpeechFlush(string scoring)
+	; requestMessage only starts another HTTP response; it does NOT interrupt speech
+	; already playing or queued. sendMessage preserves chatnf_sl_end while invoking
+	; CHIM's established hard-interrupt path first: abort the current utterance,
+	; clear ScriptQueue/SPG queues, cancel old HTTP/rechat streams, then request the
+	; one post-scene response. The server still decides whether pillow talk was earned.
+	AIAgentFunctions.sendMessage(scoring, "chatnf_sl_end")
+EndFunction
+
 string Function ResolveOStimOrgasmPartnerName(Actor orgasmer, int threadID, string sceneID)
 	lastResolvedOStimOrgasmActionType = ""
 
@@ -3788,7 +3797,7 @@ Event OStimEnd(string EventName, string Json, float NumArg, Form Sender)
 	; so the player scene would NEVER tear down: scene_phase/sex_started/current_scene_desc linger and the NPC
 	; keeps narrating sex while just standing. Send the end HERE, where we have valid resolved actors + scoring.
 	if (playerInScene)
-		AIAgentFunctions.requestMessage(scoring,"chatnf_sl_end")
+		SendSceneEndWithHardSpeechFlush(scoring)
 		Debug.Trace("[CHIM-NSFW] OStimEnd: sent chatnf_sl_end for player scene teardown -> " + scoring)
 	endif
 
@@ -4001,7 +4010,7 @@ Event OStimThreadEnd(string EventName, string Json, float ThreadID, Form Sender)
 		; the scene still tears down cleanly - otherwise NPC scene state lingers and bleeds into later dialogue.
 		string stashScoring = BuildScoringFromStash(threadEndIDInt)
 		if stashScoring != ""
-			AIAgentFunctions.requestMessage(stashScoring, "chatnf_sl_end")
+			SendSceneEndWithHardSpeechFlush(stashScoring)
 			ClearStashedNpcSceneActors(threadEndIDInt)
 			Debug.Trace("[CHIM-NSFW] OStimThreadEnd: used stashed roster for teardown -> " + stashScoring)
 			return
@@ -4042,7 +4051,7 @@ Event OStimThreadEnd(string EventName, string Json, float ThreadID, Form Sender)
 		return
 	endif
 
-	AIAgentFunctions.requestMessage(scoring,"chatnf_sl_end")
+	SendSceneEndWithHardSpeechFlush(scoring)
 	ClearStashedNpcSceneActors(threadEndIDInt)
 
 EndEvent
@@ -4152,7 +4161,7 @@ Event OStimSubthreadEnd(string EventName, string SceneID, float SubthreadID, For
 		; Fall back to the stashed roster so the scene still tears down cleanly.
 		string stashScoring = BuildScoringFromStash(threadId)
 		if stashScoring != ""
-			AIAgentFunctions.requestMessage(stashScoring, "chatnf_sl_end")
+			SendSceneEndWithHardSpeechFlush(stashScoring)
 			ClearStashedNpcSceneActors(threadId)
 			Debug.Trace("[CHIM-NSFW] OStimSubthreadEnd: used stashed roster for teardown -> " + stashScoring)
 			return
@@ -4184,7 +4193,7 @@ Event OStimSubthreadEnd(string EventName, string SceneID, float SubthreadID, For
 	endwhile
 
 	; Send scene end event - PHP handles pillow talk for both NPCs
-	AIAgentFunctions.requestMessage(scoring, "chatnf_sl_end")
+	SendSceneEndWithHardSpeechFlush(scoring)
 	ClearStashedNpcSceneActors(threadId)
 
 	Debug.Trace("[CHIM-NSFW] OStimSubthreadEnd: Sent chatnf_sl_end for NPC scene")
@@ -5016,7 +5025,7 @@ Event OnSexLabAnimEnd(int tid, bool HasPlayer)
 	endif
 
 	AIAgentFunctions.logMessage("# END OF SEX SCENE", "infoaction")
-	AIAgentFunctions.requestMessage(score, "chatnf_sl_end")
+	SendSceneEndWithHardSpeechFlush(score)
 	ClearStashedNpcSceneActors(tid)
 	AIAgentFunctions.logMessage("", "force_current_task")
 EndEvent
@@ -5222,7 +5231,7 @@ Event EndSexScene(int tid, bool HasPlayer)
 		
 		; POst comment
 		Utility.wait(1);
-		AIAgentFunctions.requestMessage(score,"chatnf_sl_end")
+		SendSceneEndWithHardSpeechFlush(score)
 
 		bool playerInScene=false
 		i = actorList.Length

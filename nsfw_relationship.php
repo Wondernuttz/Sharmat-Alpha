@@ -454,7 +454,37 @@ class NsfwRelationship {
 
         $prompts = self::loadPromptSettings();
         $promptKey = "relationship_overhead_{$family}_{$tier}";
-        $prompt = trim((string)($prompts[$promptKey] ?? self::getDefaultPromptOverride($promptKey)));
+
+        // Read the type-gate master toggle before choosing the base overhead.
+        // Legacy databases can retain old editable overheads that explicitly
+        // forbid romance/intimacy. Reusing those while Open Mode is on, or while
+        // the type gate is off, recreates the very gate the user disabled.
+        $rtEligibleOv = ['romantic', 'crush', 'ex'];
+        $rtGateEnabledOv = true;
+        $rtRowOv = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
+        if ($rtRowOv && !empty($rtRowOv['value'])) {
+            $rtCfgOv = json_decode($rtRowOv['value'], true);
+            if (is_array($rtCfgOv)) {
+                $rtGateEnabledOv = array_key_exists('enabled', $rtCfgOv) ? (bool)$rtCfgOv['enabled'] : true;
+                if (is_array($rtCfgOv['eligible_types'] ?? null)) {
+                    $rtEligibleOv = array_map('strtolower', $rtCfgOv['eligible_types']);
+                }
+            }
+        }
+
+        $useNonGatingRegularOverhead = ($family === 'regular')
+            && empty($isNpcPromptContext)
+            && ($ovOpenMode || !$rtGateEnabledOv);
+        if ($useNonGatingRegularOverhead && function_exists('aiagentNsfwBuildNonGatingRelationshipOverhead')) {
+            $prompt = aiagentNsfwBuildNonGatingRelationshipOverhead(
+                $npcName,
+                $partnerName,
+                $relationship,
+                $ovOpenMode
+            );
+        } else {
+            $prompt = trim((string)($prompts[$promptKey] ?? self::getDefaultPromptOverride($promptKey)));
+        }
         // Do NOT early-return on a blank base overhead: an INELIGIBLE relationship TYPE must STILL receive the
         // "not sexually available / RefuseSex" addendum below even when the per-tier base text is empty. Without
         // this, a professional/bonded NPC with a blank base got NO refusal instruction every turn and freely
@@ -471,22 +501,14 @@ class NsfwRelationship {
             // ONLY to NPCs whose relationship TYPE is NOT one of the UI-selected sex-eligible types. Eligible types
             // (e.g. romantic, crush) are exempt and never see it. Was injecting unconditionally, which force-refused
             // even bonded romantic NPCs.
-            $rtEligibleOv = [];
-            $rtRowOv = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
-            if ($rtRowOv && !empty($rtRowOv['value'])) {
-                $rtCfgOv = json_decode($rtRowOv['value'], true);
-                if (is_array($rtCfgOv) && is_array($rtCfgOv['eligible_types'] ?? null)) {
-                    $rtEligibleOv = array_map('strtolower', $rtCfgOv['eligible_types']);
-                }
-            }
-            $relTypeLowerOv = strtolower(trim((string)($relationship['type'] ?? '')));
+            $relTypeLowerOv = aiagentNsfwCanonicalRelationshipType($relationship['type'] ?? '');
             $typeIsEligibleOv = ($relTypeLowerOv !== '' && in_array($relTypeLowerOv, $rtEligibleOv, true));
 
             // OPEN MODE: no type is ineligible - the refusal addendum would fight the mode. SLUT
             // family (per-NPC mark or global mode): eligibility is affinity-driven from Acquaintance
             // (6) up, mirroring aiagentNsfwRelTypeSexEligible; below the floor the refusal addendum
             // still fires so the mechanical gate and the prompt agree.
-            if ($ovOpenMode) {
+            if ($ovOpenMode || !$rtGateEnabledOv) {
                 $typeIsEligibleOv = true;
             } elseif ($family === 'slut') {
                 // Mirror aiagentNsfwRelTypeSexEligible exactly: affinity floor 6 AND orientation
@@ -1133,6 +1155,14 @@ class NsfwRelationship {
     public static function getRelTypeGateRefusal($npcName, $partnerName) {
         require_once __DIR__ . "/nsfw_data.php";
 
+        // Open Mode owns the player-route permission policy. Never let this
+        // lower-level helper reintroduce a relationship-type refusal if the
+        // direct scene auto-accept has not happened yet.
+        if (function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode()
+            && (!function_exists('aiagentNsfwIsChildNpc') || !aiagentNsfwIsChildNpc($npcName))) {
+            return null;
+        }
+
         // Master config blob (same key the UI writes)
         $row = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
         $cfg = ($row && !empty($row['value'])) ? json_decode($row['value'], true) : [];
@@ -1148,7 +1178,7 @@ class NsfwRelationship {
 
         // Relationship type + affinity WITH THE PLAYER
         $rel = RelationshipManager::getPlayerRelationship($npcName);
-        $relType = strtolower($rel['type'] ?? '');
+        $relType = aiagentNsfwCanonicalRelationshipType($rel['type'] ?? '');
         $aff = (int)($rel['aff'] ?? 0);
 
         // Sex-eligible types go through the normal rel gate

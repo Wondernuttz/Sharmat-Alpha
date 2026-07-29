@@ -427,7 +427,7 @@
 
                 <!-- Scene Event Cooldowns -->
                 <h3 style="margin: 20px 0 15px; color: #FDF5D0; font-size: 16px; animation: subPulse 3s ease-in-out infinite alternate;">Scene Event Cooldowns</h3>
-                <p class="legend" style="margin-bottom: 15px;">Control how often player-scene chatnf_sl events can trigger dialogue. NPC-only scene cadence is controlled by the NPC Scene settings above.</p>
+                <p class="legend" style="margin-bottom: 15px;">Control how often player-scene position changes and chatnf_sl events can trigger another spoken line. Scene state still updates on every change; only model/TTS speech is paced. NPC-only scene cadence is controlled by the NPC Scene settings above.</p>
 
                 <div class="settings-slider-group">
                     <span class="slider-title">Sex Scene Dialogue Cooldown</span>

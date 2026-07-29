@@ -1114,9 +1114,12 @@ if (isset($GLOBALS["gameRequest"])) {
             error_log("[AIAGENTNSFW] chatnf_sl_end without player in scoring (NPC-to-NPC end) - player scene markers untouched");
         }
 
-        // Prime pillow talk for all NPCs with an active scene. Generic prompt is used for
-        // any stale chatnf_sl events still in flight. handleSceneEnd() (when chatnf_sl_end
-        // finally processes) will overwrite with the NPC-specific pillow talk prompt.
+        // Do not prime a generic pillow-talk latch here. This hook runs before MAIN and
+        // cannot safely scope a bulk DB update to the exact ended scene; it could arm
+        // unrelated concurrent scenes or let an old queued request consume the one-shot.
+        // The game-side hard speech flush cancels in-flight scene output immediately, and
+        // handleSceneEnd() remains the sole owner of eligibility + the one pillow-talk turn.
+        /*
         $genericPillowTalk = "The intimate scene has just ended. React naturally to the quiet afterglow — warmly and briefly. Do NOT moan or continue sexual expressions.";
         try {
             $GLOBALS["db"]->execQuery("
@@ -1140,6 +1143,7 @@ if (isset($GLOBALS["gameRequest"])) {
         } catch (Exception $e) {
             error_log("[AIAGENTNSFW] Failed to set early pillow talk: " . $e->getMessage());
         }
+        */
     }
 
     if (in_array($currentEvent, $legacySceneSpeakEvents, true) && $legacySceneSpeakPolicy === 'block_all') {
@@ -1797,29 +1801,68 @@ if (isset($GLOBALS["gameRequest"])) {
         $sceneHash = md5($GLOBALS["gameRequest"][3] ?? '');
         $dedupFile = sys_get_temp_dir() . "/nsfw_scene_last_hash.txt";
         $eventTs = (string)($GLOBALS["gameRequest"][2] ?? '');
-        $lastRaw = @file_get_contents($dedupFile);
-        $lastData = @json_decode((string)$lastRaw, true);
-        if (is_array($lastData)) {
-            $lastHash = (string)($lastData['hash'] ?? '');
-            $lastEventTs = (string)($lastData['event_ts'] ?? '');
-            $lastHashTime = (int)($lastData['time'] ?? 0);
-        } else {
-            $lastHash = (string)$lastRaw;
-            $lastEventTs = '';
-            $lastHashTime = is_file($dedupFile) ? (int)@filemtime($dedupFile) : 0;
+        // Atomic read/compare/write. Concurrent PHP workers must not both observe
+        // the old hash and both speak the same ~500ms OStim event.
+        $isDuplicate = false;
+        $dedupLocked = false;
+        $fh = @fopen($dedupFile, 'c+');
+        if ($fh !== false && @flock($fh, LOCK_EX)) {
+            $dedupLocked = true;
+            $lastRaw = (string)stream_get_contents($fh);
+            $lastData = @json_decode($lastRaw, true);
+            if (is_array($lastData)) {
+                $lastHash = (string)($lastData['hash'] ?? '');
+                $lastEventTs = (string)($lastData['event_ts'] ?? '');
+                $lastHashTime = (int)($lastData['time'] ?? 0);
+            } else {
+                $lastHash = $lastRaw;
+                $lastEventTs = '';
+                $lastHashTime = 0;
+            }
+            $sameSceneEvent = $eventTs !== '' && $lastEventTs === $eventTs;
+            $hashAge = $lastHashTime > 0 ? time() - $lastHashTime : PHP_INT_MAX;
+            if ($lastHash === $sceneHash && ($sameSceneEvent || $hashAge <= 2)) {
+                $isDuplicate = true;
+            } else {
+                @ftruncate($fh, 0);
+                @rewind($fh);
+                @fwrite($fh, json_encode([
+                    'hash' => $sceneHash,
+                    'event_ts' => $eventTs,
+                    'time' => time(),
+                ]));
+                @fflush($fh);
+            }
+            @flock($fh, LOCK_UN);
         }
-        $sameSceneEvent = $eventTs !== '' && $lastEventTs === $eventTs;
-        $hashAge = $lastHashTime > 0 ? time() - $lastHashTime : PHP_INT_MAX;
-        if ($lastHash === $sceneHash && ($sameSceneEvent || $hashAge <= 2)) {
+        if ($fh !== false) {
+            @fclose($fh);
+        }
+        if (!$dedupLocked) {
+            $lastRaw = @file_get_contents($dedupFile);
+            $lastData = @json_decode((string)$lastRaw, true);
+            $lastHash = is_array($lastData) ? (string)($lastData['hash'] ?? '') : (string)$lastRaw;
+            $lastEventTs = is_array($lastData) ? (string)($lastData['event_ts'] ?? '') : '';
+            $lastHashTime = is_array($lastData)
+                ? (int)($lastData['time'] ?? 0)
+                : (is_file($dedupFile) ? (int)@filemtime($dedupFile) : 0);
+            $sameSceneEvent = $eventTs !== '' && $lastEventTs === $eventTs;
+            $hashAge = $lastHashTime > 0 ? time() - $lastHashTime : PHP_INT_MAX;
+            if ($lastHash === $sceneHash && ($sameSceneEvent || $hashAge <= 2)) {
+                $isDuplicate = true;
+            } else {
+                @file_put_contents($dedupFile, json_encode([
+                    'hash' => $sceneHash,
+                    'event_ts' => $eventTs,
+                    'time' => time(),
+                ]), LOCK_EX);
+            }
+        }
+        if ($isDuplicate) {
             // Same scene data as last processed event — block completely
             $GLOBALS["gameRequest"][0] = "nsfw_blocked_duplicate";
         } else {
             // New scene data (position change or new scene) — process it
-            @file_put_contents($dedupFile, json_encode([
-                'hash' => $sceneHash,
-                'event_ts' => $eventTs,
-                'time' => time(),
-            ]));
             if (!empty($GLOBALS["AIAGENTNSFW_ROUTED_SCENE_PROFILE"])) {
                 @file_put_contents(
                     sys_get_temp_dir() . "/nsfw_authoritative_scene_" . $GLOBALS["AIAGENTNSFW_ROUTED_SCENE_PROFILE"] . ".txt",
@@ -1972,6 +2015,9 @@ if (isset($GLOBALS["gameRequest"])) {
 
         @unlink(sys_get_temp_dir() . "/nsfw_scene_active.txt");
         @unlink(sys_get_temp_dir() . "/nsfw_player_scene_active.txt");
+        foreach (glob(sys_get_temp_dir() . "/nsfw_scene_speech_*.txt") ?: [] as $sceneSpeechClock) {
+            @unlink($sceneSpeechClock);
+        }
         $initEndedTime = time();
         @file_put_contents(sys_get_temp_dir() . "/nsfw_scene_ended.txt", $initEndedTime);
         // Game load is a full reset - end the player scene too (the kill switch reads this marker).
@@ -2018,6 +2064,7 @@ if (isset($GLOBALS["gameRequest"])) {
                         'orgasmed', false,
                         'scene_phase', NULL,
                         'tier_prompt_sent', NULL,
+                        'standing_intro_shown_thread', NULL,
                         'cached_tier_prompt', '',
                         'accepted_sex', false,
                         'accepted_affection', false,

@@ -38,6 +38,77 @@ function aiagentNsfwSceneThreadKey($scope, $idOrActors)
     return $scope . "_" . $id;
 }
 
+/**
+ * Choose the prompt framing for a player-scene standing/idle report.
+ *
+ * The entry framing ("nothing has happened yet") is intentionally one-shot.
+ * Returning to standing in the same scene is either an ordinary continuation
+ * or, once sex has happened, a breather between acts.  This helper is pure so
+ * the state-machine decision can be regression-tested without CHIM/database
+ * bootstrap.
+ */
+function aiagentNsfwPlayerStandingPromptMode(
+    $isStandingBeat,
+    $entryAlreadyShown,
+    $sexAlreadyUnderway,
+    $affectionRecent = false
+) {
+    if (!$isStandingBeat) {
+        return 'scene';
+    }
+    if ($sexAlreadyUnderway) {
+        return 'breather';
+    }
+    if ($affectionRecent) {
+        return 'affection';
+    }
+    return $entryAlreadyShown ? 'ongoing' : 'entry';
+}
+
+/**
+ * Decide whether an explicit player-scene stage permanently latches the fact
+ * that sex happened in this scene.  Model-driven consent replaced AcceptSex
+ * for regular NPCs, so that route must count too; an active refusal always
+ * dominates and prevents the latch.
+ */
+function aiagentNsfwShouldLatchPlayerSceneSexHistory(
+    $sceneTier,
+    $sexStarted,
+    $refusalLatched,
+    $acceptedSex,
+    $privilegedConsentPath,
+    $npcSceneGateDisabled,
+    $modelDrivenConsent
+) {
+    if ((int)$sceneTier < 3 || !$sexStarted || $refusalLatched) {
+        return false;
+    }
+    return $acceptedSex || $privilegedConsentPath || $npcSceneGateDisabled || $modelDrivenConsent;
+}
+
+/**
+ * Pure cadence decision for beat-driven scene speech.
+ *
+ * Scene state still gets processed on every position change; this only decides
+ * whether that beat may create another model/TTS response. Opening consent and
+ * decision turns pass $mustSpeak=true and are never throttled.
+ */
+function aiagentNsfwSceneSpeechCadenceAllows($lastSpokenAt, $now, $cooldownSeconds, $mustSpeak = false)
+{
+    if ($mustSpeak) {
+        return true;
+    }
+
+    $cooldownSeconds = max(0, (int)$cooldownSeconds);
+    if ($cooldownSeconds === 0) {
+        return true;
+    }
+
+    $lastSpokenAt = (int)$lastSpokenAt;
+    $now = (int)$now;
+    return $lastSpokenAt <= 0 || ($now - $lastSpokenAt) >= $cooldownSeconds;
+}
+
 function aiagentNsfwSceneThreadLoadLedger()
 {
     $path = aiagentNsfwSceneThreadLedgerPath();

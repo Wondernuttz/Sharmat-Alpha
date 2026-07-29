@@ -1999,7 +1999,7 @@ function aiagentNsfwRelTypeSexEligible($npcName) {
     try {
         if (class_exists('RelationshipManager')) {
             $rel = RelationshipManager::getPlayerRelationship($npcName);
-            $relType = strtolower(trim((string)($rel['type'] ?? '')));
+            $relType = aiagentNsfwCanonicalRelationshipType($rel['type'] ?? '');
         } else {
             error_log("[AIAGENTNSFW] rel-type gate: RelationshipManager class NOT available for {$npcName} - failing OPEN (eligible)");
             return true;
@@ -2277,7 +2277,7 @@ function aiagentNsfwInstantCrush($actorName, $trigger, $rawTarget = '') {
             error_log("[AIAGENTNSFW] Instant crush blocked - orientation does not allow the player for {$actorName}");
             return;
         }
-        $type = strtolower((string)($rels['Player']['type'] ?? 'neutral'));
+        $type = aiagentNsfwCanonicalRelationshipType($rels['Player']['type'] ?? 'neutral');
         if (in_array($type, ['romantic', 'crush', 'admirer', 'obsessed', 'infatuated', 'lover'], true)) { return; }
 
         RelationshipManager::setRelationship($actorName, 'Player', $aff, 'crush');
@@ -2854,7 +2854,7 @@ function aiagentNsfwNpcToNpcSexEligible($npcA, $npcB) {
     try { $rel = RelationshipManager::getRelationship($npcA, $npcB); } catch (Exception $e) { return false; }
     if (!is_array($rel)) { return false; }
     $aff  = (int)($rel['aff'] ?? 0);
-    $type = strtolower(trim((string)($rel['type'] ?? '')));
+    $type = aiagentNsfwCanonicalRelationshipType($rel['type'] ?? '');
     // Promiscuous-marked initiator: NPC-to-NPC needs only Acquaintance affinity between the pair;
     // the type check is skipped. (Outbound gate = A's own standard for starting with B.)
     if (aiagentNsfwIsSlutNpc($npcA)) { return $aff >= 6; }

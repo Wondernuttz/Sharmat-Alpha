@@ -596,6 +596,10 @@ class NsfwOstimHandler {
                 $intimacyStatus["accepted_affection"] = $isNonSexAffectionScene;
                 $intimacyStatus["had_sex_in_scene"] = false;
                 $intimacyStatus["tier_prompt_sent"] = $isNonSexAffectionScene ? null : false;
+                // The standing/intro guidance is one-shot per scene. The scene thread key is
+                // actor-derived and is reused by later scenes with the same participants, so
+                // explicitly clear its per-scene latch here instead of relying on a new key.
+                $intimacyStatus["standing_intro_shown_thread"] = null;
                 $intimacyStatus["request_scene_stop"] = false;
                 $intimacyStatus["stop_command_sent"] = false;
                 $intimacyStatus["last_scene_stop_time"] = null;
@@ -837,11 +841,21 @@ class NsfwOstimHandler {
 	                    }
 	                }
 
-	                $acceptedForPillow = !empty($intimacyStatus["accepted_sex"])
-	                    || !empty($intimacyStatus["orgasmed"])
-	                    || !empty($intimacyStatus["npc_is_slave"])
-	                    || (!empty($intimacyStatus["npc_is_prostitute"]) && !empty($intimacyStatus["payment_confirmed"]));
-	                if ($sceneTier >= 3 && !empty($intimacyStatus["sex_started"]) && $acceptedForPillow) {
+	                $historyRefusalLatched = (($intimacyStatus["scene_phase"] ?? null) === "rejected")
+	                    || !empty($intimacyStatus["refusal_expressed"])
+	                    || !empty($intimacyStatus["refused_until_scene_end"])
+	                    || !empty($intimacyStatus["request_scene_stop"]);
+	                $npcSceneGateDisabledForHistory = !empty($intimacyStatus["is_npc_scene"])
+	                    && !empty($intimacyStatus["npc_affinity_gate_disabled"]);
+	                if (aiagentNsfwShouldLatchPlayerSceneSexHistory(
+	                    $sceneTier,
+	                    !empty($intimacyStatus["sex_started"]),
+	                    $historyRefusalLatched,
+	                    !empty($intimacyStatus["accepted_sex"]),
+	                    $isPrivilegedConsentPath,
+	                    $npcSceneGateDisabledForHistory,
+	                    $modelDrivenSexConsent
+	                )) {
 	                    $intimacyStatus["had_sex_in_scene"] = true;
 	                }
 
@@ -916,6 +930,30 @@ class NsfwOstimHandler {
         $storedSceneDesc = $cleanedSceneDesc;
 	        $isIdleIntroBeat = ($sceneTier === 0 && (in_array("idle", $sexTags, true) || in_array("intro", $sexTags, true)))
 	            || stripos((string)$sexStageName, 'standingapart') !== false;
+	        $standingIntroAlreadyShown = true;
+	        $hasStandingNpc = false;
+	        foreach ($orderedActorList as $standingStateActor) {
+	            if ($standingStateActor === ($GLOBALS["PLAYER_NAME"] ?? "")) { continue; }
+	            $hasStandingNpc = true;
+	            $standingState = getIntimacyForActor($standingStateActor);
+	            if ((string)($standingState["standing_intro_shown_thread"] ?? "") !== (string)$sceneThreadKey) {
+	                $standingIntroAlreadyShown = false;
+	                break;
+	            }
+	        }
+	        if (!$hasStandingNpc) { $standingIntroAlreadyShown = false; }
+	        $sexAlreadyUnderwayForStanding = self::sceneSexAlreadyUnderway($orderedActorList);
+	        // prerequest treats every tier-0 report as a standing/intro beat, even when a
+	        // particular animation pack omits the literal idle/intro tags. Keep this mode
+	        // decision equally broad so those packs cannot replay the entry prompt forever.
+	        $isStandingPromptBeat = ($sceneTier === 0)
+	            || stripos((string)$sexStageName, 'standingapart') !== false;
+	        $standingPromptMode = aiagentNsfwPlayerStandingPromptMode(
+	            $isStandingPromptBeat,
+	            $standingIntroAlreadyShown,
+	            $sexAlreadyUnderwayForStanding,
+	            false
+	        );
 	        if ($isIdleIntroBeat) {
 	            // A recent affection tool call means this idle "scene" is a hand-hold/hug gesture
 	            // blipping through OStim, not an advance - the DB flavor text for the idle
@@ -931,10 +969,20 @@ class NsfwOstimHandler {
 	            } catch (Exception $e) {
 	                // fall through to the neutral decision framing
 	            }
-	            if ($affectionRecent) {
+	            $standingPromptMode = aiagentNsfwPlayerStandingPromptMode(
+	                true,
+	                $standingIntroAlreadyShown,
+	                $sexAlreadyUnderwayForStanding,
+	                $affectionRecent
+	            );
+	            if ($standingPromptMode === 'affection') {
 	                $cleanedSceneDesc = implode(" and ", $orderedActorList) . " share a tender, non-sexual moment of affection (a held hand, an embrace). Nothing sexual is happening or being asked for; respond with simple warmth in line with your feelings.";
-	            } else {
+	            } else if ($standingPromptMode === 'entry') {
 	                $cleanedSceneDesc = implode(" and ", $orderedActorList) . " are in an intimate starting stance before anything has been accepted. Nothing sexual has happened yet; the NPC must decide whether to accept or refuse.";
+	            } else if ($standingPromptMode === 'breather') {
+	                $cleanedSceneDesc = implode(" and ", $orderedActorList) . " remain together in the same ongoing intimate encounter during a standing or idle pause. Sexual activity already happened in this scene; this is a breather between acts, not a new scene. Preserve the established consent and relationship state.";
+	            } else {
+	                $cleanedSceneDesc = implode(" and ", $orderedActorList) . " remain together in the same active scene during a standing or idle beat. This is a continuation, not a new scene entry. Preserve the current acceptance or refusal state and do not restart the opening decision.";
 	            }
 	            $storedSceneDesc = $cleanedSceneDesc;
 	        }
@@ -960,6 +1008,12 @@ class NsfwOstimHandler {
             // Track this NPC's specific role in the scene
             $storeIntimacy["my_role_tags"] = $actorRoles[$storeActor] ?? [];
             $storeIntimacy["is_active_participant"] = ($storeActor === $primaryPartner);
+            // If a scene begins directly in affection or sex, the opening standing
+            // decision was already bypassed by a real scene stage. Consume the entry
+            // opportunity so a later return to tier 0 cannot claim this is the start.
+            if (!$isStandingPromptBeat) {
+                $storeIntimacy["standing_intro_shown_thread"] = $sceneThreadKey;
+            }
             updateIntimacyForActor($storeActor, $storeIntimacy);
         }
 
@@ -1102,9 +1156,13 @@ class NsfwOstimHandler {
             self::suppressHistoricContextForCurrentRequest("tier0 standing scene");
             $standPartners = array_filter($orderedActorList, function($a) { return $a !== $GLOBALS["PLAYER_NAME"]; });
             $standPartnerStr = implode(" and ", $standPartners);
-            $standingCueText = trim((string)getGlobalPrompt('standing_scene'));
-            if ($standingCueText === '') {
-                $standingCueText = "This is a standing/intro scene with #PRIMARY_PARTNER#. Nothing physical has happened yet: no touching, kissing, hugging, undressing, sex, pleasure, friction, penetration, or moaning. React only to presence, eye contact, anticipation, refusal, or conversation. Do not claim contact unless the current scene description or player dialogue explicitly says it happened.";
+            if ($standingPromptMode === 'ongoing') {
+                $standingCueText = "This is a later standing/idle beat in the SAME active scene with #PRIMARY_PARTNER#, not a new scene entry. Preserve the NPC's existing acceptance or refusal state. Do not repeat the opening decision and do not claim a new physical act unless the current scene description or player dialogue reports one.";
+            } else {
+                $standingCueText = trim((string)getGlobalPrompt('standing_scene'));
+                if ($standingCueText === '') {
+                    $standingCueText = "This is a standing/intro scene with #PRIMARY_PARTNER#. Nothing physical has happened yet: no touching, kissing, hugging, undressing, sex, pleasure, friction, penetration, or moaning. React only to presence, eye contact, anticipation, refusal, or conversation. Do not claim contact unless the current scene description or player dialogue explicitly says it happened.";
+                }
             }
             $standingCueText = str_replace(['#PRIMARY_PARTNER#', '#NPC_NAME#', '#PLAYER_NAME#'], [$standPartnerStr, $standPartnerStr, $GLOBALS["PLAYER_NAME"] ?? "the player"], $standingCueText);
             $standingPrompt = "<standing_scene_prompt>\n"
@@ -1206,6 +1264,27 @@ class NsfwOstimHandler {
             && !_getNsfwSetting('NSFW_SCENE_SPEAK_ON_SCENE_CHANGE', true)) {
             $GLOBALS["AIAGENTNSFW_FORCE_STOP"] = true;
             error_log("[AIAGENTNSFW] Scene-change response suppressed (Respond to Scene/Position Changes off); state processed silently");
+        }
+
+        // RAPID POSITION-CHANGE PACING: every distinct OStim animation ID must update the
+        // authoritative scene state above, but it must not also enqueue another model/TTS
+        // line immediately. COOLDOWN_SEX_SCENE is the single player-scene speech cadence.
+        // Opening consent/decision turns always speak; orgasm/end turns use separate routes.
+        if (empty($GLOBALS["AIAGENTNSFW_FORCE_STOP"])) {
+            $sceneSpeechCooldown = max(0, (int)_getNsfwSetting('COOLDOWN_SEX_SCENE', 15));
+            $sceneSpeechClock = sys_get_temp_dir() . "/nsfw_scene_speech_" . md5($sceneThreadKey) . ".txt";
+            $lastSceneSpeech = (int)(@file_get_contents($sceneSpeechClock) ?: 0);
+            if (!aiagentNsfwSceneSpeechCadenceAllows(
+                $lastSceneSpeech,
+                time(),
+                $sceneSpeechCooldown,
+                $anyActorNeedsTierPrompt
+            )) {
+                $GLOBALS["AIAGENTNSFW_FORCE_STOP"] = true;
+                error_log("[AIAGENTNSFW] Rapid scene-change speech suppressed by {$sceneSpeechCooldown}s cadence; state processed silently");
+            } else {
+                @file_put_contents($sceneSpeechClock, time(), LOCK_EX);
+            }
         }
 
 	        error_log("[AIAGENTNSFW] Scene processed: $sexSceneName | Actors: " . implode(",", $orderedActorList) . " | Primary: " . ($primaryPartner ?? "none") . " | Desc: $cleanedSceneDesc | FORCE_STOP=" . ($GLOBALS["AIAGENTNSFW_FORCE_STOP"] ? "Y" : "N"));
@@ -1923,6 +2002,9 @@ class NsfwOstimHandler {
         @unlink(sys_get_temp_dir() . "/nsfw_scene_active.txt");
         @unlink(sys_get_temp_dir() . "/nsfw_player_scene_active.txt");
         @unlink(sys_get_temp_dir() . "/nsfw_scene_last_hash.txt");
+        foreach (glob(sys_get_temp_dir() . "/nsfw_scene_speech_*.txt") ?: [] as $sceneSpeechClock) {
+            @unlink($sceneSpeechClock);
+        }
         $sceneEndedTime = time();
         @file_put_contents(sys_get_temp_dir() . "/nsfw_scene_ended.txt", $sceneEndedTime);
         // Stamp the PLAYER-specific ended marker ONLY when the player was actually in this scene.
@@ -2179,6 +2261,7 @@ class NsfwOstimHandler {
                 "is_naked" => 0,  // Reset clothing state - NPC is dressed after scene
                 "scene_phase" => null,
                 "tier_prompt_sent" => null,
+	                "standing_intro_shown_thread" => null,
 	                "cached_tier_prompt" => "",
 	                "current_scene_desc" => null,
 	                "current_scene_thread_key" => null,
@@ -2244,6 +2327,7 @@ class NsfwOstimHandler {
             "is_naked" => 0,  // Reset clothing state - NPC is dressed after scene
             "scene_phase" => null,
             "tier_prompt_sent" => null,
+	            "standing_intro_shown_thread" => null,
 	            "cached_tier_prompt" => "",
 	            "current_scene_desc" => null,
 	            "current_scene_thread_key" => null,

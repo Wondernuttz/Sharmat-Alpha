@@ -1726,15 +1726,24 @@ if ($scenePhase === "affection") {
     if ($affTier <= 0) {
         $affTag = "standing_scene";
         $GLOBALS["AIAGENTNSFW_STANDING_ONLY"] = true;
-        if (!empty($isProstitute) && !empty($intimacyStatus["payment_confirmed"])) {
+        if ($sexUnderwayForGuard) {
+            $affGuide = "You are in a standing/idle pause within the SAME ongoing intimate encounter with {$affPartner}. Sexual activity already happened in this scene. This is a breather between acts, not a new scene: preserve established consent, relationship state, and memory of what just occurred. Do not restart introductions, negotiation, or the opening acceptance/refusal decision.";
+            $standingResponseInstruction = "For this reply, give exactly one short in-character breather, afterglow, closeness, or anticipation line. Do not claim this is a new encounter and do not say that nothing has happened.";
+        } else if (!$isStandingIntroSceneForGuard) {
+            $affGuide = "You are in a later standing/idle beat within the SAME active scene with {$affPartner}. This is not a new scene entry. Preserve the existing acceptance or refusal state and continue from it. Do not repeat introductions, payment negotiation, or the opening acceptance/refusal decision. Do not invent a new physical act unless the current scene data or player dialogue reports one.";
+            $standingResponseInstruction = "For this reply, give exactly one short continuation line consistent with the existing scene state. Do not repeat the scene-entry decision.";
+        } else if (!empty($isProstitute) && !empty($intimacyStatus["payment_confirmed"])) {
             // Already PAID - do NOT make her re-negotiate price. She's settled and waiting to begin.
             $affGuide = "You are in a standing/intro scene with {$affPartner}. Payment is already settled - do NOT bring up your price, fees, or gold, and do not re-negotiate. Nothing physical has happened YET, but you are paid and ready: you may START the service yourself right now - pick the act and use the matching action (MakeLove / GiveOralSex / StartAnalSex / StartBoobjob / Masturbate). Do not just wait. Do not describe the act as already happening - choose the action to begin it.";
+            $standingResponseInstruction = "For this reply, give exactly one short non-explicit standing/intro line. Do not use active-sex words like thrusting, filling, deep, stroking, cock, pussy, orgasm, or climax.";
         } else if (!empty($isProstitute)) {
             $affGuide = "You are in a standing/intro scene with {$affPartner}. This is a prostitution negotiation or transaction beat, not active sex. No physical contact has happened yet: no touching, kissing, undressing, penetration, oral sex, climax, or moaning. Discuss payment, terms, willingness, boundaries, or whether the job is accepted. Do not describe sex as happening yet.";
+            $standingResponseInstruction = "For this reply, give exactly one short non-explicit standing/intro line. Do not use active-sex words like thrusting, filling, deep, stroking, cock, pussy, orgasm, or climax.";
         } else {
             $affGuide = "You are in a standing/intro scene with {$affPartner}. Nothing physical has happened yet: no touching, kissing, hugging, undressing, sex, pleasure, friction, penetration, oral sex, climax, or moaning. This is not active sex. React only to presence, eye contact, waiting, deciding, boundaries, consent, intoxication, refusal, or conversation. Do not claim contact unless the current scene data or player dialogue explicitly says it happened.";
+            $standingResponseInstruction = "For this reply, give exactly one short non-explicit standing/intro line. Do not use active-sex words like thrusting, filling, deep, stroking, cock, pussy, orgasm, or climax.";
         }
-        $GLOBALS["AIAGENTNSFW_SCENE_CUE_OVERRIDE"] = "<standing_scene_instruction>\n{$affGuide}\n\nFor this reply, give exactly one short non-explicit standing/intro line. Do not use active-sex words like thrusting, filling, deep, stroking, cock, pussy, orgasm, or climax.\n</standing_scene_instruction> " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
+        $GLOBALS["AIAGENTNSFW_SCENE_CUE_OVERRIDE"] = "<standing_scene_instruction>\n{$affGuide}\n\n{$standingResponseInstruction}\n</standing_scene_instruction> " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
         $GLOBALS["AIAGENTNSFW_SCENE_PLAYER_REQUEST_OVERRIDE"] = "";
     } else {
         $affTag = ($affTier == 1) ? "affection_scene" : "romantic_scene";
