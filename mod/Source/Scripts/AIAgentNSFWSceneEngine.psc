@@ -385,7 +385,7 @@ int Function StartOStimScene(Actor[] actors, string sceneAct = "", bool allowRol
     ; Affection/service staples stay furniture-free (their pinned OARE scenes are ground scenes).
     bool npcOnlyThread = actors.Find(Game.GetPlayer()) < 0
     ObjectReference npcFurnRef = None
-    string scene = ""
+    string sceneName = ""
     if npcOnlyThread && !OStimActKeepsInitiatorOrder(sceneAct)
         ObjectReference[] furnCands = OFurniture.FindFurniture(actors.Length, actors[0], 1000.0, 96.0)
         string furnTagCSV = OStimSceneTagForAct(sceneAct)
@@ -406,7 +406,7 @@ int Function StartOStimScene(Actor[] actors, string sceneAct = "", bool allowRol
                         endif
                         if fScene != ""
                             npcFurnRef = cand
-                            scene = fScene
+                            sceneName = fScene
                         endif
                     endif
                 endif
@@ -415,32 +415,32 @@ int Function StartOStimScene(Actor[] actors, string sceneAct = "", bool allowRol
             fPass += 1
         endwhile
     endif
-    if scene == ""
+    if sceneName == ""
         string actionCSV = OStimActionCSVForAct(sceneAct)
         if actionCSV != ""
-            scene = OLibrary.GetRandomSceneWithAnyActionCSV(actors, actionCSV)
+            sceneName = OLibrary.GetRandomSceneWithAnyActionCSV(actors, actionCSV)
         endif
     endif
-    if scene == ""
+    if sceneName == ""
         string tagCSV = OStimSceneTagForAct(sceneAct)
         if tagCSV != ""
-            scene = OLibrary.GetRandomSceneWithAnySceneTagCSV(actors, tagCSV)
+            sceneName = OLibrary.GetRandomSceneWithAnySceneTagCSV(actors, tagCSV)
         endif
     endif
-    if scene == ""
-        scene = OStimExactSceneForAct(sceneAct) ; affection acts pin their OARE staple, never a random scene
+    if sceneName == ""
+        sceneName = OStimExactSceneForAct(sceneAct) ; affection acts pin their OARE staple, never a random scene
     endif
-    if scene == ""
-        scene = OLibrary.GetRandomScene(actors) ; fallback: any valid scene for this actor set
+    if sceneName == ""
+        sceneName = OLibrary.GetRandomScene(actors) ; fallback: any valid scene for this actor set
     endif
     int builderID = OThreadBuilder.Create(actors)
-    if scene != ""
-        OThreadBuilder.SetStartingAnimation(builderID, scene)
+    if sceneName != ""
+        OThreadBuilder.SetStartingAnimation(builderID, sceneName)
     endif
     if npcOnlyThread
         if npcFurnRef != None
             OThreadBuilder.SetFurniture(builderID, npcFurnRef)
-            Debug.Trace("[CHIM-NSFW SceneEngine] NPC-only thread: pinned " + OFurniture.GetFurnitureType(npcFurnRef) + " furniture with matching scene " + scene + " (" + RosterNames(actors) + ")")
+            Debug.Trace("[CHIM-NSFW SceneEngine] NPC-only thread: pinned " + OFurniture.GetFurnitureType(npcFurnRef) + " furniture with matching scene " + sceneName + " (" + RosterNames(actors) + ")")
         else
             OThreadBuilder.NoFurniture(builderID)
             Debug.Trace("[CHIM-NSFW SceneEngine] NPC-only thread: no furniture with usable animations nearby - ground scene (" + RosterNames(actors) + ")")
@@ -474,26 +474,26 @@ bool Function ShiftOStimSceneToAct(int threadID, string sceneAct) global
     if actors.Length < 1
         return false
     endif
-    string scene = ""
+    string sceneName = ""
     string actionCSV = OStimActionCSVForAct(sceneAct)
     if actionCSV != ""
-        scene = OLibrary.GetRandomSceneWithAnyActionCSV(actors, actionCSV)
+        sceneName = OLibrary.GetRandomSceneWithAnyActionCSV(actors, actionCSV)
     endif
-    if scene == ""
+    if sceneName == ""
         string tagCSV = OStimSceneTagForAct(sceneAct)
         if tagCSV != ""
-            scene = OLibrary.GetRandomSceneWithAnySceneTagCSV(actors, tagCSV)
+            sceneName = OLibrary.GetRandomSceneWithAnySceneTagCSV(actors, tagCSV)
         endif
     endif
-    if scene == "" && actors.Length == 2
-        scene = OStimExactSceneForAct(sceneAct) ; e.g. shift a hug to hand-holding (tagged only "oare")
+    if sceneName == "" && actors.Length == 2
+        sceneName = OStimExactSceneForAct(sceneAct) ; e.g. shift a hug to hand-holding (tagged only "oare")
     endif
-    if scene == ""
+    if sceneName == ""
         Debug.Trace("[CHIM-NSFW SceneEngine] OStim shift: no scene matched act=" + sceneAct + " - leaving current scene")
         return false
     endif
-    Debug.Trace("[CHIM-NSFW SceneEngine] OStim shift: thread " + threadID + " -> " + scene + " (act=" + sceneAct + ")")
-    OThread.WarpTo(threadID, scene, true)
+    Debug.Trace("[CHIM-NSFW SceneEngine] OStim shift: thread " + threadID + " -> " + sceneName + " (act=" + sceneAct + ")")
+    OThread.WarpTo(threadID, sceneName, true)
     return true
 EndFunction
 

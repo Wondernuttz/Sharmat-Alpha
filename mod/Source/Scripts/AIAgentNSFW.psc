@@ -1003,6 +1003,9 @@ function DoRegister()
 		UnRegisterForModEvent("CBPCPlayerGenitalCollisionWithFemaleEvent")
 		UnRegisterForModEvent("CBPCPlayerGenitalCollisionWithMaleEvent")
 	EndIf
+	
+	; If Ostim scene not initiated by NPC via AI action, this is never inited
+	noFacialExpressionsFaction = Game.GetFormFromFile(0xD92, "OStim.esp") as Faction ; SexCommand mouth-wait relies on this
 
 EndFunction
 
@@ -4700,7 +4703,11 @@ function FastRemoveClothes(Actor npc)
 				isHeadItem=false;
 			endif
 			
-			if !isHeadItem
+			; Slot 50 = 0x00100000. SLot 50 is used by default for CBBE 3BA SMP
+			bool isSlot50 = (Math.LogicalAnd(slotMask, 0x00100000) != 0)
+
+			if !isHeadItem && !isSlot50
+				Debug.Trace("[CHIM NSFW] Unequiping " + armorItem.GetName() + " " + armorItem.GetFormId() + " " + armorItem.GetSlotMask())
 				npc.UnequipItem(armorItem, false, false)
 			endif
 		endif
