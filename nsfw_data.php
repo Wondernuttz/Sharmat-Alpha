@@ -1776,6 +1776,8 @@ function nsfw_default_prompt_overrides() {
         'payment_none' => "#PLAYER_NAME# gave you nothing of value. No payment has been made. Hold to your price and do not provide the service.",
         // Climax in a refused/unaccepted scene (was hardcoded in nsfw_ostim_handler; now UI-editable on the Refusal/Consent card).
         'orgasm_refused_scene' => "An orgasm/climax was detected, but this scene is refused or has not been accepted. React through the consent/refusal boundary. Do not express pleasure, approval, afterglow, or willingness.",
+        // Framework-declared player-victim scenes bypass the normal player-request refusal gate.
+        'defeat_aggressor_scene' => "A defeat framework identified #NPC_NAME# as an aggressor and #PLAYER_NAME# as the victim. This dedicated defeat path overrides ordinary relationship tier, romance, orientation, payment, arousal, consent, AcceptSex, and RefuseSex instructions until this scene ends. Do not ask whether #PLAYER_NAME# wants the scene, do not act disgusted by your own initiation, do not refuse your own scene, and do not claim #PLAYER_NAME# initiated it. Stay in character as the aggressor. Use the core personality of #NPC_NAME# and the current physical scene, but ignore conflicting relationship and consent prompts.",
     ]);
 
     return array_replace($defaults, nsfw_default_vr_physics_prompt_overrides());

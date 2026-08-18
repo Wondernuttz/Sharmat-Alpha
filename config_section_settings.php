@@ -559,14 +559,6 @@
             <div id="slaverySettingsContent" class="collapsible-content" style="display: none; padding: 20px; background: #1C1A24; border: 1px solid #3A3545; border-top: none; border-radius: 0 0 8px 8px;">
                 <p class="legend" style="margin-bottom: 15px;">Player-only mechanics for slave idles and hostile slave poisoning. These settings do not go to the language model as prompt text.</p>
 
-                <div class="settings-checkbox-group">
-                    <label for="defeatAutoEnslave">
-                        <input type="checkbox" id="defeatAutoEnslave" name="NSFW_DEFEAT_AUTO_ENSLAVE" checked>
-                        <span>Defeated Enemies Become Slaves</span>
-                    </label>
-                    <p class="legend">Requires Acheron (Simple Defeat). When you defeat a hostile named NPC in combat, SHARMAT automatically marks them as your slave - the same as ticking the slave checkbox on their NPC Settings - and the full slavery system (tiers, speak styles, freedom flow) takes over. Generic unnamed mobs are skipped. Uncheck to keep enslavement fully manual.</p>
-                </div>
-
                 <h3 style="margin: 5px 0 15px; color: #FDF5D0; font-size: 16px; animation: subPulse 3s ease-in-out infinite alternate;">Slave Idles</h3>
                 <div class="settings-checkbox-group">
                     <label for="slaveryIdlesEnabled">

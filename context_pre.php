@@ -356,9 +356,18 @@ if (isset($GLOBALS["HERIKA_PERS"]) && ($_wdWindowActive || ($_inSexScene && func
     $__promptStateChanged = true;
 }
 
+// A framework-declared player-victim scene gets its own prompt route. Do not place SHARMAT relationship,
+// romance, prostitute, or slave overhead in front of the aggressor prompt. Those blocks contain normal-scene
+// refusal and payment instructions that directly conflict with the framework role assignment.
+$__intimacyPromptState = $__promptState["aiagent_nsfw_intimacy_data"] ?? [];
+$__frameworkDefeatPathActive = is_array($__intimacyPromptState)
+    && !empty($__intimacyPromptState["framework_forced_scene"])
+    && !empty($__intimacyPromptState["scene_player_is_victim"])
+    && !empty($__intimacyPromptState["scene_actor_is_aggressor"]);
+
 // Persistent SHARMAT relationship/role overhead. These are injected before scene/tier/intoxication prompts so
-// current relationship and checked slave/prostitute status color every model turn without changing gates/tools.
-if (isset($GLOBALS["HERIKA_PERS"]) && class_exists('NsfwRelationship')) {
+// current relationship and checked slave/prostitute status color ordinary model turns without changing gates/tools.
+if (isset($GLOBALS["HERIKA_PERS"]) && class_exists('NsfwRelationship') && !$__frameworkDefeatPathActive) {
     $__roleOverheadBlocks = [];
     if (method_exists('NsfwRelationship', 'getRelationshipOverhead')) {
         $__relationshipOverhead = NsfwRelationship::getRelationshipOverhead($actorName, $GLOBALS['PLAYER_NAME'] ?? 'Player');
@@ -381,6 +390,8 @@ if (isset($GLOBALS["HERIKA_PERS"]) && class_exists('NsfwRelationship')) {
     if (!empty($__roleOverheadBlocks)) {
         $GLOBALS["HERIKA_PERS"] = implode("\n\n", $__roleOverheadBlocks) . "\n\n" . $GLOBALS["HERIKA_PERS"];
     }
+} elseif ($__frameworkDefeatPathActive) {
+    error_log("[AIAGENTNSFW] Dedicated defeat path active for {$actorName}; SHARMAT relationship and role overhead excluded");
 }
 
 // Real-drinks-only mode: the model must know Drink/Toast are flavor, or it keeps "drinking" in

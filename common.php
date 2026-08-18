@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . "/open_mode_policy.php";  // Pure Open Mode state/prompt policy (unit-testable without CHIM bootstrap)
+require_once __DIR__ . "/scene_role_policy.php"; // Pure SexLab victim/aggressor role policy
 require_once __DIR__ . "/../../lib/chat_helper_functions.php";
 require_once __DIR__ . "/nsfw_data.php";  // NsfwNpcData class - MUST be loaded first (functions.php uses it on include)
 require_once __DIR__ . "/helpers.php";  // Helper functions (isSexDisposalEnabled, etc.) - separated from function definitions
@@ -1532,7 +1533,7 @@ function aiagentNsfwMaybeTriggerWhiskeyDick($actorName, $inSexScene) {
     }
     // Whiskey dick is a MALE-PLAYER mechanic (user directive 2026-06-29): a female player has no schlong to fail.
     // PLAYER_SEX: 0 = male, 1 = female. Skip entirely for a female player so the window/notification never fire.
-    if ((int)($GLOBALS['PLAYER_SEX'] ?? 0) === 1) {
+    if (!aiagentNsfwPlayerHasSchlong()) {
         return false;
     }
     $status = getIntimacyForActor($actorName);
@@ -1776,7 +1777,7 @@ function aiagentNsfwEmitWitnessLine($witnessType, $victimNpc, $playerName) {
 // as the in-scene path, but fires on the drink itself with an immediate notification.
 function aiagentNsfwMaybeTriggerWhiskeyDickOnDrink($stage) {
     if (!(function_exists('_getNsfwSetting') && _getNsfwSetting('WHISKEY_DICK_ENABLED', false))) { return false; }
-    if ((int)($GLOBALS['PLAYER_SEX'] ?? 0) === 1) { return false; }                 // female player: no schlong to fail
+    if (!aiagentNsfwPlayerHasSchlong()) { return false; }                         // no schlong to fail
     if (function_exists('aiagentNsfwWhiskeyDickActive') && aiagentNsfwWhiskeyDickActive()) { return true; } // window already open
     $chance = function_exists('aiagentNsfwWhiskeyDickChance') ? (int)aiagentNsfwWhiskeyDickChance((int)$stage) : 0;
     if ($chance <= 0) { return false; }                                             // below the drink threshold (stage < 3)
@@ -1949,6 +1950,28 @@ function aiagentNsfwRuntimeStateSet($bucket, $key, $value, $ttlSeconds = 3600) {
     $state[$bucket][strtolower(trim((string)$key))] = ['ts' => $now, 'ttl' => max(60, (int)$ttlSeconds), 'v' => $value];
     _aiagentNsfwRuntimeState($state);
 }
+
+// Apply the last body report from the game to every request. Vanilla sex drives
+// gender/orientation. OStim/SOS anatomy separately drives genital references.
+function aiagentNsfwApplyPlayerBodyGlobals() {
+    $body = aiagentNsfwRuntimeStateGet('player', 'body');
+    if (!is_array($body) || !array_key_exists('sex', $body)) { return; }
+
+    $sex = ((int)$body['sex'] === 1) ? 1 : 0;
+    $GLOBALS['PLAYER_SEX'] = $sex;
+    $GLOBALS['PLAYER_GENDER'] = $sex === 1 ? 'female' : 'male';
+    $GLOBALS['PLAYER_HAS_SCHLONG'] = !empty($body['has_schlong']);
+}
+
+function aiagentNsfwPlayerHasSchlong() {
+    if (array_key_exists('PLAYER_HAS_SCHLONG', $GLOBALS)) {
+        return !empty($GLOBALS['PLAYER_HAS_SCHLONG']);
+    }
+    // Legacy fallback before the first report arrives.
+    return (int)($GLOBALS['PLAYER_SEX'] ?? 0) === 0;
+}
+
+aiagentNsfwApplyPlayerBodyGlobals();
 
 // Full reset (game load / new session): wipe the runtime-state row and the contact ledger row.
 // Goes through the writers where possible so in-request static caches stay coherent.

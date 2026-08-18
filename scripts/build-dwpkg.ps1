@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$GamePackagePath,
-    [string]$OutputPath
+    [string]$OutputPath,
+    [string[]]$AdditionalServerFiles = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,16 +31,32 @@ $serverStage = Join-Path $stageRoot 'server'
 try {
     [System.IO.Directory]::CreateDirectory($serverStage) | Out-Null
 
-    $trackedFiles = git -C $repoRoot ls-files
+    $trackedFiles = @(git -C $repoRoot ls-files)
     if ($LASTEXITCODE -ne 0) {
         throw 'Could not enumerate tracked SHARMAT files.'
+    }
+    foreach ($relative in $AdditionalServerFiles) {
+        if ([string]::IsNullOrWhiteSpace($relative) -or [System.IO.Path]::IsPathRooted($relative)) {
+            throw "Additional server file must be a repository-relative path: $relative"
+        }
+        $candidate = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $relative))
+        $repoPrefix = $repoRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+        if (-not $candidate.StartsWith($repoPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            throw "Additional server file is missing or outside the repository: $relative"
+        }
+        $normalizedRelative = $candidate.Substring($repoPrefix.Length).Replace('\', '/')
+        if ($trackedFiles -notcontains $normalizedRelative) {
+            $trackedFiles += $normalizedRelative
+        }
     }
     foreach ($relative in $trackedFiles) {
         $normalized = $relative.Replace('\', '/')
         if ($normalized -eq '.gitignore' -or
             $normalized -eq 'dwemer-package.json' -or
             $normalized.StartsWith('mod/') -or
-            $normalized.StartsWith('scripts/')) {
+            $normalized.StartsWith('scripts/') -or
+            $normalized.StartsWith('tests/')) {
             continue
         }
         $source = Join-Path $repoRoot $relative

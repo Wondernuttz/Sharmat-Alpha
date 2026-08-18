@@ -30,6 +30,7 @@
     require_once $enginePath . "lib" . DIRECTORY_SEPARATOR . "lazy_xml.php";
     require_once __DIR__ . "/nsfw_data.php";
     require_once __DIR__ . "/sharmat_reset.php";
+    require_once __DIR__ . "/sharmat_updater_lib.php";
 
     // Global DB object
     $db            = new sql();
@@ -114,6 +115,8 @@
         handleLoadPromptSettings();
     } elseif ($action === 'savePromptSettings') {
         handleSavePromptSettings();
+    } elseif ($action === 'loadDefeatDiagnostics') {
+        handleLoadDefeatDiagnostics();
     } elseif ($action === 'saveRelTypes') {
         handleSaveRelTypes();
     } elseif ($action === 'getBatchNpcList') {
@@ -872,38 +875,50 @@ SQL;
         exit;
     }
 
-    // ---- Self-update from the SHARMAT GitHub repo (server ext files only; game mod files excluded) ----
-    function _sharmatUpdateHttpGet($url) {
-        $headers = ['User-Agent: SHARMAT-updater', 'Accept: application/vnd.github+json'];
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_TIMEOUT => 90,
-            CURLOPT_HTTPHEADER => $headers,
-        ]);
-        $body = curl_exec($ch);
-        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        return [$code, $body];
+    function _sharmatDefeatDiagnosticEntry($state, $key)
+    {
+        $entry = $state['defeat_diagnostics'][$key] ?? null;
+        if (!is_array($entry)) {
+            return null;
+        }
+        $timestamp = (int)($entry['ts'] ?? 0);
+        $ttl = max(60, (int)($entry['ttl'] ?? 604800));
+        if ($timestamp <= 0 || (time() - $timestamp) > $ttl) {
+            return null;
+        }
+        $value = $entry['v'] ?? null;
+        return is_array($value) ? $value : null;
     }
 
-    function handleSharmatCheckUpdate() {
+    function handleLoadDefeatDiagnostics()
+    {
         try {
-            list($code, $body) = _sharmatUpdateHttpGet('https://api.github.com/repos/Wondernuttz/Sharmat-Alpha/commits/main');
-            if ($code !== 200) { throw new Exception("GitHub API HTTP {$code}"); }
-            $data = json_decode($body, true);
-            $latest = (string)($data['sha'] ?? '');
-            if ($latest === '') { throw new Exception('No commit in GitHub response'); }
-            $row = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id='sharmat_installed_commit'");
-            $installed = (string)($row['value'] ?? '');
+            $runtimeState = [];
+            $runtimeRow = $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_runtime_state'");
+            if ($runtimeRow && !empty($runtimeRow['value'])) {
+                $decoded = json_decode($runtimeRow['value'], true);
+                if (is_array($decoded)) {
+                    $runtimeState = $decoded;
+                }
+            }
+
+            $autoEnslave = true;
+            $settingsRow = $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_settings'");
+            if ($settingsRow && !empty($settingsRow['value'])) {
+                $settings = json_decode($settingsRow['value'], true);
+                if (is_array($settings) && array_key_exists('NSFW_DEFEAT_AUTO_ENSLAVE', $settings)) {
+                    $autoEnslave = (bool)$settings['NSFW_DEFEAT_AUTO_ENSLAVE'];
+                }
+            }
+
             echo json_encode([
                 'success' => true,
-                'latest' => substr($latest, 0, 9),
-                'latest_date' => (string)($data['commit']['committer']['date'] ?? ''),
-                'latest_message' => substr((string)($data['commit']['message'] ?? ''), 0, 140),
-                'installed' => $installed !== '' ? substr($installed, 0, 9) : '',
-                'update_available' => ($installed === '' || $installed !== $latest),
+                'data' => [
+                    'auto_enslave_enabled' => $autoEnslave,
+                    'last_forced_scene' => _sharmatDefeatDiagnosticEntry($runtimeState, 'last_forced_scene'),
+                    'last_enemy_defeat' => _sharmatDefeatDiagnosticEntry($runtimeState, 'last_enemy_defeat'),
+                    'server_time' => date(DATE_ATOM),
+                ],
             ]);
         } catch (Exception $e) {
             echo json_encode(['success' => false, 'error' => $e->getMessage()]);
@@ -911,91 +926,115 @@ SQL;
         exit;
     }
 
-    function _sharmatBackupDir($src, $dst, &$failed) {
-        if (!is_dir($dst) && !@mkdir($dst, 0775, true)) { $failed[] = $dst; return; }
-        foreach (scandir($src) as $it) {
-            if ($it === '.' || $it === '..') { continue; }
-            $s = $src . '/' . $it;
-            $d = $dst . '/' . $it;
-            if (is_dir($s)) { _sharmatBackupDir($s, $d, $failed); }
-            elseif (!@copy($s, $d)) { $failed[] = $d; }
-        }
-    }
+    // ---- Self-update from the SHARMAT GitHub repo, including the matching game mod ----
 
-    function _sharmatUpdateSync($src, $dst, $rel, $skipTop, $preserve, &$copied, &$failed) {
-        foreach (scandir($src) as $it) {
-            if ($it === '.' || $it === '..') { continue; }
-            $relPath = ($rel === '') ? $it : $rel . '/' . $it;
-            if ($rel === '' && in_array($it, $skipTop, true)) { continue; }
-            $s = $src . '/' . $it;
-            $d = $dst . '/' . $it;
-            if (is_dir($s)) {
-                if (!is_dir($d) && !@mkdir($d, 0775, true)) { $failed[] = $relPath; continue; }
-                _sharmatUpdateSync($s, $d, $relPath, $skipTop, $preserve, $copied, $failed);
-            } else {
-                // local conf survives updates; everything else is repo-authoritative
-                if (in_array($relPath, $preserve, true) && file_exists($d)) { continue; }
-                if (@copy($s, $d)) { $copied++; continue; }
-                // Overwrite blocked (file owned by another user): REPLACING only needs write on
-                // the directory - write a temp sibling and rename it over the target.
-                $tmp = $dst . '/.sharmat_tmp_' . basename($d);
-                if (@copy($s, $tmp) && @rename($tmp, $d)) { $copied++; } else { @unlink($tmp); $failed[] = $relPath; }
-            }
+    function handleSharmatCheckUpdate() {
+        try {
+            [$latest, $data] = _sharmatResolveLatestCommit();
+            $row = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id='sharmat_installed_commit'");
+            $installed = _sharmatNormalizeCommitSha($row['value'] ?? '');
+            echo json_encode([
+                'success' => true,
+                'latest' => substr($latest, 0, 9),
+                'latest_date' => (string)($data['commit']['committer']['date'] ?? ''),
+                'latest_message' => substr((string)($data['commit']['message'] ?? ''), 0, 140),
+                'installed' => $installed !== '' ? substr($installed, 0, 9) : '',
+                'update_available' => ($installed === '' || $installed !== $latest),
+                'repair_available' => true,
+            ]);
+        } catch (Throwable $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
+        exit;
     }
 
     function handleSharmatRunUpdate() {
         @set_time_limit(300);
+        header('Content-Type: application/json; charset=UTF-8');
         try {
-            list($code, $body) = _sharmatUpdateHttpGet('https://api.github.com/repos/Wondernuttz/Sharmat-Alpha/commits/main');
-            if ($code !== 200) { throw new Exception("GitHub API HTTP {$code}"); }
-            $latest = (string)(json_decode($body, true)['sha'] ?? '');
-            if ($latest === '') { throw new Exception('Could not resolve latest commit'); }
+            _sharmatValidateUpdateRequest(
+                $_SERVER['REQUEST_METHOD'] ?? '',
+                $_SERVER['HTTP_X_SHARMAT_UPDATE'] ?? ''
+            );
+        } catch (Throwable $requestError) {
+            $isPost = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? '')) === 'POST';
+            http_response_code($isPost ? 403 : 405);
+            if (!$isPost) { header('Allow: POST'); }
+            echo json_encode(['success' => false, 'error' => $requestError->getMessage(), 'hint' => 'Reload the SHARMAT page and use its Update or Repair button.']);
+            exit;
+        }
 
-            list($zcode, $zipBody) = _sharmatUpdateHttpGet('https://api.github.com/repos/Wondernuttz/Sharmat-Alpha/zipball/main');
-            if ($zcode !== 200 || strlen($zipBody) < 1000) { throw new Exception("Repo download failed (HTTP {$zcode})"); }
-            $tmpZip = tempnam(sys_get_temp_dir(), 'sharmat_up') . '.zip';
-            file_put_contents($tmpZip, $zipBody);
-            $extractDir = sys_get_temp_dir() . '/sharmat_update_' . getmypid();
-            $za = new ZipArchive();
-            if ($za->open($tmpZip) !== true) { throw new Exception('Could not open downloaded zip'); }
-            $za->extractTo($extractDir);
-            $za->close();
-            @unlink($tmpZip);
-            $roots = glob($extractDir . '/*', GLOB_ONLYDIR);
-            if (empty($roots)) { throw new Exception('Downloaded zip was empty'); }
-            $srcRoot = $roots[0];
-
-            // Backup lives OUTSIDE ext/ - a copy inside ext/ would be double-loaded by the hook scanner
+        $workspace = null;
+        $stageDir = null;
+        $operationLock = null;
+        $activated = false;
+        $commitRecorded = false;
+        try {
             $extDir = __DIR__;
-            $backupDir = dirname(dirname(dirname($extDir))) . '/sharmat_backups/aiagent_nsfw_' . date('Ymd_His');
-            $backupFailed = [];
-            _sharmatBackupDir($extDir, $backupDir, $backupFailed);
+            $backupBase = _sharmatResolveBackupBase($extDir);
+            $operationLock = _sharmatAcquireOperationLock($backupBase, true);
 
-            $copied = 0;
-            $failed = [];
-            // 2026-07-06: 'mod' is no longer skipped - the updater now syncs the repo's game-mod folder
-            // onto the server so the "Download Game Mod" button always serves the version matching the
-            // installed server code. The game still never loads from here; testers install the download.
-            $skipTop = ['.git', '.github', '.gitignore'];
-            $preserve = ['conf/conf.php', 'cmd/conf/conf.php'];
-            _sharmatUpdateSync($srcRoot, $extDir, '', $skipTop, $preserve, $copied, $failed);
+            [$latest] = _sharmatResolveLatestCommit();
+            $workspace = _sharmatCreateUniqueDirectory(sys_get_temp_dir(), 'sharmat-update-', 0700);
+            $repository = _sharmatDownloadExactRepository($latest, $workspace);
+            $sourceRoot = $repository['root'];
+            $mutablePaths = $repository['mutable_paths'];
 
-            if (empty($failed)) {
-                $GLOBALS['db']->upsertRow('conf_opts', ['id' => 'sharmat_installed_commit', 'value' => $latest], "id='sharmat_installed_commit'");
-                $GLOBALS['db']->upsertRow('conf_opts', ['id' => 'sharmat_installed_at', 'value' => date('Y-m-d H:i')], "id='sharmat_installed_at'");
+            $stageDir = _sharmatCreateUniqueDirectory($backupBase, '.staging-aiagent_nsfw-', 0775);
+            $backupDir = _sharmatUniqueDestination($backupBase, 'aiagent_nsfw_auto_' . date('Ymd_His') . '_');
+            $stageStats = _sharmatPrepareStagedInstall($sourceRoot, $stageDir, $extDir, $mutablePaths);
+
+            // Both paths are on the same server filesystem. The live directory is moved intact to
+            // the backup before the complete staged tree is activated. A failed activation rolls back.
+            _sharmatSwapStagedInstall($stageDir, $extDir, $backupDir);
+            $stageDir = null;
+            $activated = true;
+            _sharmatMarkAutomaticBackup($backupDir);
+            $retention = _sharmatPruneAutomaticBackups($backupBase, 5);
+            if ($retention['failed'] > 0) {
+                error_log('[SHARMAT updater] Could not prune ' . $retention['failed'] . ' expired automatic backup(s)');
             }
+
+            // Never claim a commit until the complete package has passed validation and been activated.
+            if ($GLOBALS['db']->upsertRow('conf_opts', ['id' => 'sharmat_installed_at', 'value' => date('Y-m-d H:i')], "id='sharmat_installed_at'") !== true) {
+                throw new RuntimeException('SHARMAT was installed, but the server could not record the update time');
+            }
+            if ($GLOBALS['db']->upsertRow('conf_opts', ['id' => 'sharmat_installed_commit', 'value' => $latest], "id='sharmat_installed_commit'") !== true) {
+                throw new RuntimeException('SHARMAT was installed, but the server could not record the installed commit');
+            }
+            $commitRecorded = true;
             echo json_encode([
                 'success' => true,
                 'commit' => substr($latest, 0, 9),
-                'files_updated' => $copied,
-                'failed' => array_slice($failed, 0, 10),
-                'failed_count' => count($failed),
-                'backup' => (empty($backupFailed) ? $backupDir : 'backup incomplete: ' . $backupDir),
-                'hint' => empty($failed) ? '' : 'One-time fix: double-click "Fix Sharmat Permissions.bat" from the download (or run  sudo update_perms  in the Dwemer terminal - password is dwemer, typing shows nothing), then press Update Now again.',
+                'files_updated' => $stageStats['copied'],
+                'files_preserved' => $stageStats['preserved'],
+                'php_files_linted' => $stageStats['php_linted'],
+                'failed' => [],
+                'failed_count' => 0,
+                'backup' => $backupDir,
+                'backups_pruned' => $retention['removed'],
+                'hint' => $stageStats['group_failed'] > 0
+                    ? $stageStats['group_failed'] . ' staged path(s) kept their existing group because the web user could not change it.'
+                    : '',
             ]);
-        } catch (Exception $e) {
-            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        } catch (Throwable $e) {
+            $hint = 'No files were activated and no commit was recorded. If this is a permissions error, run sudo update_perms in the Dwemer terminal and try again.';
+            if ($activated && !$commitRecorded) {
+                $hint = 'The new files were activated, but the update status was not recorded. Fix the database error, then run Update Now again.';
+            }
+            echo json_encode([
+                'success' => false,
+                'error' => $e->getMessage(),
+                'hint' => $hint,
+            ]);
+        } finally {
+            if ($stageDir !== null && !_sharmatRemoveTree($stageDir)) {
+                error_log('[SHARMAT updater] Could not clean staged directory ' . $stageDir);
+            }
+            if ($workspace !== null && !_sharmatRemoveTree($workspace)) {
+                error_log('[SHARMAT updater] Could not clean temporary directory ' . $workspace);
+            }
+            _sharmatReleaseOperationLock($operationLock);
         }
         exit;
     }
@@ -1005,64 +1044,76 @@ SQL;
     // testers grab it here instead of navigating GitHub. Zip root = the mod contents, so the zip
     // installs directly as a mod in MO2/Vortex. If the local mod/ has not been synced yet (updaters
     // older than 2026-07-06 skipped it), fall back to pulling the mod/ subtree straight from GitHub.
-    function _sharmatZipModDir($modDir, $tmpZip) {
-        $za = new ZipArchive();
-        if ($za->open($tmpZip, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) { return 0; }
-        $added = 0;
-        $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($modDir, FilesystemIterator::SKIP_DOTS));
-        foreach ($it as $file) {
-            if (!$file->isFile()) { continue; }
-            $rel = str_replace('\\', '/', substr($file->getPathname(), strlen($modDir) + 1));
-            if (preg_match('/\.bak|meta\.ini$/i', $rel)) { continue; }   // never ship editor/backup junk
-            $za->addFile($file->getPathname(), $rel);
-            $added++;
-        }
-        $za->close();
-        return $added;
-    }
-
     function handleSharmatDownloadMod() {
         @set_time_limit(120);
         while (ob_get_level()) { @ob_end_clean(); }
-        $tmpZip = tempnam(sys_get_temp_dir(), 'sharmat_modzip') . '.zip';
-        $added = 0;
-        $modDir = __DIR__ . '/mod';
-        if (is_dir($modDir)) {
-            $added = _sharmatZipModDir($modDir, $tmpZip);
-        }
-        if ($added === 0) {
-            // Local mod/ not synced yet - pull the repo zipball and re-pack just its mod/ subtree.
+        $workspace = null;
+        $operationLock = null;
+        try {
+            $backupBase = _sharmatResolveBackupBase(__DIR__);
+            $operationLock = _sharmatAcquireOperationLock($backupBase, false);
+            $workspace = _sharmatCreateUniqueDirectory(sys_get_temp_dir(), 'sharmat-mod-download-', 0700);
+            $downloadZip = $workspace . DIRECTORY_SEPARATOR . 'SHARMAT-GameMod.zip';
+            $added = 0;
+            $localError = '';
+
+            // Fast path: serve the mod already synced beside the installed server plugin, but only
+            // when the server and game-mod version markers describe one coherent package.
             try {
-                list($zcode, $zipBody) = _sharmatUpdateHttpGet('https://api.github.com/repos/Wondernuttz/Sharmat-Alpha/zipball/main');
-                if ($zcode === 200 && strlen($zipBody) > 1000) {
-                    $tmpSrc = tempnam(sys_get_temp_dir(), 'sharmat_modsrc') . '.zip';
-                    file_put_contents($tmpSrc, $zipBody);
-                    $extractDir = sys_get_temp_dir() . '/sharmat_moddl_' . getmypid();
-                    $za = new ZipArchive();
-                    if ($za->open($tmpSrc) === true) {
-                        $za->extractTo($extractDir);
-                        $za->close();
-                        @unlink($tmpSrc);
-                        $roots = glob($extractDir . '/*', GLOB_ONLYDIR);
-                        if (!empty($roots) && is_dir($roots[0] . '/mod')) {
-                            $added = _sharmatZipModDir($roots[0] . '/mod', $tmpZip);
-                        }
+                _sharmatValidatePackageRoot(__DIR__);
+                $added = _sharmatBuildModArchive(__DIR__ . DIRECTORY_SEPARATOR . 'mod', $downloadZip);
+            } catch (Throwable $error) {
+                $localError = $error->getMessage();
+                @unlink($downloadZip);
+            }
+
+            if ($added === 0) {
+                // Older installations may not have a local mod/. Download and validate one exact
+                // installed commit, then re-pack only its mod subtree. Fall back to main only when
+                // no valid installed commit has ever been recorded.
+                try {
+                    $installedRow = $GLOBALS['db']->fetchOne("SELECT value FROM conf_opts WHERE id='sharmat_installed_commit'");
+                    $targetCommit = _sharmatNormalizeCommitSha($installedRow['value'] ?? '');
+                    if ($targetCommit === '') {
+                        [$targetCommit] = _sharmatResolveLatestCommit();
                     }
+                    $repository = _sharmatDownloadExactRepository($targetCommit, $workspace);
+                    $added = _sharmatBuildModArchive(
+                        $repository['root'] . DIRECTORY_SEPARATOR . 'mod',
+                        $downloadZip
+                    );
+                } catch (Throwable $fallbackError) {
+                    $prefix = $localError !== '' ? "Local game mod unavailable ({$localError}). " : '';
+                    throw new RuntimeException($prefix . 'GitHub fallback failed: ' . $fallbackError->getMessage());
                 }
-            } catch (Exception $e) { /* fall through to the 404 below */ }
+            }
+
+            $downloadSize = @filesize($downloadZip);
+            if ($added < 1 || $downloadSize === false || $downloadSize < 100) {
+                throw new RuntimeException('Game-mod archive was not created completely');
+            }
+
+            header('Content-Type: application/zip');
+            header('Content-Disposition: attachment; filename="SHARMAT-GameMod.zip"');
+            header('Content-Length: ' . $downloadSize);
+            header('Cache-Control: no-store');
+            $streamed = readfile($downloadZip);
+            if ($streamed === false || $streamed !== $downloadSize) {
+                error_log('[SHARMAT updater] Game-mod download stream ended early');
+            }
+        } catch (Throwable $error) {
+            if (!headers_sent()) {
+                header('HTTP/1.1 503 Service Unavailable');
+                header('Content-Type: text/plain; charset=UTF-8');
+                header('Cache-Control: no-store');
+            }
+            echo 'Game mod files are not available: ' . $error->getMessage();
+        } finally {
+            if ($workspace !== null && !_sharmatRemoveTree($workspace)) {
+                error_log('[SHARMAT updater] Could not clean game-mod download workspace ' . $workspace);
+            }
+            _sharmatReleaseOperationLock($operationLock);
         }
-        if ($added === 0) {
-            @unlink($tmpZip);
-            header('HTTP/1.1 404 Not Found');
-            header('Content-Type: text/plain');
-            echo "Game mod files not available yet. Press Update Now first, then try again.";
-            exit;
-        }
-        header('Content-Type: application/zip');
-        header('Content-Disposition: attachment; filename="SHARMAT-GameMod.zip"');
-        header('Content-Length: ' . filesize($tmpZip));
-        readfile($tmpZip);
-        @unlink($tmpZip);
         exit;
     }
 
@@ -3180,6 +3231,7 @@ PROMPT;
                 'refusal_voice_guard' => $_POST['refusal_voice_guard'] ?? '',
                 'consent_decision_prompt' => $_POST['consent_decision_prompt'] ?? '',
                 'orgasm_refused_scene' => $_POST['orgasm_refused_scene'] ?? '',
+                'defeat_aggressor_scene' => $_POST['defeat_aggressor_scene'] ?? '',
                 'enable_non_consent_prompt' => isset($_POST['enable_non_consent_prompt']) ? (bool)$_POST['enable_non_consent_prompt'] : true,
                 'witness_forcing' => $_POST['witness_forcing'] ?? '',
                 'witness_breast_grab' => $_POST['witness_breast_grab'] ?? '',
@@ -3349,6 +3401,7 @@ PROMPT;
             'refusal_voice_guard' => 'Set aside any flirtatious, seductive, teasing, or playful manner - a refusal is a real boundary, not part of the scene. Do not word it as if you are enjoying it, giving in, or as if the encounter is continuing.',
             'consent_decision_prompt' => 'Right now you must decide and you MUST act with a tool. If you are willing, call the AcceptSex action - the scene will NOT continue until you do. A warm, fond, devoted, or bonded relationship normally accepts. If you genuinely do not want this, call the RefuseSex action instead. Do not stay silent and do not refuse by default - you must choose AcceptSex or RefuseSex.',
             'orgasm_refused_scene' => 'An orgasm/climax was detected, but this scene is refused or has not been accepted. React through the consent/refusal boundary. Do not express pleasure, approval, afterglow, or willingness.',
+            'defeat_aggressor_scene' => 'A defeat framework identified #NPC_NAME# as an aggressor and #PLAYER_NAME# as the victim. This dedicated defeat path overrides ordinary relationship tier, romance, orientation, payment, arousal, consent, AcceptSex, and RefuseSex instructions until this scene ends. Do not ask whether #PLAYER_NAME# wants the scene, do not act disgusted by your own initiation, do not refuse your own scene, and do not claim #PLAYER_NAME# initiated it. Stay in character as the aggressor. Use the core personality of #NPC_NAME# and the current physical scene, but ignore conflicting relationship and consent prompts.',
             'enable_non_consent_prompt' => true,
             'witness_forcing' => '#PLAYER_NAME# is sexually forcing themselves on #NPC_NAME#.',
             'witness_breast_grab' => '#PLAYER_NAME# is sexually assaulting #NPC_NAME# - grabbing breast.',
@@ -5415,6 +5468,23 @@ PROMPT;
             color: #D8C8E8;
         }
 
+        .defeat-diagnostic-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+        }
+
+        .defeat-diagnostic-card {
+            margin-bottom: 0;
+        }
+
+        .defeat-diagnostic-empty,
+        .defeat-diagnostic-data,
+        .defeat-diagnostic-setting {
+            font-size: 13px;
+            line-height: 1.7;
+        }
+
         .section-unsaved-indicator {
             align-items: center;
             align-self: center;
@@ -6135,12 +6205,21 @@ PROMPT;
             return null;
         }
 
-        function showNsfwSectionUnsaved(host) {
-            if (!host || host.querySelector(':scope > .section-unsaved-indicator')) return;
+        function showNsfwSectionUnsaved(host, group) {
+            if (!host) return;
+            const tabRoot = host.closest('.tab-content') || document;
+            const existingBadge = tabRoot.querySelector('.section-unsaved-indicator');
+            if (existingBadge) {
+                const groups = new Set((existingBadge.dataset.nsfwUnsavedGroups || '').split(',').filter(Boolean));
+                groups.add(group);
+                existingBadge.dataset.nsfwUnsavedGroups = Array.from(groups).join(',');
+                return;
+            }
             host.classList.add('has-unsaved-changes');
 
             const badge = document.createElement('span');
             badge.className = 'section-unsaved-indicator';
+            badge.dataset.nsfwUnsavedGroups = group;
             badge.setAttribute('role', 'status');
             badge.setAttribute('aria-live', 'polite');
             badge.textContent = 'You Have Unsaved Changes';
@@ -6156,10 +6235,21 @@ PROMPT;
         }
 
         function clearNsfwSectionIndicators(group) {
-            const groupRoot = document.getElementById(group);
-            if (!groupRoot) return;
-            groupRoot.querySelectorAll('.section-unsaved-indicator').forEach(badge => badge.remove());
-            groupRoot.querySelectorAll('.has-unsaved-changes').forEach(host => host.classList.remove('has-unsaved-changes'));
+            document.querySelectorAll('.section-unsaved-indicator').forEach(badge => {
+                const groups = (badge.dataset.nsfwUnsavedGroups || '').split(',').filter(Boolean);
+                if (!groups.includes(group)) return;
+                const remainingGroups = groups.filter(candidate => candidate !== group);
+                if (remainingGroups.length) {
+                    badge.dataset.nsfwUnsavedGroups = remainingGroups.join(',');
+                    return;
+                }
+                const host = badge.parentElement;
+                badge.remove();
+                if (host) host.classList.remove('has-unsaved-changes');
+            });
+            document.querySelectorAll('.has-unsaved-changes').forEach(host => {
+                if (!host.querySelector(':scope > .section-unsaved-indicator')) host.classList.remove('has-unsaved-changes');
+            });
         }
 
         function markNsfwChangesUnsaved(group, control) {
@@ -6167,13 +6257,14 @@ PROMPT;
             nsfwUnsavedGeneration[group]++;
             nsfwUnsavedGroups.add(group);
             const groupRoot = document.getElementById(group);
-            if (control && groupRoot) {
-                showNsfwSectionUnsaved(findNsfwUnsavedSectionHost(control, groupRoot));
+            const visualRoot = control ? (control.closest('.tab-content') || groupRoot) : groupRoot;
+            if (control && visualRoot) {
+                showNsfwSectionUnsaved(findNsfwUnsavedSectionHost(control, visualRoot) || visualRoot, group);
             } else if (groupRoot) {
                 groupRoot.querySelectorAll('.collapsible-header').forEach(header => {
-                    if (header.querySelector('.section-save-btn')) showNsfwSectionUnsaved(header);
+                    if (header.querySelector('.section-save-btn')) showNsfwSectionUnsaved(header, group);
                 });
-                groupRoot.querySelectorAll('[data-unsaved-section]').forEach(showNsfwSectionUnsaved);
+                groupRoot.querySelectorAll('[data-unsaved-section]').forEach(host => showNsfwSectionUnsaved(host, group));
             }
         }
 
@@ -6187,8 +6278,10 @@ PROMPT;
             const control = event.target;
             if (!control || !control.matches || !control.matches('input, select, textarea')) return;
             if (control.disabled || control.readOnly || control.type === 'hidden') return;
+            const explicitGroup = control.closest('[data-nsfw-group]');
             const groupContainer = control.closest('#settings, #prompts');
-            if (groupContainer) markNsfwChangesUnsaved(groupContainer.id, control);
+            const group = explicitGroup ? explicitGroup.getAttribute('data-nsfw-group') : (groupContainer ? groupContainer.id : '');
+            if (group) markNsfwChangesUnsaved(group, control);
         }
 
         document.addEventListener('input', trackNsfwControlChange);
@@ -6321,6 +6414,14 @@ PROMPT;
             setTimeout(() => {
                 alertEl.style.display = 'none';
             }, 10000);
+        }
+
+        function nsfwSaveAlertId(group, type, context) {
+            if (context === 'defeat') {
+                return type === 'success' ? 'defeatSuccessAlert' : 'defeatErrorAlert';
+            }
+            if (group === 'prompts') return type === 'success' ? 'promptsSuccessAlert' : 'promptsErrorAlert';
+            return type === 'success' ? 'settingsSuccessAlert' : 'settingsErrorAlert';
         }
 
         // Load scenes
@@ -7497,7 +7598,10 @@ PROMPT;
                             groupSceneTickSecondsEl.value = groupSceneTickSeconds;
                             elSet('groupSceneTickSecondsValue', 'textContent', (groupSceneTickSeconds == 0) ? 'Global Speech Cooldown' : groupSceneTickSeconds + ' sec');
                         }
-                        if (document.getElementById('defeatAutoEnslave')) elSet('defeatAutoEnslave', 'checked', data.data.NSFW_DEFEAT_AUTO_ENSLAVE !== false);  // Default true
+                        if (document.getElementById('defeatAutoEnslave')) {
+                            elSet('defeatAutoEnslave', 'checked', data.data.NSFW_DEFEAT_AUTO_ENSLAVE !== false);  // Default true
+                            updateDefeatAutoEnslaveControlState();
+                        }
                         if (document.getElementById('oslaSyncEnabled')) elSet('oslaSyncEnabled', 'checked', data.data.NSFW_OSLA_SYNC_ENABLED !== false);  // Default true
                         const prostitutePaymentWindow = data.data.PROSTITUTE_PAYMENT_WINDOW_MINUTES !== undefined ? data.data.PROSTITUTE_PAYMENT_WINDOW_MINUTES : 20;
                         const prostitutePaymentWindowEl = document.getElementById('prostitutePaymentWindow');
@@ -7725,7 +7829,7 @@ PROMPT;
             el[prop] = val;
         }
 
-        function saveSettings() {
+        function saveSettings(alertContext = '') {
             const settingsSaveGeneration = nsfwUnsavedGeneration.settings;
             const formData = new FormData();
             // Null-safe reads: one missing element (version-skewed section HTML) must not
@@ -7919,13 +8023,13 @@ PROMPT;
             .then(data => {
                 if (data.success) {
                     markNsfwChangesSaved('settings', settingsSaveGeneration);
-                    showAlert('settingsSuccessAlert', data.message, 'success');
+                    showAlert(nsfwSaveAlertId('settings', 'success', alertContext), data.message, 'success');
                 } else {
-                    showAlert('settingsErrorAlert', 'Error saving settings: ' + data.error, 'error');
+                    showAlert(nsfwSaveAlertId('settings', 'error', alertContext), 'Error saving settings: ' + data.error, 'error');
                 }
             })
             .catch(error => {
-                showAlert('settingsErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
+                showAlert(nsfwSaveAlertId('settings', 'error', alertContext), 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
             });
         }
 
@@ -10843,6 +10947,7 @@ PROMPT;
         refusal_voice_guard: 'Set aside any flirtatious, seductive, teasing, or playful manner - a refusal is a real boundary, not part of the scene. Do not word it as if you are enjoying it, giving in, or as if the encounter is continuing.',
         consent_decision_prompt: 'Right now you must decide and you MUST act with a tool. If you are willing, call the AcceptSex action - the scene will NOT continue until you do. A warm, fond, devoted, or bonded relationship normally accepts. If you genuinely do not want this, call the RefuseSex action instead. Do not stay silent and do not refuse by default - you must choose AcceptSex or RefuseSex.',
         orgasm_refused_scene: 'An orgasm/climax was detected, but this scene is refused or has not been accepted. React through the consent/refusal boundary. Do not express pleasure, approval, afterglow, or willingness.',
+        defeat_aggressor_scene: 'A defeat framework identified #NPC_NAME# as an aggressor and #PLAYER_NAME# as the victim. This dedicated defeat path overrides ordinary relationship tier, romance, orientation, payment, arousal, consent, AcceptSex, and RefuseSex instructions until this scene ends. Do not ask whether #PLAYER_NAME# wants the scene, do not act disgusted by your own initiation, do not refuse your own scene, and do not claim #PLAYER_NAME# initiated it. Stay in character as the aggressor. Use the core personality of #NPC_NAME# and the current physical scene, but ignore conflicting relationship and consent prompts.',
         enable_non_consent_prompt: true,
         witness_forcing: '#PLAYER_NAME# is sexually forcing themselves on #NPC_NAME#.',
         witness_breast_grab: '#PLAYER_NAME# is sexually assaulting #NPC_NAME# - grabbing breast.',
@@ -11215,6 +11320,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     setPromptValue('promptRefusalVoiceGuard', s.refusal_voice_guard, 'refusal_voice_guard');
                     setPromptValue('promptConsentDecision', s.consent_decision_prompt, 'consent_decision_prompt');
                     setPromptValue('promptOrgasmRefusedScene', s.orgasm_refused_scene, 'orgasm_refused_scene');
+                    setPromptValue('promptDefeatAggressorScene', s.defeat_aggressor_scene, 'defeat_aggressor_scene');
                     document.getElementById('enableNonConsentPrompt').checked = s.enable_non_consent_prompt !== false;
                     setPromptValue('promptWitnessForcing', s.witness_forcing, 'witness_forcing');
                     setPromptValue('promptWitnessBreastGrab', s.witness_breast_grab, 'witness_breast_grab');
@@ -11476,7 +11582,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         }
     }
 
-    function savePromptSettings() {
+    function savePromptSettings(alertContext = '') {
         const promptsSaveGeneration = nsfwUnsavedGeneration.prompts;
         const formData = new FormData();
 
@@ -11551,6 +11657,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('refusal_voice_guard', getVal('promptRefusalVoiceGuard'));
         formData.append('consent_decision_prompt', getVal('promptConsentDecision'));
         formData.append('orgasm_refused_scene', getVal('promptOrgasmRefusedScene'));
+        formData.append('defeat_aggressor_scene', getVal('promptDefeatAggressorScene'));
         formData.append('enable_non_consent_prompt', document.getElementById('enableNonConsentPrompt').checked ? '1' : '0');
         formData.append('witness_forcing', getVal('promptWitnessForcing'));
         formData.append('witness_breast_grab', getVal('promptWitnessBreastGrab'));
@@ -11793,14 +11900,14 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
             hideProcessing();
             if (result.success) {
                 markNsfwChangesSaved('prompts', promptsSaveGeneration);
-                showAlert('promptsSuccessAlert', 'Prompt settings saved successfully!', 'success');
+                showAlert(nsfwSaveAlertId('prompts', 'success', alertContext), 'Prompt settings saved successfully!', 'success');
             } else {
-                showAlert('promptsErrorAlert', 'Error: ' + (result.error || 'Unknown error'), 'error');
+                showAlert(nsfwSaveAlertId('prompts', 'error', alertContext), 'Error: ' + (result.error || 'Unknown error'), 'error');
             }
         })
         .catch(error => {
             hideProcessing();
-            showAlert('promptsErrorAlert', 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
+            showAlert(nsfwSaveAlertId('prompts', 'error', alertContext), 'Request or page error (' + (error && error.stack ? error.stack.split('\n')[1] || '' : '') + '): ' + error.message, 'error');
         });
     }
 
@@ -11869,6 +11976,7 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         resetVal('promptRefusalVoiceGuard', 'refusal_voice_guard');
         resetVal('promptConsentDecision', 'consent_decision_prompt');
         resetVal('promptOrgasmRefusedScene', 'orgasm_refused_scene');
+        resetVal('promptDefeatAggressorScene', 'defeat_aggressor_scene');
         resetVal('promptWitnessForcing', 'witness_forcing');
         resetVal('promptWitnessBreastGrab', 'witness_breast_grab');
         resetVal('promptWitnessBreastPlay', 'witness_breast_play');
@@ -12085,12 +12193,95 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         showAlert('promptsSuccessAlert', 'Prompts reset to defaults. Click Save to apply.', 'success');
     }
 
-    // Load prompt settings when switching to prompts tab
+    function setDefeatDiagnosticText(id, value) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = value;
+    }
+
+    function formatDefeatDiagnosticTime(value) {
+        if (!value) return 'Unknown';
+        const numeric = Number(value);
+        const date = Number.isFinite(numeric) && numeric > 0 ? new Date(numeric * 1000) : new Date(value);
+        return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+    }
+
+    function formatDefeatDiagnosticList(value) {
+        return Array.isArray(value) && value.length ? value.join(', ') : 'None';
+    }
+
+    function updateDefeatAutoEnslaveControlState() {
+        const toggle = document.getElementById('defeatAutoEnslave');
+        const state = document.getElementById('defeatAutoEnslaveControlState');
+        if (!toggle || !state) return;
+        state.textContent = toggle.checked ? 'ON' : 'OFF';
+        state.style.removeProperty('color');
+    }
+
+    function loadDefeatDiagnostics() {
+        setDefeatDiagnosticText('defeatDiagAutoEnslave', 'Checking...');
+        fetch('?action=loadDefeatDiagnostics')
+            .then(response => response.json())
+            .then(result => {
+                if (!result.success || !result.data) throw new Error(result.error || 'Diagnostics unavailable');
+                const data = result.data;
+                const autoEl = document.getElementById('defeatDiagAutoEnslave');
+                if (autoEl) {
+                    autoEl.textContent = data.auto_enslave_enabled ? 'ON' : 'OFF';
+                    autoEl.style.removeProperty('color');
+                }
+                const autoToggle = document.getElementById('defeatAutoEnslave');
+                if (autoToggle && !nsfwUnsavedGroups.has('settings')) {
+                    autoToggle.checked = !!data.auto_enslave_enabled;
+                }
+                updateDefeatAutoEnslaveControlState();
+
+                const scene = data.last_forced_scene;
+                const sceneEmpty = document.getElementById('defeatSceneDiagnosticEmpty');
+                const sceneData = document.getElementById('defeatSceneDiagnosticData');
+                if (scene) {
+                    if (sceneEmpty) sceneEmpty.style.display = 'none';
+                    if (sceneData) sceneData.style.display = 'block';
+                    setDefeatDiagnosticText('defeatDiagSceneTime', formatDefeatDiagnosticTime(scene.detected_at));
+                    setDefeatDiagnosticText('defeatDiagSceneSource', scene.source || 'SexLab victim metadata');
+                    const sceneLabel = [scene.scene_name, scene.stage].filter(Boolean).join(' / ');
+                    setDefeatDiagnosticText('defeatDiagSceneName', sceneLabel || 'Unknown');
+                    setDefeatDiagnosticText('defeatDiagVictims', formatDefeatDiagnosticList(scene.victims));
+                    setDefeatDiagnosticText('defeatDiagAggressors', formatDefeatDiagnosticList(scene.aggressors));
+                    setDefeatDiagnosticText('defeatDiagPlayerVictim', scene.player_is_victim ? 'YES' : 'NO');
+                    setDefeatDiagnosticText('defeatDiagBypass', scene.bypass_activated ? 'YES' : 'NO');
+                } else {
+                    if (sceneEmpty) sceneEmpty.style.display = 'block';
+                    if (sceneData) sceneData.style.display = 'none';
+                }
+
+                const enemy = data.last_enemy_defeat;
+                const enemyEmpty = document.getElementById('defeatEnemyDiagnosticEmpty');
+                const enemyData = document.getElementById('defeatEnemyDiagnosticData');
+                if (enemy) {
+                    if (enemyEmpty) enemyEmpty.style.display = 'none';
+                    if (enemyData) enemyData.style.display = 'block';
+                    setDefeatDiagnosticText('defeatDiagEnemyTime', formatDefeatDiagnosticTime(enemy.detected_at));
+                    setDefeatDiagnosticText('defeatDiagEnemyName', enemy.npc || 'Unknown');
+                    setDefeatDiagnosticText('defeatDiagEnemyResult', String(enemy.result || 'unknown').replace(/_/g, ' '));
+                } else {
+                    if (enemyEmpty) enemyEmpty.style.display = 'block';
+                    if (enemyData) enemyData.style.display = 'none';
+                }
+            })
+            .catch(error => {
+                setDefeatDiagnosticText('defeatDiagAutoEnslave', 'Unavailable');
+                showAlert('defeatErrorAlert', 'Could not load defeat diagnostics: ' + error.message, 'error');
+            });
+    }
+
+    // Load tab-specific state when switching tabs
     const originalSwitchTab = switchTab;
     switchTab = function(tabName) {
         originalSwitchTab(tabName);
-        if (tabName === 'prompts' && !nsfwUnsavedGroups.has('prompts')) {
-            loadPromptSettings();
+        if (tabName === 'prompts') {
+            if (!nsfwUnsavedGroups.has('prompts')) loadPromptSettings();
+            if (!nsfwUnsavedGroups.has('settings')) loadSettings();
+            loadDefeatDiagnostics();
         }
     };
 

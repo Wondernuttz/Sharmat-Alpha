@@ -1550,9 +1550,15 @@ class NsfwRelationship {
             }
 
             // ===== PLAYER BODY TYPE =====
-            // Tell the NPC what body parts the player has so dialogue matches reality
-            $playerBodyPart = ($playerGender === 'male') ? 'cock/penis' : 'pussy/vagina';
-            $lines[] = "{$playerName} has a {$playerBodyPart}.";
+            // Gender and anatomy are separate. The game reports vanilla sex plus OStim/SOS
+            // schlong state, so female players are not assigned a penis unless they have one.
+            if (function_exists('aiagentNsfwPlayerHasSchlong') && aiagentNsfwPlayerHasSchlong()) {
+                $lines[] = "{$playerName} has a cock/penis.";
+            } elseif ($playerGender === 'female') {
+                $lines[] = "{$playerName} has a pussy/vagina.";
+            } else {
+                $lines[] = "{$playerName} does not have a schlong.";
+            }
 
             // ===== RELATIONSHIP PREFERENCE =====
             $prefPrompts = [

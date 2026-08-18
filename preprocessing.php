@@ -43,6 +43,7 @@ $GLOBALS["external_fast_commands"][]="ext_nsfw_player_drink"; // player consumed
 $GLOBALS["external_fast_commands"][]="ext_nsfw_vampire";      // Papyrus reports an NPC's vampire race-keyword status (silent: store is_vampire)
 $GLOBALS["external_fast_commands"][]="ext_nsfw_defeat";       // Acheron defeat report -> auto-enslave (silent: set is_slave)
 $GLOBALS["external_fast_commands"][]="ext_nsfw_vrstatus";     // Pex platform report VRSTATUS^0|1 (silent: store is_vr; gates touch lanes)
+$GLOBALS["external_fast_commands"][]="ext_nsfw_player_body";  // Pex player sex + OStim/SOS anatomy report (silent prompt context)
 $GLOBALS["external_fast_commands"][]="_speech_abort";       // Client speech interrupts must not wait behind MAIN.
 // CONSENT BARK: the game fires this the instant a PLAYER scene turns explicit (tier 3). Registering it as a fast
 // command lets it BYPASS the MAIN semaphore so the accept/refuse decision resolves instantly. prerequest.php then
@@ -1052,6 +1053,24 @@ if (isset($GLOBALS["gameRequest"])) {
         }
     }
 
+    // PLAYER BODY REPORT: PLAYERBODY^<vanilla sex 0|1>^<has schlong 0|1>.
+    // Keep gender and anatomy separate so female players are not assigned a penis by
+    // the old male-default fallback, while OStim/SOS futa setups still report correctly.
+    if ($currentEvent === "ext_nsfw_player_body") {
+        $pbRaw = (string)($GLOBALS["gameRequest"][3] ?? '');
+        $pbParts = explode("^", $pbRaw);
+        if (count($pbParts) >= 3 && function_exists('aiagentNsfwRuntimeStateSet')) {
+            $pbSex = (trim((string)$pbParts[1]) === '1') ? 1 : 0;
+            $pbHasSchlong = (trim((string)$pbParts[2]) === '1') ? 1 : 0;
+            aiagentNsfwRuntimeStateSet('player', 'body', [
+                'sex' => $pbSex,
+                'gender' => $pbSex === 1 ? 'female' : 'male',
+                'has_schlong' => $pbHasSchlong
+            ], 31536000);
+            error_log("[AIAGENTNSFW] Player body reported by game: sex={$pbSex}, has_schlong={$pbHasSchlong}");
+        }
+    }
+
     // DEFEAT -> SLAVERY (feature 2026-07-17, user directive "Defeat should become checked slaves"):
     // Acheron (Simple Defeat) reports a hostile NPC the player defeated (payload "DEFEAT^<npc name>").
     // Sets the SAME is_slave flag as the NPC Settings checkbox, so the whole slavery system (tiers,
@@ -1059,16 +1078,36 @@ if (isset($GLOBALS["gameRequest"])) {
     // Children never; already-slaves untouched. Pex-side guards: player excluded, hostiles only,
     // generic non-unique non-agent mobs skipped (name-keyed data would mark every same-named mob).
     if ($currentEvent === "ext_nsfw_defeat") {
-        if (_getNsfwSetting('NSFW_DEFEAT_AUTO_ENSLAVE', true)) {
-            $dRaw = (string)($GLOBALS["gameRequest"][3] ?? '');
-            $dParts = explode("^", $dRaw);   // [0]=...DEFEAT (any context prefix lands here), [1]=npc name
-            $dName = isset($dParts[1]) ? trim($dParts[1]) : '';
-            if ($dName !== '' && function_exists('setNpcSlaveStatus')
-                && (!function_exists('aiagentNsfwIsChildNpc') || !aiagentNsfwIsChildNpc($dName))
-                && (!function_exists('isNpcSlave') || !isNpcSlave($dName))) {
-                setNpcSlaveStatus($dName, true);
-                error_log("[AIAGENTNSFW] DEFEAT ENSLAVE: {$dName} marked as slave (Acheron defeat by player)");
-            }
+        $dRaw = (string)($GLOBALS["gameRequest"][3] ?? '');
+        $dParts = explode("^", $dRaw);   // [0]=...DEFEAT (any context prefix lands here), [1]=npc name
+        $dName = isset($dParts[1]) ? trim($dParts[1]) : '';
+        $dEnabled = _getNsfwSetting('NSFW_DEFEAT_AUTO_ENSLAVE', true);
+        $dResult = 'ignored';
+
+        if ($dName === '') {
+            $dResult = 'missing_name';
+        } elseif (!$dEnabled) {
+            $dResult = 'disabled_by_setting';
+        } elseif (function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($dName)) {
+            $dResult = 'child_blocked';
+        } elseif (function_exists('isNpcSlave') && isNpcSlave($dName)) {
+            $dResult = 'already_slave';
+        } elseif (!function_exists('setNpcSlaveStatus')) {
+            $dResult = 'slave_handler_unavailable';
+        } else {
+            setNpcSlaveStatus($dName, true);
+            $dResult = 'marked_slave';
+            error_log("[AIAGENTNSFW] DEFEAT ENSLAVE: {$dName} marked as slave (Acheron defeat by player)");
+        }
+
+        if (function_exists('aiagentNsfwRuntimeStateSet')) {
+            aiagentNsfwRuntimeStateSet('defeat_diagnostics', 'last_enemy_defeat', [
+                'detected_at' => time(),
+                'source' => 'Acheron actor-defeated event',
+                'npc' => $dName,
+                'result' => $dResult,
+                'auto_enslave_enabled' => (bool)$dEnabled,
+            ], 604800);
         }
     }
 
@@ -1079,7 +1118,7 @@ if (isset($GLOBALS["gameRequest"])) {
     // model read a raw "VAMPIRE^Name^0" row as if it were lore. Purge prior rows on every request;
     // the current request's row is inserted after preprocessing and gets swept on the next one.
     try {
-        $GLOBALS["db"]->delete("eventlog", "type in ('ext_nsfw_vampire','ext_nsfw_physics_raw','physics_raw','ext_nsfw_player_drink','ext_nsfw_devices','ext_nsfw_defeat','ext_nsfw_vrstatus')");
+        $GLOBALS["db"]->delete("eventlog", "type in ('ext_nsfw_vampire','ext_nsfw_physics_raw','physics_raw','ext_nsfw_player_drink','ext_nsfw_devices','ext_nsfw_defeat','ext_nsfw_vrstatus','ext_nsfw_player_body')");
     } catch (Exception $e) { /* non-fatal */ }
 
     // BACKLOG FIX — Scene end early detection.
@@ -1669,7 +1708,7 @@ if (isset($GLOBALS["gameRequest"])) {
             $otherActors = [];
             $actorRoles = [];
             $activePartnerTags = [
-                'dom', 'sub', 'vaginal', 'anal', 'oral', 'handjob', 'blowjob',
+                'dom', 'sub', 'aggressor', 'victim', 'forced', 'vaginal', 'anal', 'oral', 'handjob', 'blowjob',
                 'cunnilingus', 'penetration', 'riding', 'missionary', 'doggystyle',
                 'cowgirl', 'reversecowgirl', 'prone', 'standing', 'sitting', 'facingaway'
             ];
@@ -2038,6 +2077,9 @@ if (isset($GLOBALS["gameRequest"])) {
             $platformState = function_exists('aiagentNsfwRuntimeStateGet')
                 ? aiagentNsfwRuntimeStateGet('platform', 'is_vr')
                 : null;
+            $playerBodyState = function_exists('aiagentNsfwRuntimeStateGet')
+                ? aiagentNsfwRuntimeStateGet('player', 'body')
+                : null;
             aiagentNsfwRuntimeStateClear();
             if (is_array($platformState) && array_key_exists('v', $platformState)
                 && function_exists('aiagentNsfwRuntimeStateSet')) {
@@ -2047,6 +2089,14 @@ if (isset($GLOBALS["gameRequest"])) {
                     ['v' => ((int)$platformState['v'] === 1 ? 1 : 0)],
                     31536000
                 );
+            }
+            if (is_array($playerBodyState) && array_key_exists('sex', $playerBodyState)
+                && function_exists('aiagentNsfwRuntimeStateSet')) {
+                aiagentNsfwRuntimeStateSet('player', 'body', [
+                    'sex' => ((int)$playerBodyState['sex'] === 1 ? 1 : 0),
+                    'gender' => ((int)$playerBodyState['sex'] === 1 ? 'female' : 'male'),
+                    'has_schlong' => !empty($playerBodyState['has_schlong']) ? 1 : 0
+                ], 31536000);
             }
         }
 
@@ -2071,6 +2121,10 @@ if (isset($GLOBALS["gameRequest"])) {
                         'had_sex_in_scene', false,
                         'refusal_expressed', false,
                         'forced_scene', false,
+                        'framework_forced_scene', false,
+                        'scene_player_is_victim', false,
+                        'scene_actor_is_aggressor', false,
+                        'scene_actor_is_victim', false,
                         'request_scene_stop', false,
                         'stop_command_sent', false,
                         'last_scene_stop_time', NULL,

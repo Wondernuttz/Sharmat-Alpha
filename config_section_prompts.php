@@ -1564,6 +1564,8 @@
                 </div>
             </div>
 
+<?php include __DIR__ . '/config_section_defeat.php'; ?>
+
             <!-- ============================================ -->
             <!-- SECTION 3B2: PROMISCUOUS (SLUT) GLOBAL -->
             <div style="margin-top: 15px;"></div>

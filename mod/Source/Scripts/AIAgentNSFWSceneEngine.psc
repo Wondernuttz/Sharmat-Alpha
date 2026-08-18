@@ -357,6 +357,7 @@ int Function StartOStimScene(Actor[] actors, string sceneAct = "", bool allowRol
     ; the player present (allowRoleSelect) go through SelectIndexAndSort, so the OStim MCM
     ; "select role" popups finally apply to SHARMAT starts too; joins/merges/restarts sort silently.
     ; If the installed OStim predates the sort API the length guard keeps the raw order.
+    Actor explicitDominant = None
     if actors.Length > 1 && !OStimActKeepsInitiatorOrder(sceneAct)
         Actor[] noDoms = PapyrusUtil.ActorArray(0)
         Actor[] sorted
@@ -366,8 +367,15 @@ int Function StartOStimScene(Actor[] actors, string sceneAct = "", bool allowRol
             sorted = OActorUtil.Sort(actors, noDoms, -1)
         endif
         if sorted.Length == actors.Length
-            Debug.Trace("[CHIM-NSFW SceneEngine] role sort: " + RosterNames(actors) + " -> " + RosterNames(sorted) + " (slot 0 = dom/male)")
+            Debug.Trace("[CHIM-NSFW SceneEngine] role sort: " + RosterNames(actors) + " -> " + RosterNames(sorted) + " (slot 0 = dominant/active)")
             actors = sorted
+            ; OStim's sorter obeys Player Always Dominant/Submissive and any role-selection popup,
+            ; but builder threads also carry an explicit dominant roster. Without setting it, some
+            ; OARE packs re-resolve the initiator as dominant after SHARMAT starts the scene. For a
+            ; two-actor sexual scene, the sorted first slot is the authoritative dominant actor.
+            if actors.Length == 2
+                explicitDominant = actors[0]
+            endif
         else
             Debug.Trace("[CHIM-NSFW SceneEngine] role sort UNAVAILABLE (OActorUtil returned " + sorted.Length + " of " + actors.Length + " actors - OStim too old?) - keeping raw order " + RosterNames(actors))
         endif
@@ -434,6 +442,12 @@ int Function StartOStimScene(Actor[] actors, string sceneAct = "", bool allowRol
         sceneName = OLibrary.GetRandomScene(actors) ; fallback: any valid scene for this actor set
     endif
     int builderID = OThreadBuilder.Create(actors)
+    if explicitDominant != None
+        Actor[] dominantActors = new Actor[1]
+        dominantActors[0] = explicitDominant
+        OThreadBuilder.SetDominantActors(builderID, dominantActors)
+        Debug.Trace("[CHIM-NSFW SceneEngine] explicit OStim dominant: " + explicitDominant.GetDisplayName())
+    endif
     if sceneName != ""
         OThreadBuilder.SetStartingAnimation(builderID, sceneName)
     endif
@@ -500,6 +514,25 @@ EndFunction
 ; ============================================================
 ; SEXLAB
 ; ============================================================
+Actor[] Function NormalizeSexLabActors(SexLabFramework slf, Actor[] actors) global
+    ; SexLab StartSex defines slot 0 as the passive position and its animation
+    ; registry generally expects female positions first. SHARMAT used to pass
+    ; [speaker, target] unchanged, which made the initiator accidentally decide
+    ; the passive/active assignment before SexLab selected an animation.
+    if slf == None || actors.Length < 2
+        return actors
+    endif
+
+    Actor[] sorted = slf.SortActors(actors, true)
+    if sorted.Length == actors.Length
+        Debug.Trace("[CHIM-NSFW SceneEngine] SexLab role sort: " + RosterNames(actors) + " -> " + RosterNames(sorted) + " (slot 0 = passive, female first)")
+        return sorted
+    endif
+
+    Debug.Trace("[CHIM-NSFW SceneEngine] SexLab role sort failed; keeping original roster " + RosterNames(actors))
+    return actors
+EndFunction
+
 bool Function StartOrJoinSexLab(Actor akSpeaker, Actor akTarget, bool bAllowJoin, string sceneAct = "") global
     SexLabFramework slf = GetSexLab()
     if slf == None
@@ -543,8 +576,10 @@ bool Function StartOrJoinSexLab(Actor akSpeaker, Actor akTarget, bool bAllowJoin
 EndFunction
 
 bool Function StartSexLabScene(SexLabFramework slf, Actor[] actors, string sceneAct = "") global
-    int males = CountMales(actors)
-    int females = actors.Length - males
+    actors = NormalizeSexLabActors(slf, actors)
+    int[] genders = slf.GenderCount(actors)
+    int males = genders[0]
+    int females = genders[1]
     sslBaseAnimation[] anims = slf.GetAnimationsByDefault(males, females) ; default baseline (always valid)
     string tags = SexLabTagsForAct(sceneAct)
     if tags != ""
@@ -606,6 +641,7 @@ bool Function ShiftSexLabScene(SexLabFramework slf, int threadID, string sceneAc
         return false
     endif
     Debug.Trace("[CHIM-NSFW SceneEngine] SexLab shift: thread " + threadID + " -> act=" + sceneAct + " (" + tagged.Length + " anims)")
+    actors = NormalizeSexLabActors(slf, actors)
     ctrl.EndAnimation(true)
     Utility.Wait(1.0)
     return slf.StartSex(actors, tagged) >= 0

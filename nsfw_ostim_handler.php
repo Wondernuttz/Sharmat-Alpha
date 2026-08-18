@@ -17,6 +17,7 @@
  *   NsfwOstimHandler::generateClimaxSpeech()   - Generate orgasm speech via LLM
  */
 require_once __DIR__ . "/scene_threads.php";
+require_once __DIR__ . "/scene_role_policy.php";
 
 class NsfwOstimHandler {
     private static function suppressHistoricContextForCurrentRequest($reason) {
@@ -386,7 +387,7 @@ class NsfwOstimHandler {
 	        // Determine primary partner from OStim role tags.
         // In group scenes, the partner interacting with the player has active sexual tags
         // (dom, sub, vaginal, anal, oral, etc). Observers/watchers have passive tags or none.
-        $activeSexTags = ['dom', 'sub', 'vaginal', 'anal', 'oral', 'handjob', 'blowjob',
+        $activeSexTags = ['dom', 'sub', 'aggressor', 'victim', 'forced', 'vaginal', 'anal', 'oral', 'handjob', 'blowjob',
                           'cunnilingus', 'penetration', 'riding', 'missionary', 'doggystyle',
                           'cowgirl', 'reversecowgirl', 'prone', 'standing'];
         $primaryPartner = null;
@@ -408,6 +409,39 @@ class NsfwOstimHandler {
         $GLOBALS["AIAGENTNSFW_SCENE_ACTORS"] = $orderedActorList;
         $GLOBALS["AIAGENTNSFW_RAW_SCENE_ACTOR_SLOTS"] = $rawActorList;
         $GLOBALS["AIAGENTNSFW_ACTOR_ROLES"] = $actorRoles;
+
+        $frameworkPlayerVictim = aiagentNsfwFrameworkPlayerIsVictim($actorRoles, $playerName);
+
+        // Keep one short-lived diagnostic snapshot for the Defeat tab. Forced-role tags are
+        // emitted by the SexLab hook, so this records what the game actually reported instead
+        // of inferring defeat from animation names or tags.
+        $frameworkVictims = [];
+        $frameworkAggressors = [];
+        foreach ($orderedActorList as $frameworkActorName) {
+            if (!aiagentNsfwActorHasSceneRole($actorRoles, $frameworkActorName, 'forced')) {
+                continue;
+            }
+            if (aiagentNsfwActorHasSceneRole($actorRoles, $frameworkActorName, 'victim')) {
+                $frameworkVictims[] = $frameworkActorName;
+            } elseif (aiagentNsfwActorHasSceneRole($actorRoles, $frameworkActorName, 'aggressor')) {
+                $frameworkAggressors[] = $frameworkActorName;
+            }
+        }
+        if ((!empty($frameworkVictims) || !empty($frameworkAggressors)) && function_exists('aiagentNsfwRuntimeStateSet')) {
+            aiagentNsfwRuntimeStateSet('defeat_diagnostics', 'last_forced_scene', [
+                'detected_at' => time(),
+                'source' => 'SexLab victim metadata',
+                'event' => (string)($GLOBALS['gameRequest'][0] ?? 'ext_nsfw_sexcene'),
+                'scene_name' => (string)$sexSceneName,
+                'stage' => (string)$sexStageName,
+                'player' => (string)$playerName,
+                'player_is_victim' => $frameworkPlayerVictim,
+                'victims' => array_values($frameworkVictims),
+                'aggressors' => array_values($frameworkAggressors),
+                'bypass_activated' => $frameworkPlayerVictim && !empty($frameworkAggressors),
+                'roles' => $actorRoles,
+            ], 604800);
+        }
 
         error_log("[AIAGENTNSFW] Scene actors: " . implode(", ", $orderedActorList) .
                   " | Primary partner: $primaryPartner" .
@@ -490,6 +524,11 @@ class NsfwOstimHandler {
 
 	        foreach ($orderedActorList as $actor) {
 	            $intimacyStatus = getIntimacyForActor($actor);
+	            $frameworkActorAggressor = aiagentNsfwFrameworkActorIsAggressor($actorRoles, $actor, $playerName);
+	            $intimacyStatus["framework_forced_scene"] = $frameworkPlayerVictim;
+	            $intimacyStatus["scene_player_is_victim"] = $frameworkPlayerVictim;
+	            $intimacyStatus["scene_actor_is_aggressor"] = $frameworkActorAggressor;
+	            $intimacyStatus["scene_actor_is_victim"] = aiagentNsfwActorHasSceneRole($actorRoles, $actor, 'victim');
 	            $priorAcceptedSex = !empty($intimacyStatus["accepted_sex"]);
 	            $priorAcceptTime = (int)($intimacyStatus["last_accept_sex_time"] ?? 0);
 	            $priorAcceptPartner = (string)($intimacyStatus["last_accept_sex_partner"] ?? ($intimacyStatus["sex_partner"] ?? ""));
@@ -687,7 +726,7 @@ class NsfwOstimHandler {
 	                    if ($isSlave) {
 	                        $intimacyStatus["scene_phase"] = "accepted";
 	                        error_log("[AIAGENTNSFW] Auto-accepting for $actor (slave) on scene start");
-	                    } else if ($isProstitute) {
+	                    } else if ($isProstitute && !$frameworkActorAggressor) {
 	                        // Paid status is authoritative from the durable ledger (survives the intimacy
 	                        // clobber race; consumed on player orgasm / window expiry). This is what lets a
 	                        // client who paid during negotiation start the scene without a bogus refusal.
@@ -717,7 +756,7 @@ class NsfwOstimHandler {
                     // Regular NPCs stay at tier_prompt only for standing/intro and actual sex.
                     // Tier 1/2 affection scenes stay context-only.
 
-                    if ($actor === $GLOBALS["HERIKA_NAME"] && $isProstitute && empty($intimacyStatus["payment_confirmed"])) {
+                    if ($actor === $GLOBALS["HERIKA_NAME"] && $isProstitute && !$frameworkActorAggressor && empty($intimacyStatus["payment_confirmed"])) {
                         // PROSTITUTES: Inject negotiation context with PRICE LIST.
                         // Regular NPC tier/type gates are owned by prerequest.php so one path decides consent.
                         $clientName = $GLOBALS["PLAYER_NAME"] ?? "client";
@@ -750,7 +789,8 @@ class NsfwOstimHandler {
                 $hasAcceptedAffection = !empty($intimacyStatus["accepted_affection"]);
                 $hasAcceptedSex = !empty($intimacyStatus["accepted_sex"]);
                 $isPrivilegedConsentPath = !empty($intimacyStatus["npc_is_slave"])
-                    || (!empty($intimacyStatus["npc_is_prostitute"]) && !empty($intimacyStatus["payment_confirmed"]));
+                    || (!empty($intimacyStatus["npc_is_prostitute"]) && !empty($intimacyStatus["payment_confirmed"]))
+                    || !empty($intimacyStatus["scene_actor_is_aggressor"]);
                 $isUnpaidProstituteTransaction = !empty($intimacyStatus["npc_is_prostitute"])
                     && !empty($intimacyStatus["is_transaction"])
                     && !empty($intimacyStatus["negotiation_phase"])
@@ -861,6 +901,26 @@ class NsfwOstimHandler {
 
                 // Update idle status for current stage
                 $intimacyStatus["scene_is_idle"] = $isNowIdle;
+            }
+
+            // A framework-declared aggressor initiated this encounter. This is not the ordinary
+            // player-request relationship gate: the NPC's own framework role is authoritative.
+            if ($frameworkActorAggressor) {
+                $intimacyStatus["scene_phase"] = "engaged";
+                $intimacyStatus["level"] = 2;
+                $intimacyStatus["accepted_sex"] = true;
+                $intimacyStatus["tier_prompt_sent"] = true;
+                $intimacyStatus["refusal_expressed"] = false;
+                $intimacyStatus["refused_until_scene_end"] = false;
+                $intimacyStatus["request_scene_stop"] = false;
+                $intimacyStatus["stop_command_sent"] = false;
+                $intimacyStatus["is_transaction"] = false;
+                $intimacyStatus["negotiation_phase"] = false;
+                if ($sceneTier >= 3) {
+                    $intimacyStatus["sex_started"] = true;
+                    $intimacyStatus["had_sex_in_scene"] = true;
+                }
+                error_log("[AIAGENTNSFW] Framework forced scene: {$actor} is aggressor, player is victim; ordinary relationship gate bypassed");
             }
 
             // Per-tick heartbeat for the PLAYER route. Player scenes tick (~every 2s) while live; if OStim's
@@ -2270,6 +2330,10 @@ class NsfwOstimHandler {
                 "had_sex_in_scene" => false,
                 "refusal_expressed" => false,
                 "forced_scene" => false,
+                "framework_forced_scene" => false,
+                "scene_player_is_victim" => false,
+                "scene_actor_is_aggressor" => false,
+                "scene_actor_is_victim" => false,
                 "request_scene_stop" => false,
                 "stop_command_sent" => false,
                 "last_scene_stop_time" => null,
@@ -2336,6 +2400,10 @@ class NsfwOstimHandler {
             "had_sex_in_scene" => false,
             "refusal_expressed" => false,
             "forced_scene" => false,
+            "framework_forced_scene" => false,
+            "scene_player_is_victim" => false,
+            "scene_actor_is_aggressor" => false,
+            "scene_actor_is_victim" => false,
             "request_scene_stop" => false,
             "stop_command_sent" => false,
             "last_scene_stop_time" => null,
@@ -2771,6 +2839,10 @@ class NsfwOstimHandler {
             $status["current_primary_partner"] = null;
             $status["is_active_participant"] = false;
             $status["had_sex_in_scene"] = false;
+            $status["framework_forced_scene"] = false;
+            $status["scene_player_is_victim"] = false;
+            $status["scene_actor_is_aggressor"] = false;
+            $status["scene_actor_is_victim"] = false;
             $status["is_transaction"] = false;
             $status["transaction_client"] = null;
             $status["negotiation_phase"] = false;

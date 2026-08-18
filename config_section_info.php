@@ -26,8 +26,8 @@
             <h3 class="info-subtitle">Updates</h3>
             <div class="info-box">
                 <p style="color: #B8A8C8; margin: 0 0 10px;">Pulls the latest SHARMAT server extension from GitHub. Your settings, prompts, and NPC profiles are kept (they live in the database), local conf files are preserved, and a file backup is taken first. The game never loads files from the server, so whenever a fix says it needs new GAME files, update first and then grab them with the Download Game Mod button.</p>
-                <button type="button" class="btn-primary" onclick="sharmatCheckUpdate()">Check for Updates</button>
-                <button type="button" class="btn-primary" id="sharmatRunUpdateBtn" style="display:none; background: #2A2435; color: #FDF5D0; border: 1px solid #FDF5D0; box-shadow: 0 0 10px rgba(255,200,90,0.45); text-shadow: 0 0 6px rgba(253,245,208,0.6);" onclick="sharmatRunUpdate()">Update Now</button>
+                <button type="button" class="btn-primary" id="sharmatCheckUpdateBtn" onclick="sharmatCheckUpdate()">Check for Updates</button>
+                <button type="button" class="btn-primary" id="sharmatRunUpdateBtn" style="display:inline-block; background: #2A2435; color: #FDF5D0; border: 1px solid #FDF5D0; box-shadow: 0 0 10px rgba(255,200,90,0.45); text-shadow: 0 0 6px rgba(253,245,208,0.6);" onclick="sharmatRunUpdate()">Repair / Reinstall</button>
                 <a class="btn-primary" href="?action=sharmatDownloadMod" style="display:inline-block; text-decoration:none;">Download Game Mod (zip)</a>
                 <p style="color: #9988BB; font-size: 11px; margin: 8px 0 0;">The zip installs directly as a mod in MO2/Vortex: add it (or extract over your existing SHARMAT mod, overwriting), then load a save. Only needed when a fix mentions new game/mod files - server-only fixes need just the update.</p>
                 <div id="sharmatUpdateStatus" style="margin-top: 10px; color: #B8A8C8;"></div>
@@ -38,26 +38,44 @@
                 st.textContent = 'Checking GitHub...';
                 fetch('?action=sharmatCheckUpdate').then(r => r.json()).then(d => {
                     if (!d.success) { st.textContent = 'Check failed: ' + d.error; return; }
+                    const runButton = document.getElementById('sharmatRunUpdateBtn');
                     if (d.update_available) {
                         st.textContent = 'Update available.';
-                        document.getElementById('sharmatRunUpdateBtn').style.display = 'inline-block';
+                        runButton.textContent = 'Update Now';
                     } else {
-                        st.textContent = 'Up to date.';
+                        st.textContent = 'Up to date. Repair / Reinstall remains available if files have drifted.';
+                        runButton.textContent = 'Repair / Reinstall';
                     }
                 }).catch(e => { st.textContent = 'Check failed: ' + e.message; });
             }
             function sharmatRunUpdate() {
-                if (!confirm('Update SHARMAT server files from GitHub now? Settings and prompts are kept; a file backup is taken first.')) return;
+                const runButton = document.getElementById('sharmatRunUpdateBtn');
+                const checkButton = document.getElementById('sharmatCheckUpdateBtn');
+                const operation = runButton.textContent.includes('Repair') ? 'Repair and reinstall' : 'Update';
+                if (!confirm(operation + ' SHARMAT server files from GitHub now? Settings and prompts are kept; a protected file backup is taken first.')) return;
                 const st = document.getElementById('sharmatUpdateStatus');
                 st.textContent = 'Downloading and applying update...';
-                fetch('?action=sharmatRunUpdate', { method: 'POST' }).then(r => r.json()).then(d => {
-                    if (!d.success) { st.textContent = 'Update failed: ' + d.error; return; }
+                runButton.disabled = true;
+                checkButton.disabled = true;
+                fetch('?action=sharmatRunUpdate', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'X-SHARMAT-Update': '1' }
+                }).then(r => r.json()).then(d => {
+                    if (!d.success) {
+                        st.textContent = 'Update failed: ' + d.error + (d.hint ? ' ' + d.hint : '');
+                        return;
+                    }
                     let msg;
                     if (d.failed_count > 0) { msg = 'Update incomplete: ' + d.failed_count + ' files could not be written. ' + (d.hint || ''); }
-                    else { msg = 'Update complete - reload this page.'; }
+                    else { msg = 'Update complete. Reload this page.' + (d.hint ? ' ' + d.hint : ''); }
                     st.textContent = msg;
-                    document.getElementById('sharmatRunUpdateBtn').style.display = 'none';
-                }).catch(e => { st.textContent = 'Update failed: ' + e.message; });
+                    runButton.textContent = 'Repair / Reinstall';
+                }).catch(e => { st.textContent = 'Update failed: ' + e.message; })
+                .finally(() => {
+                    runButton.disabled = false;
+                    checkButton.disabled = false;
+                });
             }
             </script>
 

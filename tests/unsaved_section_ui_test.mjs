@@ -79,6 +79,44 @@ try {
         document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
         document.getElementById('prompts').classList.add('active');
 
+        const defeatCard = document.getElementById('defeatFrameworkCard');
+        const defeatDiagnosticTitle = defeatCard ? defeatCard.querySelector('.defeat-diagnostic-card h4') : null;
+        const defeatDiagnosticCard = defeatCard ? defeatCard.querySelector('.defeat-diagnostic-card') : null;
+        const defeatDiagnosticBody = defeatCard ? defeatCard.querySelector('.defeat-diagnostic-empty') : null;
+        const slaverySection = document.getElementById('section3bContent')?.closest('.collapsible-section');
+        const defeatLargeHeadings = defeatCard ? Array.from(defeatCard.querySelectorAll('#sectionDefeatContent > .card .section-header')) : [];
+        const defeatToggle = document.getElementById('defeatAutoEnslave');
+        const defeatToggleState = document.getElementById('defeatAutoEnslaveControlState');
+        const defeatGoldLabel = defeatCard ? defeatCard.querySelector('.settings-checkbox-group .gold-glow-text') : null;
+        const defeatTitleStyles = defeatDiagnosticTitle ? getComputedStyle(defeatDiagnosticTitle) : null;
+        const defeatDiagnosticCardStyles = defeatDiagnosticCard ? getComputedStyle(defeatDiagnosticCard) : null;
+        const defeatDiagnosticBodyStyles = defeatDiagnosticBody ? getComputedStyle(defeatDiagnosticBody) : null;
+        const defeatLargeHeadingStyles = defeatLargeHeadings[0] ? getComputedStyle(defeatLargeHeadings[0]) : null;
+        const defeatToggleStyles = defeatToggle ? getComputedStyle(defeatToggle) : null;
+        const defeatGoldLabelStyles = defeatGoldLabel ? getComputedStyle(defeatGoldLabel) : null;
+        let defeatToggleCanShowOff = false;
+        let defeatToggleCanShowOn = false;
+        let defeatToggleUncheckedBackground = null;
+        let defeatToggleCheckedBackground = null;
+        let defeatToggleBaseBorderColor = null;
+        if (defeatToggle && defeatToggleState) {
+            const originalInlineAnimation = defeatToggle.style.animation;
+            defeatToggle.style.animation = 'none';
+            defeatToggleBaseBorderColor = getComputedStyle(defeatToggle).borderColor;
+            defeatToggle.style.animation = originalInlineAnimation;
+            const originalChecked = defeatToggle.checked;
+            defeatToggle.checked = false;
+            updateDefeatAutoEnslaveControlState();
+            defeatToggleCanShowOff = defeatToggleState.textContent === 'OFF';
+            defeatToggleUncheckedBackground = getComputedStyle(defeatToggle).backgroundColor;
+            defeatToggle.checked = true;
+            updateDefeatAutoEnslaveControlState();
+            defeatToggleCanShowOn = defeatToggleState.textContent === 'ON';
+            defeatToggleCheckedBackground = getComputedStyle(defeatToggle).backgroundColor;
+            defeatToggle.checked = originalChecked;
+            updateDefeatAutoEnslaveControlState();
+        }
+
         const control = document.getElementById('promptVrSpankFriendly');
         if (!control) return { error: 'VR Physics test control is missing' };
         control.value += ' ';
@@ -117,6 +155,22 @@ try {
         markNsfwChangesSaved('prompts', promptGeneration);
         const promptClearedAfterSave = !header.querySelector('.section-unsaved-indicator');
 
+        const defeatPromptControl = document.getElementById('promptDefeatAggressorScene');
+        defeatPromptControl.value += ' ';
+        defeatPromptControl.dispatchEvent(new Event('input', { bubbles: true }));
+        const originalDefeatToggleChecked = defeatToggle.checked;
+        defeatToggle.checked = !originalDefeatToggleChecked;
+        defeatToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        const defeatCrossGroupBadgeCount = document.querySelectorAll('#prompts .section-unsaved-indicator').length;
+        const defeatBadge = document.querySelector('#prompts .section-unsaved-indicator');
+        const defeatBadgeGroups = defeatBadge ? (defeatBadge.dataset.nsfwUnsavedGroups || '').split(',').sort() : [];
+        markNsfwChangesSaved('prompts', nsfwUnsavedGeneration.prompts);
+        const defeatBadgeSurvivesFirstGroupSave = document.querySelectorAll('#prompts .section-unsaved-indicator').length === 1;
+        defeatToggle.checked = originalDefeatToggleChecked;
+        updateDefeatAutoEnslaveControlState();
+        markNsfwChangesSaved('settings', nsfwUnsavedGeneration.settings);
+        const defeatBadgeClearsAfterBothGroupsSave = document.querySelectorAll('#prompts .section-unsaved-indicator').length === 0;
+
         document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
         document.getElementById('settings').classList.add('active');
         const settingsControl = document.getElementById('physicsSpankMinSpeed');
@@ -138,6 +192,35 @@ try {
         const settingsClearedAfterCurrentSave = !settingsHeader.querySelector('.section-unsaved-indicator');
 
         return {
+            defeatCardExists: Boolean(defeatCard),
+            defeatImmediatelyFollowsSlavery: Boolean(slaverySection && slaverySection.nextElementSibling === defeatCard),
+            topLevelDefeatTabExists: Boolean(document.getElementById('defeat')),
+            defeatLargeHeadingCount: defeatLargeHeadings.length,
+            defeatLargeHeadingFont: defeatLargeHeadingStyles ? defeatLargeHeadingStyles.fontFamily : null,
+            defeatLargeHeadingSize: defeatLargeHeadingStyles ? defeatLargeHeadingStyles.fontSize : null,
+            defeatLargeHeadingAnimation: defeatLargeHeadingStyles ? defeatLargeHeadingStyles.animationName : null,
+            defeatTitleFontFamily: defeatTitleStyles ? defeatTitleStyles.fontFamily : null,
+            defeatTitleTextShadow: defeatTitleStyles ? defeatTitleStyles.textShadow : null,
+            defeatTitleAnimation: defeatTitleStyles ? defeatTitleStyles.animationName : null,
+            defeatDiagnosticBackground: defeatDiagnosticCardStyles ? defeatDiagnosticCardStyles.backgroundColor : null,
+            defeatDiagnosticBorderColor: defeatDiagnosticCardStyles ? defeatDiagnosticCardStyles.borderColor : null,
+            defeatDataColor: defeatDiagnosticBodyStyles ? defeatDiagnosticBodyStyles.color : null,
+            defeatToggleAnimation: defeatToggleStyles ? defeatToggleStyles.animationName : null,
+            defeatToggleWidth: defeatToggleStyles ? defeatToggleStyles.width : null,
+            defeatToggleHeight: defeatToggleStyles ? defeatToggleStyles.height : null,
+            defeatToggleBorderColor: defeatToggleStyles ? defeatToggleStyles.borderColor : null,
+            defeatToggleBorderRadius: defeatToggleStyles ? defeatToggleStyles.borderRadius : null,
+            defeatGoldLabelAnimation: defeatGoldLabelStyles ? defeatGoldLabelStyles.animationName : null,
+            defeatGoldLabelFont: defeatGoldLabelStyles ? defeatGoldLabelStyles.fontFamily : null,
+            defeatToggleCanShowOff,
+            defeatToggleCanShowOn,
+            defeatToggleUncheckedBackground,
+            defeatToggleCheckedBackground,
+            defeatToggleBaseBorderColor,
+            defeatCrossGroupBadgeCount,
+            defeatBadgeGroups,
+            defeatBadgeSurvivesFirstGroupSave,
+            defeatBadgeClearsAfterBothGroupsSave,
             badgeText,
             exactHeaderMarked,
             topLevelBadgeCount,
@@ -171,6 +254,33 @@ try {
     };
 
     check(!result.error, result.error || 'page evaluation failed');
+    check(result.defeatCardExists, 'Defeat Frameworks is not present as a Prompts card');
+    check(result.defeatImmediatelyFollowsSlavery, 'Defeat Frameworks is not directly under Slavery');
+    check(!result.topLevelDefeatTabExists, 'Defeat Frameworks is still a top-level tab');
+    check(result.defeatLargeHeadingCount === 3, 'Player Defeat, Enemy Defeated, and Defeat Diagnostics are not all large headings');
+    check(result.defeatLargeHeadingFont && result.defeatLargeHeadingFont.includes('MagicCards'), 'large defeat headings do not use MagicCards');
+    check(result.defeatLargeHeadingSize === '24px', 'large defeat headings are not 24px');
+    check(result.defeatLargeHeadingAnimation === 'subPulse', 'large defeat headings do not use the native section-header pulse');
+    check(result.defeatTitleFontFamily && result.defeatTitleFontFamily.includes('MagicCards'), 'defeat diagnostic title does not use MagicCards');
+    check(result.defeatTitleTextShadow && result.defeatTitleTextShadow !== 'none', 'defeat diagnostic title is missing its glow');
+    check(result.defeatTitleAnimation === 'neonPulse', 'diagnostic titles do not use the native gold text pulse');
+    check(result.defeatDiagnosticBackground === 'rgb(37, 34, 51)', 'defeat diagnostics do not use the native info-box background');
+    check(result.defeatDiagnosticBorderColor === 'rgb(58, 53, 69)', 'defeat diagnostics do not use the native info-box border');
+    check(result.defeatDataColor === 'rgb(184, 168, 200)', 'defeat diagnostic body text is not the native lavender color');
+    check(result.defeatToggleAnimation === 'goldNeonPulse', 'auto-enslave checkbox is missing the native glow animation');
+    check(result.defeatToggleWidth === '20px' && result.defeatToggleHeight === '20px', 'auto-enslave checkbox does not use the native dimensions');
+    check(result.defeatToggleBaseBorderColor === 'rgb(253, 245, 208)', 'auto-enslave checkbox does not use the native gold border');
+    check(result.defeatToggleBorderRadius === '4px', 'auto-enslave checkbox does not use the native corner radius');
+    check(result.defeatGoldLabelAnimation === 'neonPulse', 'auto-enslave label is missing the native gold text pulse');
+    check(result.defeatGoldLabelFont && result.defeatGoldLabelFont.includes('MagicCards'), 'auto-enslave label does not use the native gold text font');
+    check(result.defeatToggleCanShowOff, 'auto-enslave switch cannot visibly show OFF');
+    check(result.defeatToggleCanShowOn, 'auto-enslave switch cannot visibly show ON');
+    check(result.defeatToggleUncheckedBackground === 'rgb(30, 26, 46)', 'auto-enslave OFF state does not use the native unchecked background');
+    check(result.defeatToggleCheckedBackground === 'rgb(253, 245, 208)', 'auto-enslave ON state does not use the native checked background');
+    check(result.defeatCrossGroupBadgeCount === 1, 'editing both defeat groups duplicated the unsaved warning');
+    check(JSON.stringify(result.defeatBadgeGroups) === JSON.stringify(['prompts', 'settings']), 'single defeat warning did not track both save groups');
+    check(result.defeatBadgeSurvivesFirstGroupSave, 'defeat warning disappeared before both save groups were saved');
+    check(result.defeatBadgeClearsAfterBothGroupsSave, 'defeat warning did not clear after both save groups were saved');
     check(result.badgeText === 'You Have Unsaved Changes', 'badge text is wrong or missing');
     check(result.exactHeaderMarked, 'edited section header did not receive the dirty state');
     check(result.topLevelBadgeCount === 1, 'an edit marked more than the exact changed section');

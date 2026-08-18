@@ -110,6 +110,10 @@ function aiagentNsfwClearNpcSceneRuntimeForPrerequest($actorName, $intimacyStatu
             "had_sex_in_scene" => false,
             "refusal_expressed" => false,
             "forced_scene" => false,
+            "framework_forced_scene" => false,
+            "scene_player_is_victim" => false,
+            "scene_actor_is_aggressor" => false,
+            "scene_actor_is_victim" => false,
             "request_scene_stop" => false,
             "stop_command_sent" => false,
             "last_scene_stop_time" => null,
@@ -373,6 +377,22 @@ if ($isOrgasmEvent) {
 	            $playerName
 	        );
 	    }
+	    $orgFrameworkForcedAggressor = !empty($orgIntimacy["framework_forced_scene"])
+	        && !empty($orgIntimacy["scene_player_is_victim"])
+	        && !empty($orgIntimacy["scene_actor_is_aggressor"]);
+	    if ($orgFrameworkForcedAggressor) {
+	        $orgDefeatPrompt = trim((string)getGlobalPrompt('defeat_aggressor_scene'));
+	        if ($orgDefeatPrompt === '') {
+	            $orgDefeatPrompt = 'A defeat framework identified #NPC_NAME# as an aggressor and #PLAYER_NAME# as the victim. This dedicated defeat path overrides ordinary relationship tier, romance, orientation, payment, arousal, consent, AcceptSex, and RefuseSex instructions until this scene ends. Do not ask whether #PLAYER_NAME# wants the scene, do not act disgusted by your own initiation, do not refuse your own scene, and do not claim #PLAYER_NAME# initiated it. Stay in character as the aggressor. Use the core personality of #NPC_NAME# and the current physical scene, but ignore conflicting relationship and consent prompts.';
+	        }
+	        $orgDefeatPrompt = str_replace(
+	            ['#NPC_NAME#', '#PLAYER_NAME#'],
+	            [$actorName, $playerName],
+	            $orgDefeatPrompt
+	        );
+	        $GLOBALS["HERIKA_PERSONALITY"] .= "\n<defeat_aggressor_scene>\n{$orgDefeatPrompt}\n</defeat_aggressor_scene>";
+	        error_log("[AIAGENTNSFW] Dedicated defeat path retained for orgasm event on {$actorName}");
+	    }
 	    $orgSceneActorsForResolve = is_array($orgIntimacy["raw_scene_actor_slots"] ?? null)
         ? $orgIntimacy["raw_scene_actor_slots"]
         : (is_array($orgIntimacy["scene_actors"] ?? null) ? $orgIntimacy["scene_actors"] : []);
@@ -399,7 +419,7 @@ if ($isOrgasmEvent) {
     // SELECT CORRECT SPEAK STYLE PROMPT based on who is orgasming
     // isPlayerOrgasm=true  → player came inside this NPC → use partner_climax_prompt (NPC reacts to player)
     // isPlayerOrgasm=false → this NPC is orgasming → use climax_prompt (NPC's own orgasm)
-    if (isNpcSlave($actorName)) {
+    if (!$orgFrameworkForcedAggressor && isNpcSlave($actorName)) {
         require_once __DIR__ . "/nsfw_relationship.php";
         $slaveAff = getNpcAffinity($actorName);
         $slaveClimaxCue = $isPlayerOrgasm
@@ -408,7 +428,7 @@ if ($isOrgasmEvent) {
         if (!empty($slaveClimaxCue)) {
             $GLOBALS["AIAGENTNSFW_ORGASM_CUE_OVERRIDE"] = "<climax_instruction>\n{$slaveClimaxCue}\n</climax_instruction>";
         }
-    } elseif (!$isPlayerOrgasm && isProstitute($actorName)
+    } elseif (!$orgFrameworkForcedAggressor && !$isPlayerOrgasm && isProstitute($actorName)
         && function_exists('aiagentNsfwGetProstituteScenePrompt')
         && ($prostOrgasmCue = aiagentNsfwGetProstituteScenePrompt($actorName, 'orgasm_prompt')) !== '') {
         // PROSTITUTE'S OWN ORGASM: use her per-NPC orgasm line instead of her profile/speak-style climax.
@@ -489,7 +509,8 @@ if ($isOrgasmEvent) {
             || !empty($orgIntimacy["request_scene_stop"])
             || !empty($orgIntimacy["refusal_expressed"])
         ) && !$orgServiceJustCompleted;
-    $orgConsentConfirmed = (!empty($orgIntimacy["accepted_sex"]) && (!function_exists('aiagentNsfwRelTypeSexEligible') || aiagentNsfwRelTypeSexEligible($actorName))) // eligibility required to HOLD acceptance (fix 2026-07-01j)
+    $orgConsentConfirmed = !empty($orgIntimacy["scene_actor_is_aggressor"])
+        || (!empty($orgIntimacy["accepted_sex"]) && (!function_exists('aiagentNsfwRelTypeSexEligible') || aiagentNsfwRelTypeSexEligible($actorName))) // eligibility required to HOLD acceptance (fix 2026-07-01j)
         || !empty($orgIntimacy["npc_is_slave"])
         || (!empty($orgIntimacy["npc_is_prostitute"]) && (!empty($orgIntimacy["payment_confirmed"]) || $orgServiceJustCompleted || !empty($orgIntimacy["free_service"])))
         || (!empty($orgIntimacy["is_npc_scene"]) && !empty($orgIntimacy["npc_affinity_gate_disabled"]))
@@ -1063,6 +1084,40 @@ $initialScenePhase = $scenePhase; // #6: true request-start phase (snapshot befo
 $GLOBALS["AIAGENTNSFW_SCENE_PHASE"] = $scenePhase;
 $scenePromptContext = !empty($intimacyStatus["is_npc_scene"]) ? 'npc' : 'player';
 
+// A defeat/assault framework explicitly identified this NPC as the aggressor and the
+// player as the victim. This is not a player intimacy request, so relationship consent,
+// prostitute payment, and NPC refusal machinery must not invert the aggressor's role.
+$isFrameworkForcedAggressor = !empty($intimacyStatus["framework_forced_scene"])
+    && !empty($intimacyStatus["scene_player_is_victim"])
+    && !empty($intimacyStatus["scene_actor_is_aggressor"]);
+if ($isFrameworkForcedAggressor && !$isPillowTalkMode) {
+    $intimacyStatus["scene_phase"] = "engaged";
+    $intimacyStatus["level"] = 2;
+    $intimacyStatus["accepted_sex"] = true;
+    $intimacyStatus["refusal_expressed"] = false;
+    $intimacyStatus["refused_until_scene_end"] = false;
+    $intimacyStatus["request_scene_stop"] = false;
+    $intimacyStatus["stop_command_sent"] = false;
+    $intimacyStatus["is_transaction"] = false;
+    $intimacyStatus["negotiation_phase"] = false;
+    $scenePhase = "engaged";
+    $initialScenePhase = "engaged";
+    $GLOBALS["AIAGENTNSFW_SCENE_PHASE"] = "engaged";
+
+    $defeatPrompt = trim((string)getGlobalPrompt('defeat_aggressor_scene'));
+    if ($defeatPrompt === '') {
+        $defeatPrompt = 'A defeat framework identified #NPC_NAME# as an aggressor and #PLAYER_NAME# as the victim. This dedicated defeat path overrides ordinary relationship tier, romance, orientation, payment, arousal, consent, AcceptSex, and RefuseSex instructions until this scene ends. Do not ask whether #PLAYER_NAME# wants the scene, do not act disgusted by your own initiation, do not refuse your own scene, and do not claim #PLAYER_NAME# initiated it. Stay in character as the aggressor. Use the core personality of #NPC_NAME# and the current physical scene, but ignore conflicting relationship and consent prompts.';
+    }
+    $defeatPrompt = str_replace(
+        ['#NPC_NAME#', '#PLAYER_NAME#'],
+        [$actorName, $GLOBALS['PLAYER_NAME'] ?? 'the player'],
+        $defeatPrompt
+    );
+    $GLOBALS["HERIKA_PERSONALITY"] .= "\n<defeat_aggressor_scene>\n{$defeatPrompt}\n</defeat_aggressor_scene>";
+    updateIntimacyForActor($actorName, $intimacyStatus);
+    error_log("[AIAGENTNSFW] Framework aggressor prompt active for {$actorName}; relationship refusal gate bypassed");
+}
+
 // REFUSAL HARD CAP (user directive 2026-06-28, ~15 min). A sticky RefuseSex normally clears at scene end, but if the
 // engine scene-end signal is lost the lock could strand her in "rejected" forever. Auto-release once the cap elapses
 // so she is never permanently frozen. PLAYER-NPC only (NPC-to-NPC keeps its own logic).
@@ -1182,6 +1237,7 @@ if ($isNpcSceneGateDisabled && !$isPillowTalkMode) {
 }
 
 $isUnpaidProstituteTransaction = $isProstitute
+    && !$isFrameworkForcedAggressor
     && !empty($intimacyStatus["is_transaction"])
     && empty($intimacyStatus["payment_confirmed"])
     && !aiagentNsfwProstitutePaymentWaived($actorName)  // bonded/high-affinity gives it free
@@ -1559,6 +1615,7 @@ if (!isSexDisposalEnabled() && !$isPillowTalkMode) {
     // Fires only on the first decline - after that
 // refusal_expressed is set, so it steps aside and the rejected handler below runs the escalation.
 if ($scenePhase === "tier_prompt"
+    && !$isFrameworkForcedAggressor
     && !$isSlave && !$isProstitute
     && !$isNpcSceneGateDisabled
     && !$isSkoomaAddictionBargain
@@ -2395,12 +2452,22 @@ if ($isInActiveScene && !$isPillowTalkMode && (int)($intimacyStatus["intensity_t
         } else if ($currentScenePhase === "tier_prompt" && !empty($tierContextAlreadyInjected)) {
             // Tier prompt handler already injected this - skip to avoid double injection
             error_log("[AIAGENTNSFW] Skipping tier prompt re-injection for $actorName (already injected by tier_prompt handler)");
+        } else if ($isFrameworkForcedAggressor) {
+            // Dedicated defeat route: identify the physical roles without rebuilding profile, orientation,
+            // arousal, affinity, relationship tier, romance, payment, or refusal context.
+            $defeatParticipants = array_values(array_filter(array_map('trim', $sceneActorsForContext), function ($sceneActor) use ($actorName) {
+                return $sceneActor !== '' && strcasecmp($sceneActor, $actorName) !== 0;
+            }));
+            $defeatParticipantLines = ["Aggressor: {$actorName}", "Victim: " . ($GLOBALS['PLAYER_NAME'] ?? 'the player')];
+            if (!empty($defeatParticipants)) {
+                $defeatParticipantLines[] = "Scene participants: " . implode(', ', $defeatParticipants);
+            }
+            $GLOBALS["HERIKA_PERSONALITY"] .= "\n" . NsfwRelationship::wrapXml('defeat_scene_participants', implode("\n", $defeatParticipantLines));
+            error_log("[AIAGENTNSFW] Injected defeat-role participant context for {$actorName}; REL participant profile excluded");
         } else {
-            // Accepted/engaged: Only inject participant info, NO tier prompt
-            // This prevents "REFUSE SEX" from being re-injected on scene changes
+            // Accepted/engaged ordinary route: inject participant info without the tier prompt.
             $participantResult = NsfwRelationship::buildMultiActorContext($actorName, $sceneActorsForContext, $isProstitute, $scenePromptContext);
             if (!empty($participantResult['context'])) {
-                // Wrap participant info only (no tierPrompt) in intimate_scene block
                 $participantContext = NsfwRelationship::wrapXml('intimate_scene', $participantResult['context']);
                 $GLOBALS["HERIKA_PERSONALITY"] .= "\n" . $participantContext;
                 error_log("[AIAGENTNSFW] Injected PARTICIPANT-ONLY context for $actorName (phase: $currentScenePhase)");
@@ -2419,7 +2486,7 @@ if ($isInActiveScene && !$isPillowTalkMode && (int)($intimacyStatus["intensity_t
     // so the NPC consistently expresses being unwilling throughout.
     // ============================================
     // PLAYER PATH ONLY: non-consent / forced continuation is a player-scene concept. NPC-to-NPC scenes never use it.
-    if (!empty($intimacyStatus["forced_scene"]) && empty($intimacyStatus["is_npc_scene"])) {
+    if (!$isFrameworkForcedAggressor && !empty($intimacyStatus["forced_scene"]) && empty($intimacyStatus["is_npc_scene"])) {
         $partnerName = $GLOBALS["PLAYER_NAME"] ?? "them";
         if (is_array($intimacyStatus["scene_actors"] ?? null)) {
             foreach ($intimacyStatus["scene_actors"] as $actor) {
@@ -2451,7 +2518,7 @@ if ($isInActiveScene && !$isPillowTalkMode && (int)($intimacyStatus["intensity_t
     // DO NOT call them here - this block runs on EVERY event.
     // Only add slave-specific personality text here.
     // ============================================
-    if ($isSlave && empty($slavePromptAlreadyInjected)) {
+    if (!$isFrameworkForcedAggressor && $isSlave && empty($slavePromptAlreadyInjected)) {
         // SLAVE: Add slave-specific personality and speech style
         // (skipped if already injected by accepted phase handler above)
         $slavePersonality = NsfwRelationship::getSlavePersonality($slaveAffinity, $slaveOwnerName);
@@ -2503,7 +2570,7 @@ if ($shouldInjectEngagedContent) {
     }
 
     // SLAVE SCENE CUES at Level 2
-    if ($isSlave) {
+    if ($isSlave && !$isFrameworkForcedAggressor) {
         $slaveSceneCues = NsfwRelationship::getSlaveSceneCues($slaveAffinity, $slaveOwnerName);
         if (!empty($slaveSceneCues)) {
             // Override chatnf_sl cues with slave-specific cues
@@ -2522,7 +2589,7 @@ if ($shouldInjectEngagedContent) {
     }
 
     // PROSTITUTE SERVICE TRACKING
-    if ($isProstitute) {
+    if ($isProstitute && !$isFrameworkForcedAggressor) {
         // Build prostitute service context
         $serviceContext = "";
 
@@ -2561,7 +2628,7 @@ if ($shouldInjectEngagedContent) {
     // she already chose this, so she stays open for the rest of the scene instead of re-litigating consent. Sticky,
     // because accepted_sex holds until scene end. PLAYER-NPC, tier 3, non-prostitute only. UI-editable prompt key
     // 'consent_accepted_status' (falls back to the default below until wired into the Prompts panel).
-    if (!empty($intimacyStatus["accepted_sex"]) && empty($intimacyStatus["is_npc_scene"]) && !$isProstitute
+    if (!$isFrameworkForcedAggressor && !empty($intimacyStatus["accepted_sex"]) && empty($intimacyStatus["is_npc_scene"]) && !$isProstitute
         && (int)($intimacyStatus["intensity_tier"] ?? 0) >= 3 && empty($intimacyStatus["scene_is_idle"])) {
         $consentStatusPrompt = '';
         if (function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode()

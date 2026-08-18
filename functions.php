@@ -2297,6 +2297,9 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
     $isSlave = isNpcSlave($npcName);
     $isNpcScene = $_nsfwExplicitNpcFunctionRoute || (!empty($intimacyStatus["is_npc_scene"]) && $_nsfwNpcSceneDialogueEnabled);
     $npcSceneGateDisabled = $isNpcScene;
+    $frameworkForcedAggressor = !empty($intimacyStatus["framework_forced_scene"])
+        && !empty($intimacyStatus["scene_player_is_victim"])
+        && !empty($intimacyStatus["scene_actor_is_aggressor"]);
     $affinity = getNpcAffinity($npcName);
     // L3 skooma overrides the sex pathway (addict bargain) even for a prostitute: unlock the sex acts
     // independent of the payment gate. Slaves excluded (separate override). L3-gated, so no effect otherwise.
@@ -2322,6 +2325,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
         !empty($intimacyStatus["payment_confirmed"])
         || !empty($intimacyStatus["free_service"])
         || aiagentNsfwProstitutePaymentWaived($npcName)
+        || $frameworkForcedAggressor
     );
 
 // Only offer this action if sex disposal is >20 for this actor (when gating enabled)
@@ -2354,7 +2358,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             $currentArousal = $intimacyStatus["sex_disposal"] ?? 0;
             $isNaked = $intimacyStatus["is_naked"] ?? 0;
             // Fond+ (>=56): a regular NPC has her OWN autonomy to initiate sex - she does not need AcceptSex.
-            $_consentedFns = !empty($intimacyStatus["accepted_sex"]) || $isSlave || $npcSceneGateDisabled || $skoomaBargain || ($affinity >= $sceneCallMinAffinity);
+            $_consentedFns = $frameworkForcedAggressor || !empty($intimacyStatus["accepted_sex"]) || $isSlave || $npcSceneGateDisabled || $skoomaBargain || ($affinity >= $sceneCallMinAffinity);
             // Sticky refusal also blocks re-initiating sex acts until the scene ends.
             if (!$isSlave && !empty($intimacyStatus["refused_until_scene_end"])) { $_consentedFns = false; }
 
@@ -2404,10 +2408,10 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             if (($affinity >= $affectionFloor && $affectionOrientationOk) || $isSlave) { $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdKiss"; }
             if ($isProstitute) {
                 // Prostitutes: OStim sex acts gated on the service being covered (paid/free), NOT accepted_sex.
-                $_consentedFns = $prostituteServiceUnlocked || $isSlave || $npcSceneGateDisabled || $skoomaBargain;
+                $_consentedFns = $frameworkForcedAggressor || $prostituteServiceUnlocked || $isSlave || $npcSceneGateDisabled || $skoomaBargain;
             } else {
                 // Fond+ (>=56): a regular NPC has her OWN autonomy to initiate sex - she does not need AcceptSex.
-                $_consentedFns = !empty($intimacyStatus["accepted_sex"]) || $isSlave || $npcSceneGateDisabled || $skoomaBargain || ($affinity >= $sceneCallMinAffinity);
+                $_consentedFns = $frameworkForcedAggressor || !empty($intimacyStatus["accepted_sex"]) || $isSlave || $npcSceneGateDisabled || $skoomaBargain || ($affinity >= $sceneCallMinAffinity);
             }
             // Sticky refusal also blocks re-initiating sex acts until the scene ends.
             if (!$isSlave && !empty($intimacyStatus["refused_until_scene_end"])) { $_consentedFns = false; }
@@ -2589,12 +2593,12 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             }
         }
         if ($isProstitute) {
-            $_consented = $prostituteServiceUnlocked;  // paid / bartered / auto-waived (bonded) / GiveFreeService - never accepted_sex alone
+            $_consented = $frameworkForcedAggressor || $prostituteServiceUnlocked;  // framework aggressor or paid / bartered / auto-waived / GiveFreeService
         } else {
             // Regular/marriage/affair. Fond+ (>=56) = her own autonomy (no AcceptSex needed). AND once a scene
             // is underway it STAYS consented until it ends (sex_started/had_sex_in_scene) - never re-gate her
             // mid-scene. Low-affinity NPCs (< Fond, e.g. a despising spouse) still gate on accepted_sex.
-            $_consented = $isSlave || $npcSceneGateDisabled || $openModeAdultPlayerRoute || !empty($intimacyStatus["accepted_sex"])
+            $_consented = $frameworkForcedAggressor || $isSlave || $npcSceneGateDisabled || $openModeAdultPlayerRoute || !empty($intimacyStatus["accepted_sex"])
                 || ($affinity >= 56) || !empty($intimacyStatus["sex_started"]) || !empty($intimacyStatus["had_sex_in_scene"]);
             // REFUSAL DOMINATES: once she refuses, she stays non-consenting (no SexCommand, gets the refuse prompt)
             // until the engine scene actually ends - even though sex_started/had_sex_in_scene above would otherwise
@@ -2606,7 +2610,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
         if (!$sceneExitLocked && !$isNpcScene) {
             $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdStopScene";  // can't END the scene if intoxication-locked
         }
-        if (!$isSlave && !$npcSceneGateDisabled && !$isNpcScene) {
+        if (!$isSlave && !$npcSceneGateDisabled && !$isNpcScene && !$frameworkForcedAggressor) {
             $GLOBALS["ENABLED_FUNCTIONS"][]="ExtCmdRefuseSex";  // can refuse/protest even when intoxication-locked (slaves cannot refuse)
         }
         if ($_consented && !$isNpcScene && ($intimacyStatus["scene_phase"] ?? '') !== "rejected") {
@@ -2824,7 +2828,8 @@ if (isset($GLOBALS["ENABLED_FUNCTIONS"]) && is_array($GLOBALS["ENABLED_FUNCTIONS
     $relGateSlave = $relGateNpc !== "" && function_exists('isNpcSlave') && isNpcSlave($relGateNpc);
     $relGateProstitute = $relGateNpc !== "" && function_exists('isProstitute') && isProstitute($relGateNpc);
     $relGateSkooma = !$relGateSlave && $relGateNpc !== "" && function_exists('getDrugStageForActor') && (int)getDrugStageForActor($relGateNpc, 'skooma') >= 3;
-    if ($relGateNpc !== "" && $relGateNpc !== "(actor)" && strcasecmp($relGateNpc, "The Narrator") !== 0 && !$relGateIsNpcScene && !$relGateSlave && !$relGateProstitute && !$relGateSkooma && !aiagentNsfwRelTypeSexEligible($relGateNpc)) {
+    $relGateFrameworkAggressor = isset($intimacyStatus) && !empty($intimacyStatus["framework_forced_scene"]) && !empty($intimacyStatus["scene_actor_is_aggressor"]);
+    if ($relGateNpc !== "" && $relGateNpc !== "(actor)" && strcasecmp($relGateNpc, "The Narrator") !== 0 && !$relGateIsNpcScene && !$relGateSlave && !$relGateProstitute && !$relGateSkooma && !$relGateFrameworkAggressor && !aiagentNsfwRelTypeSexEligible($relGateNpc)) {
         $relGateStrip = ["ExtCmdStartSex","ExtCmdStartBlowJob","ExtCmdStartAnalSex","ExtCmdStartMassage","ExtCmdStartThreesome","ExtCmdStartHandJobSex","ExtCmdStartTitfuck","ExtCmdStartSelfMasturbation","ExtCmdSexCommand","ExtCmdAcceptSex","ExtCmdQuickenPace","ExtCmdSlowPace","ExtCmdRemoveClothes","ExtCmdDrinkBloodSex"];
         $GLOBALS["ENABLED_FUNCTIONS"] = array_values(array_filter($GLOBALS["ENABLED_FUNCTIONS"], function($f) use ($relGateStrip) { return !in_array($f, $relGateStrip, true); }));
         if (!in_array("ExtCmdRefuseSex", $GLOBALS["ENABLED_FUNCTIONS"], true)) { $GLOBALS["ENABLED_FUNCTIONS"][] = "ExtCmdRefuseSex"; }

@@ -797,6 +797,27 @@ string Function GetArousalDescription(int arousalLevel)
 	endif
 EndFunction
 
+Function SendPlayerBodyState()
+	Actor playerActor = Game.GetPlayer()
+	if playerActor == None || playerActor.GetActorBase() == None
+		return
+	endif
+
+	int playerSex = playerActor.GetActorBase().GetSex()
+	string hasSchlong = "0"
+	if AIAgentNSFWSceneEngine.HasOStim()
+		if OActorUtil.HasSchlong(playerActor)
+			hasSchlong = "1"
+		endif
+	elseif playerSex == 0
+		; Vanilla fallback when OStim is not installed.
+		hasSchlong = "1"
+	endif
+
+	AIAgentFunctions.logMessage("PLAYERBODY^" + playerSex + "^" + hasSchlong, "ext_nsfw_player_body")
+	Debug.Trace("[CHIM-NSFW] Player body state: sex=" + playerSex + ", hasSchlong=" + hasSchlong)
+EndFunction
+
 function DoRegister()
 
 	Debug.Notification("[CHIM-NSFW] Registering events")
@@ -966,6 +987,9 @@ function DoRegister()
 		vrFlag = "1"
 	endif
 	AIAgentFunctions.logMessage("VRSTATUS^" + vrFlag, "ext_nsfw_vrstatus")
+	; Refresh both vanilla sex and actual OStim/SOS anatomy. This is sent again when a
+	; scene starts so a RaceMenu or body change does not leave stale prompt context.
+	SendPlayerBodyState()
 	if platformIsVR
 		Debug.Trace("[CHIM-NSFW] Platform detected: VR (SkyrimVR.esm present)")
 	else
@@ -3273,6 +3297,7 @@ Event OStimStart(string eventName, string strArg, float numArg, Form sender)
 	; This fires ONCE when scene starts - uses requestMessageForActor to get LLM response
 	; ============================================
 	if playerInScene && firstNpcInScene != None
+		SendPlayerBodyState()
 		string npcName = firstNpcInScene.GetDisplayName()
 		Debug.Trace("[CHIM-NSFW] SCENE START: Requesting tier prompt response for " + npcName)
 
@@ -3720,9 +3745,8 @@ Event OStimSceneChanged(string EventName, string SceneID, float NumArg, Form Sen
 		endwhile
 	endif
 
-	; Authoritative scene beat. The SHARMAT server rewrites info_sexscene to ext_nsfw_sexcene,
-	; updates scene state, and decides whether this beat speaks from NSFW_SCENE_SPEAK_ON_SCENE_CHANGE.
-	AIAgentFunctions.logMessage(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "info_sexscene")
+	string scenePayload = sexPos+"/"+sceneTags+"/"+SceneID+actorList
+	bool consentBarkFired = false
 
 	; CONSENT BARK (fast accept/refuse decision). participantTalk is only set when the scene is at an explicit
 	; sex position (tier 3), so this is the moment the player scene becomes explicit. Fire a fast ext_nsfw_consent_bark
@@ -3731,15 +3755,18 @@ Event OStimSceneChanged(string EventName, string SceneID, float NumArg, Form Sen
 	; server treats it exactly like the scene's sexcene turn, so the model decides with full context and no player input.
 	if (participantTalk && playerInScene && threadId != consentBarkThreadId)
 		consentBarkThreadId = threadId
-		AIAgentFunctions.requestMessageForActor(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "ext_nsfw_consent_bark", participantTalk.GetDisplayName())
+		AIAgentFunctions.requestMessageForActor(scenePayload, "ext_nsfw_consent_bark", participantTalk.GetDisplayName())
+		consentBarkFired = true
 		Debug.Trace("[CHIM-NSFW] CONSENT BARK fired for thread " + threadId + " -> " + participantTalk.GetDisplayName())
 	endif
 
-	; Keep the direct NPC route for the normal mouth-free scene turn and compatibility with servers that
-	; do not canonicalize info_sexscene. This is separate from the fast consent decision above; server-side
-	; authoritative dedup/cooldowns own duplicate suppression.
-	if (participantTalk)
-		AIAgentFunctions.requestMessageForActor(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "ext_nsfw_sexcene", participantTalk.GetDisplayName())
+	; Exactly one normal route per stage. A mouth-free NPC gets the directed scene request.
+	; If nobody can speak, keep the state-only fallback. When the one-shot consent bark fires,
+	; it already reuses the full scene handler, so do not submit a second request beside it.
+	if participantTalk != None && !consentBarkFired
+		AIAgentFunctions.requestMessageForActor(scenePayload, "ext_nsfw_sexcene", participantTalk.GetDisplayName())
+	elseif participantTalk == None
+		AIAgentFunctions.logMessage(scenePayload, "info_sexscene")
 	endif
 
 	; Do not create another client-side scene ticker here. Long-held player-scene chatter comes from
@@ -4818,13 +4845,22 @@ Event OnSexLabAnimStart(int tid, bool HasPlayer)
 		return
 	endif
 
+	Actor sceneVictim = controller.GetVictim()
 	string sceneID = controller.Animation.Name
 	string sceneTags = PapyrusUtil.StringJoin(controller.Animation.GetTags(), ",") ; GetTags() is string[]; the bare cast produced "[A, B, C]" which broke server CSV tag parsing (fix 2026-07-01)
 	string actorList = ""
 	Actor firstNpc = None
 	int i = 0
 	while (i < actors.Length)
-		actorList = actorList + "/" + actors[i].GetDisplayName()
+		string actorRoleSuffix = ""
+		if (sceneVictim != None)
+			if (actors[i] == sceneVictim)
+				actorRoleSuffix = "^victim,forced"
+			else
+				actorRoleSuffix = "^aggressor,forced"
+			endif
+		endif
+		actorList = actorList + "/" + actors[i].GetDisplayName() + actorRoleSuffix
 		if (actors[i].GetFormID() != 0x14)
 			if (firstNpc == None)
 				firstNpc = actors[i]
@@ -4854,6 +4890,8 @@ Event OnSexLabAnimStart(int tid, bool HasPlayer)
 		return
 	endif
 
+	SendPlayerBodyState()
+
 	; Matches the ext_nsfw_sexcene wire OStimStart uses: SceneID/tags/SceneID/actors
 	; NO consent bark here (user-confirmed 2026-07-01): the bark path is vestigial/unreliable - live logs show every
 	; bark ever fired was routed to The Narrator and blocked by policy. The tier-3 consent decision is driven by the
@@ -4878,6 +4916,7 @@ Event OnSexLabStageStart(int tid, bool HasPlayer)
 	endif
 
 	; Scene awareness for ALL scenes (incl NPC-to-NPC) - no speech styles, just context
+	Actor sceneVictim = controller.GetVictim()
 	string sceneID = controller.Animation.Name
 	string sceneTags = PapyrusUtil.StringJoin(controller.Animation.GetTags(), ",") ; GetTags() is string[]; the bare cast produced "[A, B, C]" which broke server CSV tag parsing (fix 2026-07-01)
 	string stageDesc = controller.Animation.FetchStage(controller.Stage)[0]
@@ -4886,7 +4925,15 @@ Event OnSexLabStageStart(int tid, bool HasPlayer)
 	; so the server's slot->name lookup could name the wrong actor on stage updates.
 	int i = 0
 	while (i < actors.Length)
-		actorList = actorList + "/" + actors[i].GetDisplayName()
+		string actorRoleSuffix = ""
+		if (sceneVictim != None)
+			if (actors[i] == sceneVictim)
+				actorRoleSuffix = "^victim,forced"
+			else
+				actorRoleSuffix = "^aggressor,forced"
+			endif
+		endif
+		actorList = actorList + "/" + actors[i].GetDisplayName() + actorRoleSuffix
 		if (actors[i].GetFormID() != 0x14)
 			if (SexLab.isMouthOpen(actors[i]))
 				AIAgentFunctions.setLocked(1, actors[i].GetDisplayName())
@@ -4911,31 +4958,24 @@ Event OnSexLabStageStart(int tid, bool HasPlayer)
 		return
 	endif
 
-	AIAgentFunctions.logMessage(sceneID + "/" + sceneTags + "/" + stageDesc + actorList, "info_sexscene")
-
-	; Spoken per-stage dialogue (speech styles) ONLY for player scenes
+	; Exactly one route for the stage. Prefer a mouth-free NPC. If every NPC is mouth-busy,
+	; retain the canonical state event without also submitting a second directed request.
+	string sceneData = sceneID + "/" + sceneTags + "/" + stageDesc + actorList
 	Actor[] sorted = SexLab.SortActors(actors, false)
 	i = sorted.Length
-	bool talked = false
 	Actor participantTalk = None
 	while (i > 0)
 		i -= 1
-		if (sorted[i].GetFormID() != 0x14)
-			if (!SexLab.isMouthOpen(sorted[i]))
-				participantTalk = sorted[i]
-				talked = true
-				i = 0
-			endif
+		if (sorted[i].GetFormID() != 0x14 && !SexLab.isMouthOpen(sorted[i]))
+			participantTalk = sorted[i]
+			i = 0
 		endif
 	endWhile
-	if (participantTalk != None)
-		string sceneData = sceneID + "/" + sceneTags + "/" + stageDesc + actorList
+	if participantTalk != None
 		AIAgentFunctions.requestMessageForActor(sceneData, "ext_nsfw_sexcene", participantTalk.GetDisplayName())
-		Debug.Trace("[CHIM-NSFW] SexLab stage routed ext_nsfw_sexcene to " + participantTalk.GetDisplayName())
-	endif
-	if (!talked)
-		; Legacy chatnf_sl narrator fallback disabled. ext_nsfw_sexcene owns model prompting.
-		; AIAgentFunctions.requestMessageForActor("The Narrator: everyone is busy. The Narrator comments on the scene.", "chatnf_sl_nr", "The Narrator")
+		Debug.Trace("[CHIM-NSFW] SexLab stage routed once to " + participantTalk.GetDisplayName())
+	else
+		AIAgentFunctions.logMessage(sceneData, "info_sexscene")
 	endif
 EndEvent
 
