@@ -2093,7 +2093,7 @@ $GLOBALS["action_post_process_fnct_ex"][]=function($actions) {
             if (!isset($__laP[2])) { continue; }
             $__laCmd = explode("@", $__laP[2])[0];
             if (($__laCmd === "ExtCmdKiss" || $__laCmd === "ExtCmdHug") && stripos($__laP[2], "@legacy") === false) {
-                $actions[$__laN] = $__laP[0] . "|" . $__laP[1] . "|" . $__laP[2] . "@legacy";
+                $actions[$__laN] = trim($__laP[0] . "|" . $__laP[1] . "|" . $__laP[2]) . "@legacy";
             }
         }
     }
