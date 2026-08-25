@@ -147,6 +147,14 @@
                         <input type="number" id="nsfwGazeCooldown" name="NSFW_GAZE_COOLDOWN_SECONDS" min="0" max="600" step="5" value="25" style="width: 80px; padding: 6px; background: #252233; border: 1px solid #3A3545; color: #B8A8D0; border-radius: 5px;">
                         <p class="legend">Minimum seconds between gaze reactions from the same NPC. Default: 25.</p>
                     </div>
+                    <div class="settings-slider-group" style="margin-top: 10px;">
+                        <span class="slider-title">Exact-Match Repeat Cooldown</span>
+                        <div class="slider-container">
+                            <input type="range" id="nsfwGazeExactMatchCooldown" name="NSFW_GAZE_EXACT_MATCH_COOLDOWN_SECONDS" min="0" max="600" step="5" value="120" oninput="document.getElementById('nsfwGazeExactMatchCooldownValue').textContent = this.value === '0' ? 'Off' : this.value + ' sec';">
+                            <span class="slider-value" id="nsfwGazeExactMatchCooldownValue">120 sec</span>
+                        </div>
+                        <p class="legend">Additional safeguard for the exact same NPC and gaze region (for example, Jaryra + tits). Other regions remain available after the normal reaction cooldown. Set to 0 to disable this safeguard. Default: 120 seconds.</p>
+                    </div>
                 </div>
 
                 <div class="settings-checkbox-group">

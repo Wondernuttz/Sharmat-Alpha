@@ -50,5 +50,13 @@ assert.ok(common.includes('return 512;'));
 assert.ok(!settingsUi.includes('Response Token Limits'));
 assert.ok(settingsUi.includes('Action Voice &amp; Random Moans'));
 assert.ok(settingsUi.includes('Enable TTS Modifier - Level 2 (Action)'));
+assert.ok(settingsUi.includes('Exact-Match Repeat Cooldown'));
+assert.ok(settingsUi.includes('NSFW_GAZE_EXACT_MATCH_COOLDOWN_SECONDS'));
+
+const physics = read('nsfw_physics.php');
+assert.ok(physics.includes("_getNsfwSetting('NSFW_GAZE_EXACT_MATCH_COOLDOWN_SECONDS', 120)"));
+assert.ok(physics.includes("aiagentNsfwRuntimeStateGet('gaze_exact_cd', $exactKey)"));
+assert.ok(physics.includes("aiagentNsfwRuntimeStateSet('gaze_exact_cd', $exactKey"));
+assert.ok(physics.includes("$exactKey = $actorName . '|' . $region"));
 
 console.log('intimacy_safety_static_test: OK');

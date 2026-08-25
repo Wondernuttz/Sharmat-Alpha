@@ -1141,6 +1141,7 @@ SQL;
                 'NSFW_FERTILITY_TRAGEDY_ENABLED' => isset($_POST['NSFW_FERTILITY_TRAGEDY_ENABLED']) ? filter_var($_POST['NSFW_FERTILITY_TRAGEDY_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_OPEN_MODE' => isset($_POST['NSFW_OPEN_MODE']) ? filter_var($_POST['NSFW_OPEN_MODE'], FILTER_VALIDATE_BOOLEAN) : false,
                 'NSFW_GAZE_COOLDOWN_SECONDS' => isset($_POST['NSFW_GAZE_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_GAZE_COOLDOWN_SECONDS']))) : 25,
+                'NSFW_GAZE_EXACT_MATCH_COOLDOWN_SECONDS' => isset($_POST['NSFW_GAZE_EXACT_MATCH_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_GAZE_EXACT_MATCH_COOLDOWN_SECONDS']))) : 120,
                 'NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS' => isset($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']) ? max(0, min(600, intval($_POST['NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS']))) : 30,
                 'GENERIC_GLOSSARY' => $_POST['GENERIC_GLOSSARY'] ?? '',
                 'TRACK_DRUNK_STATUS' => isset($_POST['TRACK_DRUNK_STATUS']) ? filter_var($_POST['TRACK_DRUNK_STATUS'], FILTER_VALIDATE_BOOLEAN) : false,
@@ -7478,6 +7479,9 @@ PROMPT;
                         const openModeEl = document.getElementById('nsfwOpenMode');
                         if (openModeEl) openModeEl.checked = data.data.NSFW_OPEN_MODE === true || data.data.NSFW_OPEN_MODE === '1';
                         elSet('nsfwGazeCooldown', 'value', data.data.NSFW_GAZE_COOLDOWN_SECONDS !== undefined ? data.data.NSFW_GAZE_COOLDOWN_SECONDS : 25);
+                        const gazeExactMatchCooldown = data.data.NSFW_GAZE_EXACT_MATCH_COOLDOWN_SECONDS !== undefined ? data.data.NSFW_GAZE_EXACT_MATCH_COOLDOWN_SECONDS : 120;
+                        elSet('nsfwGazeExactMatchCooldown', 'value', gazeExactMatchCooldown);
+                        elSet('nsfwGazeExactMatchCooldownValue', 'textContent', parseInt(gazeExactMatchCooldown) === 0 ? 'Off' : gazeExactMatchCooldown + ' sec');
                         const combatBlockEl = document.getElementById('nsfwCombatBlockEnabled');
                         if (combatBlockEl) combatBlockEl.checked = data.data.NSFW_COMBAT_BLOCK_ENABLED !== undefined ? data.data.NSFW_COMBAT_BLOCK_ENABLED : true;
                         elSet('nsfwCombatBlockWindow', 'value', data.data.NSFW_COMBAT_BLOCK_WINDOW_SECONDS !== undefined ? data.data.NSFW_COMBAT_BLOCK_WINDOW_SECONDS : 45);
@@ -7848,6 +7852,7 @@ PROMPT;
             if (document.getElementById('nsfwFertilityTragedyEnabled')) fdSet('NSFW_FERTILITY_TRAGEDY_ENABLED', 'nsfwFertilityTragedyEnabled', 'checked');
             if (document.getElementById('nsfwOpenMode')) fdSet('NSFW_OPEN_MODE', 'nsfwOpenMode', 'checked');
             if (document.getElementById('nsfwGazeCooldown')) fdSet('NSFW_GAZE_COOLDOWN_SECONDS', 'nsfwGazeCooldown', 'value');
+            if (document.getElementById('nsfwGazeExactMatchCooldown')) fdSet('NSFW_GAZE_EXACT_MATCH_COOLDOWN_SECONDS', 'nsfwGazeExactMatchCooldown', 'value');
             if (document.getElementById('nsfwCombatBlockEnabled')) fdSet('NSFW_COMBAT_BLOCK_ENABLED', 'nsfwCombatBlockEnabled', 'checked');
             if (document.getElementById('nsfwCombatBlockWindow')) fdSet('NSFW_COMBAT_BLOCK_WINDOW_SECONDS', 'nsfwCombatBlockWindow', 'value');
             fdSet('DRUNK_WINDOW_HOURS', 'drunkWindowHours', 'value');

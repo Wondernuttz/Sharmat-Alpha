@@ -734,6 +734,19 @@ class NsfwPhysics {
             return self::suppressedGazeResult($actorName, $region, 'the target is child-protected or excluded');
         }
 
+        $validRegions = ['eyes', 'tits', 'ass', 'crotch', 'person'];
+        if (!in_array($region, $validRegions, true)) { $region = 'person'; }
+
+        // A longer exact-match safeguard catches a noisy client repeatedly reporting the same NPC
+        // and region without blocking a genuinely different gaze region for that NPC. The shorter
+        // per-actor cooldown below still prevents rapid reactions across different regions.
+        $exactCd = function_exists('_getNsfwSetting') ? (int)_getNsfwSetting('NSFW_GAZE_EXACT_MATCH_COOLDOWN_SECONDS', 120) : 120;
+        $exactKey = $actorName . '|' . $region;
+        $exactLast = function_exists('aiagentNsfwRuntimeStateGet') ? (int)(aiagentNsfwRuntimeStateGet('gaze_exact_cd', $exactKey) ?? 0) : 0;
+        if ($exactCd > 0 && $exactLast > 0 && (time() - $exactLast) < $exactCd) {
+            return self::suppressedGazeResult($actorName, $region, 'exact-match gaze cooldown is still active');
+        }
+
         // Server-side per-actor cooldown (on top of the DLL's) so reactions do not spam.
         // Stored in the conf_opts runtime-state row (was a tmp file - Tyler's review 2026-07-11).
         $cd = function_exists('_getNsfwSetting') ? (int)_getNsfwSetting('NSFW_GAZE_COOLDOWN_SECONDS', 25) : 25;
@@ -745,9 +758,6 @@ class NsfwPhysics {
         $affinity  = function_exists('getNpcAffinity') ? (int)getNpcAffinity($actorName) : 0;
         $tierLabel = class_exists('RelationshipManager') ? RelationshipManager::getTierLabel($affinity) : 'Neutral';
         $playerName = $GLOBALS["PLAYER_NAME"] ?? 'Player';
-
-        $validRegions = ['eyes', 'tits', 'ass', 'crotch', 'person'];
-        if (!in_array($region, $validRegions, true)) { $region = 'person'; }
 
         $prompts = self::loadPromptSettings();
         $prompt  = trim((string)($prompts["gaze_{$region}"] ?? ''));
@@ -766,6 +776,7 @@ class NsfwPhysics {
         $GLOBALS["HERIKA_PERSONALITY"] .= "\n<gaze_reaction>\n" . $prompt . "\n</gaze_reaction>";
         if (function_exists('aiagentNsfwRuntimeStateSet')) {
             aiagentNsfwRuntimeStateSet('gaze_cd', $actorName, time(), max(300, $cd * 4));
+            aiagentNsfwRuntimeStateSet('gaze_exact_cd', $exactKey, time(), max(300, $exactCd * 4));
         }
         error_log("[AIAGENTNSFW] GAZE reaction injected for {$actorName}: region={$region} tier={$tierLabel}");
         return [
