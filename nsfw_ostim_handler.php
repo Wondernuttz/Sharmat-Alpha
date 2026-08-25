@@ -3665,11 +3665,16 @@ class NsfwOstimHandler {
                 return;
             }
 
-            // Keep the structured envelope internal and safely sized. Old saved 50-token values
-            // must never truncate this direct climax request before its closing JSON delimiter.
-            $structuredTokenBudget = aiagentNsfwStructuredResponseTokenBudget();
-            $GLOBALS["FORCE_MAX_TOKENS"] = $structuredTokenBudget;
-            $buffer = $connectionHandler->fast_request($contextData, ["max_tokens" => $structuredTokenBudget], "aiagent_nsfw");
+            // This direct request must inherit the connector's normal output configuration. Do not
+            // carry a prompt-specific FORCE_MAX_TOKENS value into it or impose a SHARMAT ceiling.
+            $hadForcedMaxTokens = array_key_exists("FORCE_MAX_TOKENS", $GLOBALS);
+            $previousForcedMaxTokens = $hadForcedMaxTokens ? $GLOBALS["FORCE_MAX_TOKENS"] : null;
+            if ($hadForcedMaxTokens) { unset($GLOBALS["FORCE_MAX_TOKENS"]); }
+            try {
+                $buffer = $connectionHandler->fast_request($contextData, [], "aiagent_nsfw");
+            } finally {
+                if ($hadForcedMaxTokens) { $GLOBALS["FORCE_MAX_TOKENS"] = $previousForcedMaxTokens; }
+            }
 
             $original_speech = " ... Ohh .. " . (strtr(trim($buffer), ['"' => '', "{$GLOBALS["HERIKA_NAME"]}:" => ""]));
 

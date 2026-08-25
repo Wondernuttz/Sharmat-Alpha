@@ -2882,13 +2882,6 @@ function _getNsfwSetting($key, $default = null) {
     return isset($cache[$key]) ? $cache[$key] : $default;
 }
 
-// Structured CHIM replies need enough room for both the spoken text and the JSON envelope.
-// Keep this internal: exposing a low user-settable cap allowed otherwise valid replies to be cut
-// before their closing braces and silently discarded. Prompt wording controls response brevity.
-function aiagentNsfwStructuredResponseTokenBudget() {
-    return 512;
-}
-
 // Numeric setting with a safe fallback - arousal gains/thresholds are UI-tunable numbers.
 function aiagentNsfwArousalNum($key, $default) {
     $v = _getNsfwSetting($key, $default);

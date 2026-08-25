@@ -38,14 +38,18 @@ assert.ok(configManager.includes("fdSet('NSFW_EXCLUDED_NPCS', 'nsfwExcludedNpcs'
 assert.ok(configManager.includes("'reason' => 'user_excluded'"));
 
 const prompts = read('prompts.php');
-assert.ok(prompts.includes('aiagentNsfwStructuredResponseTokenBudget()'));
 assert.ok(!prompts.includes('TOKEN_LIMIT_SEX_SCENE'));
 assert.ok(!prompts.includes('TOKEN_LIMIT_CLIMAX'));
 assert.ok(!prompts.includes('TOKEN_LIMIT_PHYSICS'));
+assert.ok(!prompts.includes('force_tokens_max'));
 assert.ok(!prompts.includes('"player_request" => ["The Narrator: "]'));
 
-assert.ok(common.includes('function aiagentNsfwStructuredResponseTokenBudget()'));
-assert.ok(common.includes('return 512;'));
+assert.ok(!common.includes('function aiagentNsfwStructuredResponseTokenBudget()'));
+
+const ostimHandler = read('nsfw_ostim_handler.php');
+assert.ok(ostimHandler.includes('fast_request($contextData, [], "aiagent_nsfw")'));
+assert.ok(!ostimHandler.includes('["max_tokens" => $structuredTokenBudget]'));
+assert.ok(!ostimHandler.includes('$GLOBALS["FORCE_MAX_TOKENS"] = $structuredTokenBudget'));
 
 assert.ok(!settingsUi.includes('Response Token Limits'));
 assert.ok(settingsUi.includes('Action Voice &amp; Random Moans'));
