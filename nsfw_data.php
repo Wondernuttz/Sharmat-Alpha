@@ -1392,6 +1392,7 @@ function nsfw_default_reltypes_config() {
 
 function nsfw_default_settings_config() {
     return [
+        'NSFW_EXCLUDED_NPCS' => '',
         'XTTS_MODIFY_LEVEL1' => false,
         'XTTS_MODIFY_LEVEL2' => false,
         'XTTS_SPEED_LEVEL1' => 0.8,
@@ -1438,9 +1439,6 @@ function nsfw_default_settings_config() {
         'WHISKEY_DICK_CHANCE_6' => 100,
         'NSFW_WHISKEY_DICK_DURATION_MINUTES' => 10,
         'NSFW_PLAYER_DRUNK_WINDOW_MINUTES' => 5,
-        'TOKEN_LIMIT_SEX_SCENE' => 100,
-        'TOKEN_LIMIT_CLIMAX' => 50,
-        'TOKEN_LIMIT_PHYSICS' => 240,
         'COOLDOWN_SEX_SCENE' => 15,
         'COOLDOWN_CLIMAX' => 30,
         'PHYSICS_TOUCH_COOLDOWN' => 2,

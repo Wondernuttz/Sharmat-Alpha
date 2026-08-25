@@ -1451,7 +1451,7 @@ function aiagentNsfwQueueAuthoritativeArousalSyncForTurn() {
     if (!in_array($oslaSyncEvent, ['inputtext', 'inputtext_s', 'ginputtext', 'ginputtext_s'], true)) { return; }
     $actorName = trim((string)($GLOBALS["HERIKA_NAME"] ?? ''));
     if ($actorName === '' || nsfwIsNarratorName($actorName)) { return; }
-    if (function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($actorName)) { return; }
+    if (function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($actorName)) { return; }
     $st = getIntimacyForActor($actorName);
     if (!is_array($st)) { return; }
     $oslaValue = (int)max(0, min(100, round(((float)($st['sex_disposal'] ?? 0)) * 3.3)));
@@ -1876,7 +1876,7 @@ function aiagentNsfwIsSlutNpc($npcName) {
         $ext = NsfwNpcData::get($npcName);
         $flag = !empty($ext['is_slut']);
     } catch (Throwable $t) { $flag = false; }
-    if ($flag && function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($npcName)) { $flag = false; }
+    if ($flag && function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($npcName)) { $flag = false; }
     $cache[$npcName] = $flag;
     return $flag;
 }
@@ -1987,6 +1987,7 @@ function aiagentNsfwRuntimeStateClear() {
 function aiagentNsfwRelTypeSexEligible($npcName) {
     $npcName = trim((string)$npcName);
     if ($npcName === '') { return true; }
+    if (function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($npcName)) { return false; }
     // OPEN MODE: rel types and affinity floors do not gate (children stay gated by their own frame).
     if (aiagentNsfwOpenMode() && !(function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($npcName))) { return true; }
     // PROMISCUOUS (SLUT) MARK: eligibility is affinity-tier driven from Acquaintance (6) up - the
@@ -2012,12 +2013,12 @@ function aiagentNsfwRelTypeSexEligible($npcName) {
         if ($row && !empty($row['value'])) {
             $cfg = json_decode($row['value'], true);
             if (is_array($cfg)) {
-                if (array_key_exists('enabled', $cfg) && !$cfg['enabled']) { return true; } // gate disabled in UI
+                if (array_key_exists('enabled', $cfg) && !$cfg['enabled']) { return true; }
                 if (is_array($cfg['eligible_types'] ?? null)) { $eligible = array_map('strtolower', $cfg['eligible_types']); }
             }
         }
     } catch (Exception $e) { return true; }
-    if (empty($eligible)) { return true; } // nothing configured eligible -> gate effectively off
+    if (empty($eligible)) { return true; }
     $relType = '';
     try {
         if (class_exists('RelationshipManager')) {
@@ -2215,6 +2216,37 @@ function aiagentNsfwIsChildNpc($actorName) {
         }
     }
     return false;
+}
+}
+
+// User-managed exact-name exclusions. This is separate from child detection: users may add
+// modded actors here and remove them later (for example after an FMR child becomes an adult).
+if (!function_exists('aiagentNsfwExcludedNpcNames')) {
+function aiagentNsfwExcludedNpcNames() {
+    $raw = function_exists('_getNsfwSetting') ? (string)_getNsfwSetting('NSFW_EXCLUDED_NPCS', '') : '';
+    if (trim($raw) === '') { return []; }
+    $names = preg_split('/[\r\n,;]+/', $raw, -1, PREG_SPLIT_NO_EMPTY);
+    $result = [];
+    foreach ($names as $name) {
+        $name = strtolower(trim((string)$name));
+        if ($name !== '') { $result[$name] = true; }
+    }
+    return array_keys($result);
+}
+}
+
+if (!function_exists('aiagentNsfwIsExcludedNpc')) {
+function aiagentNsfwIsExcludedNpc($actorName) {
+    $name = strtolower(trim((string)$actorName));
+    return $name !== '' && in_array($name, aiagentNsfwExcludedNpcNames(), true);
+}
+}
+
+// One hard server-side boundary for every intimacy route. Child race/flag/name protection cannot
+// be bypassed; the exact-name exclusion list is controlled by the user.
+if (!function_exists('aiagentNsfwIsProtectedNpc')) {
+function aiagentNsfwIsProtectedNpc($actorName) {
+    return aiagentNsfwIsChildNpc($actorName) || aiagentNsfwIsExcludedNpc($actorName);
 }
 }
 
@@ -2850,6 +2882,13 @@ function _getNsfwSetting($key, $default = null) {
     return isset($cache[$key]) ? $cache[$key] : $default;
 }
 
+// Structured CHIM replies need enough room for both the spoken text and the JSON envelope.
+// Keep this internal: exposing a low user-settable cap allowed otherwise valid replies to be cut
+// before their closing braces and silently discarded. Prompt wording controls response brevity.
+function aiagentNsfwStructuredResponseTokenBudget() {
+    return 512;
+}
+
 // Numeric setting with a safe fallback - arousal gains/thresholds are UI-tunable numbers.
 function aiagentNsfwArousalNum($key, $default) {
     $v = _getNsfwSetting($key, $default);
@@ -2865,9 +2904,10 @@ function aiagentNsfwArousalNum($key, $default) {
 function aiagentNsfwNpcToNpcSexEligible($npcA, $npcB) {
     $npcA = trim((string)$npcA); $npcB = trim((string)$npcB);
     if ($npcA === '' || $npcB === '' || strcasecmp($npcA, $npcB) === 0) { return false; }
+    // Hard protection runs before open-mode or special-lane bypasses.
+    if (function_exists('aiagentNsfwIsProtectedNpc') && (aiagentNsfwIsProtectedNpc($npcA) || aiagentNsfwIsProtectedNpc($npcB))) { return false; }
     // OPEN MODE: any adult NPC may engage any adult NPC (incl. slaves); children never.
     if (aiagentNsfwOpenMode()) {
-        if (function_exists('aiagentNsfwIsChildNpc') && (aiagentNsfwIsChildNpc($npcA) || aiagentNsfwIsChildNpc($npcB))) { return false; }
         return true;
     }
     if (function_exists('isNpcSlave') && isNpcSlave($npcA)) { return false; }        // slave A: player-only
@@ -2883,19 +2923,18 @@ function aiagentNsfwNpcToNpcSexEligible($npcA, $npcB) {
     if (aiagentNsfwIsSlutNpc($npcA)) { return $aff >= 6; }
     $floor = (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56);
     if ($aff < $floor) { return false; }
-    // Rel-type eligibility from the SAME UI grid the player gate reads
     $eligible = null;
     try {
         $row = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
         if ($row && !empty($row['value'])) {
             $cfg = json_decode($row['value'], true);
             if (is_array($cfg)) {
-                if (array_key_exists('enabled', $cfg) && !$cfg['enabled']) { return true; } // UI gate off -> affinity alone
+                if (array_key_exists('enabled', $cfg) && !$cfg['enabled']) { return true; }
                 if (is_array($cfg['eligible_types'] ?? null)) { $eligible = array_map('strtolower', $cfg['eligible_types']); }
             }
         }
-    } catch (Exception $e) { return true; } // config unreadable -> affinity already passed, don't hard-block
-    if (empty($eligible)) { return true; }  // nothing configured eligible -> type gate effectively off
+    } catch (Exception $e) { return true; }
+    if (empty($eligible)) { return true; }
     return in_array($type, $eligible, true);
 }
 

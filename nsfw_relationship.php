@@ -43,8 +43,8 @@ class NsfwRelationship {
         if ($npcName === ''
             || !function_exists('aiagentNsfwOpenMode')
             || !aiagentNsfwOpenMode()
-            || !function_exists('aiagentNsfwIsChildNpc')
-            || aiagentNsfwIsChildNpc($npcName)
+            || !function_exists('aiagentNsfwIsProtectedNpc')
+            || aiagentNsfwIsProtectedNpc($npcName)
             || !function_exists('aiagentNsfwBuildOpenModeScenePrompt')) {
             return false;
         }
@@ -330,6 +330,9 @@ class NsfwRelationship {
         if (function_exists('nsfwIsNarratorName') && nsfwIsNarratorName($npcName)) {
             return '';
         }
+        if (function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($npcName)) {
+            return '';
+        }
 
         require_once __DIR__ . "/nsfw_data.php";
         $extended = NsfwNpcData::get($npcName);
@@ -366,6 +369,9 @@ class NsfwRelationship {
             return '';
         }
         if (function_exists('nsfwIsNarratorName') && nsfwIsNarratorName($npcName)) {
+            return '';
+        }
+        if (function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($npcName)) {
             return '';
         }
 
@@ -427,7 +433,7 @@ class NsfwRelationship {
         // never swap. Open mode keeps the regular texts (the open_mode_notice carries the world
         // rules) but both must also bypass the type-ineligibility addendum below, which otherwise
         // orders a per-turn RefuseSex and fights the eligibility gate.
-        $ovIsChild = function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($npcName);
+        $ovIsChild = function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($npcName);
         $ovOpenMode = !$ovIsChild && function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode();
         $ovSlutMode = !$ovIsChild && !$ovOpenMode && !empty($extended['is_slut']);
         if ($family === 'regular' && $ovSlutMode) { $family = 'slut'; }
@@ -1159,7 +1165,7 @@ class NsfwRelationship {
         // lower-level helper reintroduce a relationship-type refusal if the
         // direct scene auto-accept has not happened yet.
         if (function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode()
-            && (!function_exists('aiagentNsfwIsChildNpc') || !aiagentNsfwIsChildNpc($npcName))) {
+            && (!function_exists('aiagentNsfwIsProtectedNpc') || !aiagentNsfwIsProtectedNpc($npcName))) {
             return null;
         }
 

@@ -730,8 +730,8 @@ class NsfwPhysics {
                 return self::suppressedGazeResult($actorName, $region, 'the target is participating in an active scene');
             }
         }
-        if (function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($actorName)) {
-            return self::suppressedGazeResult($actorName, $region, 'the target is a child');
+        if (function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($actorName)) {
+            return self::suppressedGazeResult($actorName, $region, 'the target is child-protected or excluded');
         }
 
         // Server-side per-actor cooldown (on top of the DLL's) so reactions do not spam.

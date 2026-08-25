@@ -65,7 +65,7 @@ $_rtEmoji = RelationshipManager::TYPE_EMOJI;
                     <div class="alert error" id="reltypesErrorAlert"></div>
 
                     <p style="color: #9988BB; font-size: 12px; margin-bottom: 18px;">
-                        Choose which relationship types are <strong style="color:#B8A8C8;">sex-eligible</strong>. Player-initiated sex with an NPC whose type is <em>not</em> checked gets a polite refusal from Friendly through Bonded instead of the normal scene. Acquaintance and lower still follow the normal affinity tier prompts. Slaves and prostitutes are exempt. Player-only (never NPC&harr;NPC). Types are pulled live from CHIM, so new ones appear here automatically. Use <code style="background: #252233; padding: 2px 6px; border-radius: 3px;">#PLAYER_NAME#</code> in the refusal prompts.
+                        Choose which relationship types may lead to <strong style="color:#B8A8C8;">sex</strong>. This keeps SHARMAT's existing one-way initiator check; Hug, Kiss, and Hold Hands remain free/OStim-driven. Excluded and child NPCs are always blocked. Types are pulled live from CHIM, so new ones appear here automatically. Use <code style="background: #252233; padding: 2px 6px; border-radius: 3px;">#PLAYER_NAME#</code> in the refusal prompts.
                     </p>
 
                     <!-- Master toggle: OFF = bypass the whole gate -->

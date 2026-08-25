@@ -722,6 +722,7 @@ SQL;
                 'NSFW_SCENE_CALL_MIN_AFFINITY' => 56,  // Min affinity (Fond) for an NPC to autonomously call/initiate a sex scene
                 'NSFW_PLAYER_SCENE_CALL_COOLDOWN_SECONDS' => 30,  // Global gate: min seconds between ANY NPC initiating a sex scene with the player (0 = off)
                 'GENERIC_GLOSSARY' => '',
+                'NSFW_EXCLUDED_NPCS' => '',
                 'TRACK_DRUNK_STATUS' => false,
                 'DRUNK_WINDOW_HOURS' => 12,
                 'TRACK_FERTILITY_INFO' => false,
@@ -760,10 +761,6 @@ SQL;
                 'WHISKEY_DICK_CHANCE_6' => 100,
                 'NSFW_WHISKEY_DICK_DURATION_MINUTES' => 10,  // Real minutes the impotence window lasts (~3 in-game hours at default timescale)
                 'NSFW_PLAYER_DRUNK_WINDOW_MINUTES' => 5,      // Real minutes your alcohol drinks stay counted (rolling window; 3 drinks in this window = threshold)
-                // Token limits - control response length during scenes
-                'TOKEN_LIMIT_SEX_SCENE' => 100,  // Regular sex scene dialogue
-                'TOKEN_LIMIT_CLIMAX' => 50,  // Orgasm/climax responses (very short)
-                'TOKEN_LIMIT_PHYSICS' => 240,  // VR physics reactions need enough room for JSON-mode replies
                 // Cooldowns - prevent event spam
                 'COOLDOWN_SEX_SCENE' => 15,  // Seconds between chatnf_sl events
                 'COOLDOWN_CLIMAX' => 30,  // Seconds between orgasm events
@@ -1151,6 +1148,7 @@ SQL;
                 'DRUNK_WINDOW_HOURS' => isset($_POST['DRUNK_WINDOW_HOURS']) ? max(1, intval($_POST['DRUNK_WINDOW_HOURS'])) : 12,
                 'TRACK_FERTILITY_INFO' => isset($_POST['TRACK_FERTILITY_INFO']) ? filter_var($_POST['TRACK_FERTILITY_INFO'], FILTER_VALIDATE_BOOLEAN) : false,
                 'CHILD_PROTECTION_FRAME' => $_POST['CHILD_PROTECTION_FRAME'] ?? '',
+                'NSFW_EXCLUDED_NPCS' => trim((string)($_POST['NSFW_EXCLUDED_NPCS'] ?? '')),
                 'ENABLE_SEX_DISPOSAL' => isset($_POST['ENABLE_SEX_DISPOSAL']) ? filter_var($_POST['ENABLE_SEX_DISPOSAL'], FILTER_VALIDATE_BOOLEAN) : true,
                 // Arousal tuning (arousal refactor 2026-07-03): decay, gain cooldown, gains, thresholds
                 'AROUSAL_DECAY_PER_GAME_HOUR' => isset($_POST['AROUSAL_DECAY_PER_GAME_HOUR']) ? max(0, min(100, intval($_POST['AROUSAL_DECAY_PER_GAME_HOUR']))) : 2,
@@ -1200,10 +1198,6 @@ SQL;
                 'WHISKEY_DICK_CHANCE_6' => isset($_POST['WHISKEY_DICK_CHANCE_6']) ? max(0, min(100, intval($_POST['WHISKEY_DICK_CHANCE_6']))) : 100,
                 'NSFW_WHISKEY_DICK_DURATION_MINUTES' => isset($_POST['NSFW_WHISKEY_DICK_DURATION_MINUTES']) ? max(1, min(60, intval($_POST['NSFW_WHISKEY_DICK_DURATION_MINUTES']))) : 10,
                 'NSFW_PLAYER_DRUNK_WINDOW_MINUTES' => isset($_POST['NSFW_PLAYER_DRUNK_WINDOW_MINUTES']) ? max(1, min(30, intval($_POST['NSFW_PLAYER_DRUNK_WINDOW_MINUTES']))) : 5,
-                // Token limits
-                'TOKEN_LIMIT_SEX_SCENE' => isset($_POST['TOKEN_LIMIT_SEX_SCENE']) ? intval($_POST['TOKEN_LIMIT_SEX_SCENE']) : 100,
-                'TOKEN_LIMIT_CLIMAX' => isset($_POST['TOKEN_LIMIT_CLIMAX']) ? intval($_POST['TOKEN_LIMIT_CLIMAX']) : 50,
-                'TOKEN_LIMIT_PHYSICS' => isset($_POST['TOKEN_LIMIT_PHYSICS']) ? max(120, min(400, intval($_POST['TOKEN_LIMIT_PHYSICS']))) : 240,
                 // Cooldowns
                 'COOLDOWN_SEX_SCENE' => isset($_POST['COOLDOWN_SEX_SCENE']) ? intval($_POST['COOLDOWN_SEX_SCENE']) : 15,
                 'COOLDOWN_CLIMAX' => isset($_POST['COOLDOWN_CLIMAX']) ? intval($_POST['COOLDOWN_CLIMAX']) : 30,
@@ -1725,6 +1719,20 @@ SQL;
         ];
 
         $nameLower = strtolower(trim($npcName));
+
+        // User-managed exact-name exclusions for modded actors that do not expose a reliable child race/flag.
+        try {
+            $settings = NsfwData::getBlob(NsfwData::KEY_SETTINGS);
+            $excludedRaw = is_array($settings) ? (string)($settings['NSFW_EXCLUDED_NPCS'] ?? '') : '';
+            $excludedNames = preg_split('/[\r\n,;]+/', $excludedRaw, -1, PREG_SPLIT_NO_EMPTY);
+            foreach ($excludedNames as $excludedName) {
+                if ($nameLower === strtolower(trim((string)$excludedName))) {
+                    return ['blocked' => true, 'reason' => 'user_excluded'];
+                }
+            }
+        } catch (Throwable $e) {
+            error_log('[AIAGENTNSFW] Could not read manual NPC exclusions: ' . $e->getMessage());
+        }
 
         // Check children blocklist
         if (in_array($nameLower, $childrenBlocklist)) {
@@ -7301,14 +7309,6 @@ PROMPT;
                 });
             }
 
-            // Token limit sliders
-            const tokenSexSceneSlider = document.getElementById('tokenLimitSexScene');
-            if (tokenSexSceneSlider) {
-                tokenSexSceneSlider.addEventListener('input', function() {
-                    document.getElementById('tokenLimitSexSceneValue').textContent = this.value + ' tokens';
-                });
-            }
-
             const blockRechatSlider = document.getElementById('blockRechatTimeout');
             if (blockRechatSlider) {
                 blockRechatSlider.addEventListener('input', function() {
@@ -7363,13 +7363,6 @@ PROMPT;
             if (npcSceneDistancePriorityMarginSlider) {
                 npcSceneDistancePriorityMarginSlider.addEventListener('input', function() {
                     document.getElementById('npcSceneDistancePriorityMarginValue').textContent = this.value + ' units';
-                });
-            }
-
-            const tokenClimaxSlider = document.getElementById('tokenLimitClimax');
-            if (tokenClimaxSlider) {
-                tokenClimaxSlider.addEventListener('input', function() {
-                    document.getElementById('tokenLimitClimaxValue').textContent = this.value + ' tokens';
                 });
             }
 
@@ -7493,6 +7486,7 @@ PROMPT;
                         elSet('drunkWindowHoursValue', 'textContent', drunkWin + ' game hours');
                         elSet('trackFertilityInfo', 'checked', data.data.TRACK_FERTILITY_INFO || false);
                         if (data.data.CHILD_PROTECTION_FRAME) elSet('childProtectionFrame', 'value', data.data.CHILD_PROTECTION_FRAME);
+                        elSet('nsfwExcludedNpcs', 'value', data.data.NSFW_EXCLUDED_NPCS || '');
                         elSet('enableSexDisposal', 'checked', data.data.ENABLE_SEX_DISPOSAL !== false);  // Default true
                         elSet('enableAffinityGating', 'checked', data.data.ENABLE_AFFINITY_GATING !== false);  // Default true
                         // Arousal tuning numbers (elSet is null-safe)
@@ -7610,16 +7604,6 @@ PROMPT;
                             const pwLabel = document.getElementById('prostitutePaymentWindowValue');
                             if (pwLabel) { pwLabel.textContent = (parseInt(prostitutePaymentWindow, 10) === 0) ? 'until orgasm only' : (prostitutePaymentWindow + ' minutes'); }
                         }
-                        // Token limits
-                        const sexSceneTokens = data.data.TOKEN_LIMIT_SEX_SCENE !== undefined ? data.data.TOKEN_LIMIT_SEX_SCENE : 100;
-                        elSet('tokenLimitSexScene', 'value', sexSceneTokens);
-                        elSet('tokenLimitSexSceneValue', 'textContent', sexSceneTokens + ' tokens');
-                        const climaxTokens = data.data.TOKEN_LIMIT_CLIMAX !== undefined ? data.data.TOKEN_LIMIT_CLIMAX : 50;
-                        elSet('tokenLimitClimax', 'value', climaxTokens);
-                        elSet('tokenLimitClimaxValue', 'textContent', climaxTokens + ' tokens');
-                        const physicsTokens = data.data.TOKEN_LIMIT_PHYSICS !== undefined ? data.data.TOKEN_LIMIT_PHYSICS : 240;
-                        elSet('tokenLimitPhysics', 'value', physicsTokens);
-                        elSet('tokenLimitPhysicsValue', 'textContent', physicsTokens + ' tokens');
                         // Cooldowns
                         const cooldownSexScene = data.data.COOLDOWN_SEX_SCENE !== undefined ? data.data.COOLDOWN_SEX_SCENE : 15;
                         elSet('cooldownSexScene', 'value', cooldownSexScene);
@@ -7869,6 +7853,7 @@ PROMPT;
             fdSet('DRUNK_WINDOW_HOURS', 'drunkWindowHours', 'value');
             fdSet('TRACK_FERTILITY_INFO', 'trackFertilityInfo', 'checked');
             fdSet('CHILD_PROTECTION_FRAME', 'childProtectionFrame', 'value');
+            fdSet('NSFW_EXCLUDED_NPCS', 'nsfwExcludedNpcs', 'value');
             fdSet('ENABLE_SEX_DISPOSAL', 'enableSexDisposal', 'checked');
             fdSet('ENABLE_AFFINITY_GATING', 'enableAffinityGating', 'checked');
             // Arousal tuning numbers
@@ -7921,10 +7906,6 @@ PROMPT;
             if (document.getElementById('oslaSyncEnabled')) fdSet('NSFW_OSLA_SYNC_ENABLED', 'oslaSyncEnabled', 'checked');
             const prostitutePaymentWindowSave = document.getElementById('prostitutePaymentWindow');
             if (prostitutePaymentWindowSave) { formData.append('PROSTITUTE_PAYMENT_WINDOW_MINUTES', prostitutePaymentWindowSave.value); }
-            // Token limits
-            fdSet('TOKEN_LIMIT_SEX_SCENE', 'tokenLimitSexScene', 'value');
-            fdSet('TOKEN_LIMIT_CLIMAX', 'tokenLimitClimax', 'value');
-            fdSet('TOKEN_LIMIT_PHYSICS', 'tokenLimitPhysics', 'value');
             // Cooldowns
             fdSet('COOLDOWN_SEX_SCENE', 'cooldownSexScene', 'value');
             fdSet('COOLDOWN_CLIMAX', 'cooldownClimax', 'value');

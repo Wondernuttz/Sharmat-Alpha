@@ -279,7 +279,7 @@ class NsfwOstimHandler {
         // Store the cue in a global; prompts.php registers $PROMPTS["ext_nsfw_payment_check"] from it.
         // (prompts.php RESETS $PROMPTS after prerequest, so a direct set here gets wiped - same reason
         // the orgasm cue is passed via AIAGENTNSFW_ORGASM_CUE_OVERRIDE.)
-        $GLOBALS["AIAGENTNSFW_PAYMENT_CUE"] = "The Narrator: {$payer} just handed {$npcName} {$itemDesc} as payment. {$reactClause} React out loud right now, in character - acknowledge the item by name.";
+        $GLOBALS["AIAGENTNSFW_PAYMENT_CUE"] = "Scene Event: {$payer} just handed {$npcName} {$itemDesc} as payment. {$reactClause} React out loud right now, in character - acknowledge the item by name.";
         $GLOBALS["AVOID_LLM_CALL"] = false; // ensure the reaction is actually generated
 
         updateIntimacyForActor($npcName, $intimacyStatus);
@@ -1367,7 +1367,7 @@ class NsfwOstimHandler {
                 $a = trim((string)$a);
                 if ($a === '' || strcasecmp($a, $playerNm) === 0) { continue; }
                 if ($primaryPartner && strcasecmp($a, (string)$primaryPartner) === 0) { continue; }
-                if (function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($a)) { continue; }
+                if (function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($a)) { continue; }
                 $others[] = $a;
             }
             if (!empty($others)) {
@@ -2474,7 +2474,7 @@ class NsfwOstimHandler {
 	            error_log("[AIAGENT_NSFW] Post-scene for $actor: no pillow talk earned; suppressing LLM response");
 	        }
 
-        $GLOBALS["PROMPTS"]["chatnf_sl_end"]["player_request"] = ["The Narrator: " . implode(",", $scoring) . "\n#Post-Scene Guidance: " . $postScenePrompt];
+        $GLOBALS["PROMPTS"]["chatnf_sl_end"]["player_request"] = ["Scene Event: " . implode(",", $scoring) . "\n#Post-Scene Guidance: " . $postScenePrompt];
         $GLOBALS["PATCH_PROMPT_ENFORCE_ACTIONS"] = false;
         $GLOBALS["COMMAND_PROMPT_ENFORCE_ACTIONS"] = "";
 
@@ -3270,7 +3270,7 @@ class NsfwOstimHandler {
         } else {
             // Add context to player_request for LLM
             if (!empty($orgasmContext)) {
-                $GLOBALS["PROMPTS"]["ext_nsfw_orgasm"]["player_request"] = ["The Narrator: $actor $orgasmContext"];
+                $GLOBALS["PROMPTS"]["ext_nsfw_orgasm"]["player_request"] = ["Scene Event: $actor $orgasmContext"];
             }
             error_log("[AIAGENT-NSFW] Contextual orgasm: $orgasmContext");
 
@@ -3665,10 +3665,11 @@ class NsfwOstimHandler {
                 return;
             }
 
-            // Use token limit from UI settings, not hardcoded
-            $climaxTokenLimit = _getNsfwSetting('TOKEN_LIMIT_CLIMAX', 100);
-            $GLOBALS["FORCE_MAX_TOKENS"] = $climaxTokenLimit;
-            $buffer = $connectionHandler->fast_request($contextData, ["max_tokens" => $climaxTokenLimit], "aiagent_nsfw");
+            // Keep the structured envelope internal and safely sized. Old saved 50-token values
+            // must never truncate this direct climax request before its closing JSON delimiter.
+            $structuredTokenBudget = aiagentNsfwStructuredResponseTokenBudget();
+            $GLOBALS["FORCE_MAX_TOKENS"] = $structuredTokenBudget;
+            $buffer = $connectionHandler->fast_request($contextData, ["max_tokens" => $structuredTokenBudget], "aiagent_nsfw");
 
             $original_speech = " ... Ohh .. " . (strtr(trim($buffer), ['"' => '', "{$GLOBALS["HERIKA_NAME"]}:" => ""]));
 

@@ -200,7 +200,6 @@ function aiagent_nsfw_seed_action_catalog()
                 description     = EXCLUDED.description,
                 parameters_json = EXCLUDED.parameters_json,
                 metadata        = EXCLUDED.metadata,
-                is_activated    = EXCLUDED.is_activated,
                 updated_at      = NOW()";
 
         try {

@@ -173,7 +173,7 @@ Event OnItemRemoved(Form akBaseItem, int aiItemCount, ObjectReference akItemRefe
 	endif
 	Debug.Trace("[CHIM-NSFW] PlayerAlias: slave poison fired from " + poisonSourceName + " using " + akBaseItem.GetName())
 	if poisonSourceName != ""
-		AIAgentFunctions.logMessageForActor("The Narrator: " + poisonSourceName + " secretly poisoned " + Game.GetPlayer().GetDisplayName() + ". They must lie like their life depends on it and act worried, helpful, or innocent unless exposed.", "ext_nsfw_slave_poison", poisonSourceName)
+		AIAgentFunctions.logMessageForActor("Scene Event: " + poisonSourceName + " secretly poisoned " + Game.GetPlayer().GetDisplayName() + ". They must lie like their life depends on it and act worried, helpful, or innocent unless exposed.", "ext_nsfw_slave_poison", poisonSourceName)
 	endif
 	RegisterForSingleUpdate(poisonTickSeconds)
 EndEvent

@@ -91,15 +91,16 @@ $_chatnfSlDefaults = [
 ];
 $_chatnfSlCues = _parseNsfwCues(_getNsfwPromptSetting('chatnf_sl_cues', ''), $_chatnfSlDefaults);
 
-// Get configurable token limit (default 100)
-$_sexSceneTokenLimit = _getNsfwSetting('TOKEN_LIMIT_SEX_SCENE', 100);
+// The generation envelope is intentionally internal. Prompt wording asks for short speech; the
+// connector still gets enough room to close structured JSON even if an old DB saved a 50-token cap.
+$_structuredResponseTokenBudget = aiagentNsfwStructuredResponseTokenBudget();
 
 $GLOBALS["PROMPTS"]["chatnf_sl"] = [
     "cue" => array_map(function($cue) {
         return _wrapNsfwXml('response_instruction', $cue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
     }, $_chatnfSlCues),
-    "player_request" => [($GLOBALS["PLAYER_NAME"] ?? "The Narrator") . ": "],
-    "extra" => ["force_tokens_max" => $_sexSceneTokenLimit]
+    "player_request" => [($GLOBALS["PLAYER_NAME"] ?? "Player") . ": "],
+    "extra" => ["force_tokens_max" => $_structuredResponseTokenBudget]
 ];
 
 // Non-explicit version (same structure, no explicit words)
@@ -117,7 +118,7 @@ $GLOBALS["PROMPTS"]["chatnf_sl_nr"] = [
         return _wrapNsfwXml('response_instruction', $cue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
     }, $_chatnfSlNrCues),
     "player_request" => [$GLOBALS["gameRequest"][3] ?? ""],
-    "extra" => ["force_tokens_max" => $_sexSceneTokenLimit]
+    "extra" => ["force_tokens_max" => $_structuredResponseTokenBudget]
 ];
 
 // Affection/romantic scenes (tier 1/2) use the non-explicit cue, never the explicit one
@@ -162,13 +163,10 @@ if (empty(trim($_climaxCue))) {
     }
 }
 
-// Get configurable climax token limit (default 50 - very short)
-$_climaxTokenLimit = _getNsfwSetting('TOKEN_LIMIT_CLIMAX', 50);
-
 $GLOBALS["PROMPTS"]["chatnf_sl_climax"] = [
     "cue" => [_wrapNsfwXml('climax_instruction', $_climaxCue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")],
     "player_request" => "YEEAH!",
-    "extra" => ["force_tokens_max" => $_climaxTokenLimit]
+    "extra" => ["force_tokens_max" => $_structuredResponseTokenBudget]
 ];
 
 // Post-sex pillow talk
@@ -237,7 +235,7 @@ $GLOBALS["PROMPTS"]["chatnf_npc_sl"] = [
     "cue" => array_map(function($cue) {
         return _wrapNsfwXml('npc_scene_instruction', $cue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "");
     }, $_npcSceneCues),
-    "player_request" => ["The Narrator: "]
+    "player_request" => ["Scene Event: "]
 ];
 
 // ext_nsfw_sexcene - OStim scene events (legacy name with typo, kept for compatibility)
@@ -257,7 +255,7 @@ if (!empty($GLOBALS["AIAGENTNSFW_TIER_CUE_OVERRIDE"])) {
 $GLOBALS["PROMPTS"]["ext_nsfw_sexcene"] = [
     "cue" => [$_sexsceneCue],
     "player_request" => [$GLOBALS["gameRequest"][3] ?? ""],
-    "extra" => ["force_tokens_max" => $_sexSceneTokenLimit]
+    "extra" => ["force_tokens_max" => $_structuredResponseTokenBudget]
 ];
 
 // ext_nsfw_action - Scene action events (position changes, etc.)
@@ -294,7 +292,7 @@ if (empty(trim($_orgasmCue))) {
 $GLOBALS["PROMPTS"]["ext_nsfw_orgasm"] = [
     "cue" => [_wrapNsfwXml('climax_instruction', $_orgasmCue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")],
     "player_request" => [""],
-    "extra" => ["force_tokens_max" => $_climaxTokenLimit]
+    "extra" => ["force_tokens_max" => $_structuredResponseTokenBudget]
 ];
 
 // Apply prerequest.php's computed cue (handles player vs NPC orgasm routing).
@@ -345,7 +343,7 @@ $_npcOrgasmCue = str_replace('#NPC_NAME#', $GLOBALS["HERIKA_NAME"] ?? "", $_npcO
 $GLOBALS["PROMPTS"]["ext_nsfw_npc_orgasm"] = [
     "cue" => [_wrapNsfwXml('npc_climax_instruction', $_npcOrgasmCue) . " " . ($GLOBALS["TEMPLATE_DIALOG"] ?? "")],
     "player_request" => [""],
-    "extra" => ["force_tokens_max" => $_climaxTokenLimit]
+    "extra" => ["force_tokens_max" => $_structuredResponseTokenBudget]
 ];
 
 if (!empty($GLOBALS["AIAGENTNSFW_ORGASM_CUE_OVERRIDE"]) && (($GLOBALS["gameRequest"][0] ?? '') === 'ext_nsfw_npc_orgasm')) {
@@ -592,12 +590,10 @@ $_physicsPlayerReq = $GLOBALS["gameRequest"][3] ?? "";
 if (function_exists('aiagentNsfwContactStripTags')) {
     $_physicsPlayerReq = aiagentNsfwContactStripTags($_physicsPlayerReq);
 }
-$_physicsTokenLimit = max(120, min(400, (int)_getNsfwSetting('TOKEN_LIMIT_PHYSICS', 240)));
-
 $GLOBALS["PROMPTS"]["ext_nsfw_physics"] = [
     "cue" => [$_physicsCue],
     "player_request" => [$_physicsPlayerReq],
-    "extra" => ["force_tokens_max" => $_physicsTokenLimit]
+    "extra" => ["force_tokens_max" => $_structuredResponseTokenBudget]
 ];
 
 // chatnf_physics - Used when preprocessing rewrites ext_nsfw_physics_raw
@@ -605,7 +601,7 @@ $GLOBALS["PROMPTS"]["ext_nsfw_physics"] = [
 $GLOBALS["PROMPTS"]["chatnf_physics"] = [
     "cue" => [$_physicsCue],
     "player_request" => [$_physicsPlayerReq],
-    "extra" => ["force_tokens_max" => $_physicsTokenLimit]
+    "extra" => ["force_tokens_max" => $_structuredResponseTokenBudget]
 ];
 
 // DEBUG: Log the final prompt after building

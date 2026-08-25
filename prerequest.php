@@ -1486,7 +1486,7 @@ if ($isPillowTalkMode) {
 // player scene must not enter the normal affinity-tier AcceptSex/RefuseSex decision machine.
 // This deliberately changes state without calling the AcceptSex FUNCSERV: no arousal bonus,
 // crush, payment, cooldown, or other tool side effects. Existing/sticky refusals still win.
-$openModeChild = function_exists('aiagentNsfwIsChildNpc') ? aiagentNsfwIsChildNpc($actorName) : true;
+$openModeChild = function_exists('aiagentNsfwIsProtectedNpc') ? aiagentNsfwIsProtectedNpc($actorName) : true;
 $openModeSceneEvent = in_array($gameRequest[0] ?? '', [
     'chatnf_sl', 'chatnf_sl_climax', 'chatnf_sl_moan', 'chatnf_sl_naked',
     'ext_nsfw_sexcene', 'ext_nsfw_action', 'ext_nsfw_scene', 'ext_nsfw_orgasm',
@@ -2632,7 +2632,7 @@ if ($shouldInjectEngagedContent) {
         && (int)($intimacyStatus["intensity_tier"] ?? 0) >= 3 && empty($intimacyStatus["scene_is_idle"])) {
         $consentStatusPrompt = '';
         if (function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode()
-            && function_exists('aiagentNsfwIsChildNpc') && !aiagentNsfwIsChildNpc($actorName)
+            && function_exists('aiagentNsfwIsProtectedNpc') && !aiagentNsfwIsProtectedNpc($actorName)
             && function_exists('aiagentNsfwBuildOpenModeScenePrompt')) {
             $openModePartner = (string)($GLOBALS["PLAYER_NAME"] ?? 'the player');
             $openModeAffinity = function_exists('getNpcAffinity') ? (int)getNpcAffinity($actorName) : 0;

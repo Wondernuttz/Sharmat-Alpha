@@ -1716,6 +1716,16 @@ Event CommandManager(String npcname,String  command, String parameter)
 	Debug.Trace("[CHIM NSFW] External command "+command+ " received for "+npcname+" parameter="+parameter)
 	Actor npc=AIAgentFunctions.getAgentByName(npcname);
 
+	; Game-side defense in depth. The server owns the full configurable exclusion list, while this
+	; blocks child actors (and the reported adult-bodied Runa replacement) if a stale/forged command
+	; reaches Papyrus directly.
+	bool protectedIntimacyCommand = command=="ExtCmdHug" || command=="ExtCmdHoldHands" || command=="ExtCmdKiss" || command=="ExtCmdStartSex" || command=="ExtCmdStartThreesome" || command=="ExtCmdStartBlowJob" || command=="ExtCmdStartTitfuck" || command=="ExtCmdStartAnalSex" || command=="ExtCmdStartHandJobSex" || command=="ExtCmdStartHandjobSex" || command=="ExtCmdStartMassage" || command=="ExtCmdStartSelfMasturbation" || command=="ExtCmdSexCommand" || command=="ExtCmdAcceptSex" || command=="ExtCmdRemoveClothes" || command=="ExtCmdDrinkBloodSex"
+	if protectedIntimacyCommand && AIAgentNSFWSceneEngine.IsProtectedMinorActor(npc)
+		Debug.Trace("[CHIM-NSFW] HARD SAFETY BLOCK: protected minor speaker " + npcname + " attempted " + command)
+		AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error: protected actor cannot perform this action", "funcret", npcname)
+		return
+	endif
+
 	; SHARMAT AROUSAL AUTHORITY: cache the server-authored value whether or not OSL is installed,
 	; mirror it one-way into OSL, and drive OStim's current scene from the same canonical state.
 	; Neither consumer is ever read back into SHARMAT. This command is intentionally silent.
@@ -2053,7 +2063,7 @@ Event CommandManager(String npcname,String  command, String parameter)
 		
 		
 		;npc.UnequipAll()
-		AIAgentFunctions.logMessageForActor("The Narrator:" + npcname+" is now naked.","chatnf_sl_naked",npcname)
+		AIAgentFunctions.logMessageForActor("Scene Event: " + npcname+" is now naked.","chatnf_sl_naked",npcname)
 		AIAgentFunctions.logMessageForActor("command@ExtCmdRemoveClothes@@"+npcname+" removes clothes and armor","funcret",npcname)
 		
 	endif
@@ -2113,6 +2123,10 @@ Event CommandManager(String npcname,String  command, String parameter)
 
 		if kissedActor==None
 			AIAgentFunctions.requestMessageForActor("command@ExtCmdKiss@"+parameter+"@error. target nout found;"+parameter+"","funcret",npcname)
+			return
+		endif
+		if AIAgentNSFWSceneEngine.IsProtectedMinorActor(kissedActor)
+			AIAgentFunctions.logMessageForActor("command@ExtCmdKiss@"+parameter+"@error: protected target", "funcret", npcname)
 			return
 		endif
 
@@ -2473,6 +2487,11 @@ Event CommandManager(String npcname,String  command, String parameter)
 			endif
 		endif
 
+		if AIAgentNSFWSceneEngine.IsProtectedMinorActor(receiver)
+			AIAgentFunctions.logMessageForActor("command@ExtCmdHug@"+parameter+"@error: protected target", "funcret", npcname)
+			return
+		endif
+
 		if (npc.GetSitState()==3 || npc.GetSitState()==2) ; Dont use feature if player is not sitting, or is on a mount
 			Debug.SendAnimationEvent(npc, "IdleForceDefaultState")
 		endif
@@ -2591,6 +2610,11 @@ Event CommandManager(String npcname,String  command, String parameter)
 				AIAgentFunctions.logMessageForActor("command@"+command+"@"+parameter+"@error. Player refused to hold hands","funcret",npcname)
 				return;
 			endif
+		endif
+
+		if AIAgentNSFWSceneEngine.IsProtectedMinorActor(receiver)
+			AIAgentFunctions.logMessageForActor("command@ExtCmdHoldHands@"+parameter+"@error: protected target", "funcret", npcname)
+			return
 		endif
 
 		if (npc.GetSitState()==3 || npc.GetSitState()==2)
@@ -3006,42 +3030,30 @@ Event CommandManager(String npcname,String  command, String parameter)
 				return
 			endif
 
-			String actionScene2=OLibrary.GetRandomSceneWithAnyActionCSV(actorsInvolved,sanitizedTag)
-			;String actionScene=OLibrary.GetRandomSceneWithAnyActionCSV(actorsInvolved,"blowjob")
-
 			string furnitureType=OThread.GetFurnitureType(thrId2)
-			if (furnitureType)
-				; FIX 2026-07-11: no random-furniture fallback. If no furniture scene matches the requested
-				; act, fail honestly below instead of warping to an unrelated scene ("vaginal sex" on a bed
-				; used to land on ANY random bed scene).
-				actionScene2=OLibrary.GetRandomFurnitureSceneWithAnyActionCSV(actorsInvolved,furnitureType,sanitizedTag)
-			endif
+			; SceneEngine owns both scene selection and actor-slot changes. It keeps the current furniture
+			; constraint, warps when role order already matches, and safely restarts when it does not.
+			int shiftedOStimThread = AIAgentNSFWSceneEngine.TransitionOStimSceneToAct(thrId2, parameter, sanitizedTag, furnitureType)
 			
 			;String newScene=OLibrary.GetRandomSceneWithMultiActorTagForAnyCSV(actorsInvolved,"reversecowgirl")
 			;String newScene2=OLibrary.GetRandomSceneWithMultiActorTagForAnyCSV(actorsInvolved,saniºtizedParameter)
 			
 			
 			;String newScene=OLibrary.GetRandomScene(actorsInvolved)
-			if actionScene2 != ""
-				OThread.WarpTo(thrId2,actionScene2,true)
-				; FIX 2026-07-11: verify the warp actually TOOK and tell the server honestly. OStimNPCs
-				; auto-mode or an engine rejection can silently keep/replace the scene while the model has
-				; already narrated success ("switched scene to X but nothing changed" tester report).
-				Utility.Wait(0.6)
-				String warpedScene = OThread.GetScene(thrId2)
-				if warpedScene == actionScene2
-					AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@ok: scene is now "+actionScene2,"funcret",npcname)
-				else
-					AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@error: the engine rejected or overrode the scene switch (current scene: "+warpedScene+") - if OStim NPCs auto-mode is on it may be fighting scene control","funcret",npcname)
-					return
-				endif
+			if shiftedOStimThread >= 0
+				String confirmedScene = OThread.GetScene(shiftedOStimThread)
+				AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@ok: scene is now "+confirmedScene,"funcret",npcname)
+				Debug.Trace("[CHIM-NSFW] ExtCmdSexCommand confirmed: <"+confirmedScene+"> <"+sanitizedTag+"> thread="+shiftedOStimThread+", Actors:"+actorsInvolved.length)
 			else
-				; no scene matched the requested act - leave the current scene running (same guard as SceneEngine shift)
-				AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@error: no scene matches that act here - current scene continues","funcret",npcname)
+				int currentThreadAfterShift = OActor.GetSceneId(npc)
+				if currentThreadAfterShift >= 0 && OThread.IsRunning(currentThreadAfterShift)
+					String currentSceneAfterShift = OThread.GetScene(currentThreadAfterShift)
+					AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@error: no requested replacement scene was confirmed (current scene: "+currentSceneAfterShift+")","funcret",npcname)
+				else
+					AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@error: the requested replacement scene failed and no active scene remains","funcret",npcname)
+				endif
 				return
 			endif
-
-			Debug.Trace("[CHIM-NSFW] <"+actionScene2+"> <"+sanitizedTag+">, Actors:"+actorsInvolved.length);
 		else
 			; SEXLAB (fix 2026-07-02, SexLab audit #1): ExtCmdSexCommand was OStim-only, yet the server offers
 			; SexAction mid-scene on BOTH engines - the model "changed position" and nothing happened. SexLab has
@@ -3056,9 +3068,25 @@ Event CommandManager(String npcname,String  command, String parameter)
 				if (slShiftTid >= 0)
 					bool slShifted = AIAgentNSFWSceneEngine.ShiftSexLabScene(slfShift, slShiftTid, parameter)
 					Debug.Trace("[CHIM-NSFW] ExtCmdSexCommand (SexLab): act=" + parameter + " thread=" + slShiftTid + " shifted=" + slShifted)
+					if slShifted
+						AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@ok: SexLab scene changed to the requested act","funcret",npcname)
+					else
+						int slCurrentTid = slfShift.FindActorController(npc)
+						if slCurrentTid < 0
+							slCurrentTid = slfShift.FindActorController(Game.GetPlayer())
+						endif
+						if slCurrentTid >= 0
+							AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@error: no requested SexLab replacement was confirmed; the current scene continues","funcret",npcname)
+						else
+							AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@error: the requested SexLab replacement failed and no active scene remains","funcret",npcname)
+						endif
+					endif
 				else
 					Debug.Trace("[CHIM-NSFW] ExtCmdSexCommand: " + npc.GetDisplayName() + " is in neither an OStim nor a SexLab scene")
+					AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@error: no running SexLab scene was found for the requested change","funcret",npcname)
 				endif
+			else
+				AIAgentFunctions.logMessageForActor("command@ExtCmdSexCommand@"+parameter+"@error: SexLab API is unavailable","funcret",npcname)
 			endif
 		endif
 	endif
@@ -4313,7 +4341,7 @@ Event FertilityLabor(string eventname,Form Sender , int index)
 	Actor akActor = Sender as Actor
 	if (akActor)
 		Debug.Trace("[CHIM-NSFW FERTILITY] FertilityLabor: "+akActor.GetDisplayName()+"@"+eventname+"@"+index)
-		AIAgentFunctions.requestMessageForActor("The Narrator: "+akActor.GetDisplayName()+" is in labor, giving birth!","infoaction",akActor.GetDisplayName())
+		AIAgentFunctions.requestMessageForActor("Scene Event: "+akActor.GetDisplayName()+" is in labor, giving birth!","infoaction",akActor.GetDisplayName())
 		AIAgentFunctions.requestMessageForActor(akActor.GetDisplayName()+" should express emotions and pain , as is in labor, giving birth!","instruction",akActor.GetDisplayName())
 		Utility.wait(10)
 		Debug.SendAnimationEvent(akActor, "IdleWounded_02")
@@ -4342,7 +4370,7 @@ Event FertilityModeLabor(string eventname,Form Sender ,int index)
 	Actor akActor = Sender as Actor
 	Debug.Trace("[CHIM-NSFW FERTILITY] FertilityModeLabor: "+akActor.GetDisplayName()+"@"+eventname+"@"+index)
 	AIAgentFunctions.logMessageForActor(akActor.GetDisplayName()+"@birth","fertility_notification",akActor.GetDisplayName())
-	AIAgentFunctions.logMessageForActor("The Narrator: "+akActor.GetDisplayName()+" had a baby!","infoaction",akActor.GetDisplayName())
+	AIAgentFunctions.logMessageForActor("Scene Event: "+akActor.GetDisplayName()+" had a baby!","infoaction",akActor.GetDisplayName())
 	AIAgentFunctions.requestMessageForActor(akActor.GetDisplayName()+" should express emotions, a new baby is born!","instruction",akActor.GetDisplayName())
 	Debug.SendAnimationEvent(akActor, "idleforcedefaultstate")
 EndEvent

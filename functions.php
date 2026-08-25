@@ -2056,6 +2056,54 @@ $GLOBALS["action_post_process_fnct_ex"][]=function($actions) {
         }
     }
 
+    // HARD INTIMACY SAFETY FILTER: validate the speaking actor and every named target after the
+    // model's target text has been normalized. Prompt instructions are not enforcement. Child actors
+    // and names on the user's exclusion list are dropped before Papyrus can receive the action. This
+    // applies equally to Open Mode and special NPC lanes; relationship policy remains OStim-driven.
+    $__safePlayer = trim((string)($GLOBALS["PLAYER_NAME"] ?? ""));
+    $__safeAffection = ["ExtCmdHug", "ExtCmdHoldHands", "ExtCmdKiss"];
+    $__safeIntimacy = array_merge($__safeAffection, [
+        "ExtCmdStartSex", "ExtCmdStartBlowJob", "ExtCmdStartAnalSex", "ExtCmdStartThreesome",
+        "ExtCmdStartTitfuck", "ExtCmdStartHandJobSex", "ExtCmdStartHandjobSex", "ExtCmdStartMassage",
+        "ExtCmdStartSelfMasturbation", "ExtCmdSexCommand", "ExtCmdAcceptSex", "ExtCmdRemoveClothes",
+        "ExtCmdDrinkBloodSex"
+    ]);
+    foreach ($actions as $__safeN => $__safeAction) {
+        $__safeP = explode("|", $__safeAction);
+        if (!isset($__safeP[2])) { continue; }
+        $__safeCT = explode("@", $__safeP[2]);
+        $__safeCmd = trim((string)($__safeCT[0] ?? ""));
+        if (!in_array($__safeCmd, $__safeIntimacy, true)) { continue; }
+
+        $__safeSpeaker = trim((string)($__safeP[0] ?? ($GLOBALS["HERIKA_NAME"] ?? "")));
+        if ($__safeSpeaker === '') { $__safeSpeaker = trim((string)($GLOBALS["HERIKA_NAME"] ?? "")); }
+        if (function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($__safeSpeaker)) {
+            error_log("[AIAGENTNSFW] HARD SAFETY BLOCK: child/excluded speaker {$__safeSpeaker} attempted {$__safeCmd}");
+            unset($actions[$__safeN]);
+            continue;
+        }
+
+        $__safeRawTarget = trim((string)($__safeCT[1] ?? ""));
+        $__safeTargets = $__safeRawTarget === '' ? [] : preg_split('/\s*(?:,|\band\b)\s*/i', $__safeRawTarget, -1, PREG_SPLIT_NO_EMPTY);
+        $__safeBlocked = false;
+        foreach ($__safeTargets as $__safeTarget) {
+            $__safeTarget = trim(preg_replace('/\s*\([^)]*\)\s*$/', '', (string)$__safeTarget));
+            if ($__safeTarget === '' || strcasecmp($__safeTarget, 'player') === 0
+                || ($__safePlayer !== '' && strcasecmp($__safeTarget, $__safePlayer) === 0)) { continue; }
+            if (function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($__safeTarget)) {
+                error_log("[AIAGENTNSFW] HARD SAFETY BLOCK: child/excluded target {$__safeTarget} in {$__safeCmd}");
+                $__safeBlocked = true;
+                break;
+            }
+        }
+        if ($__safeBlocked) {
+            unset($actions[$__safeN]);
+            continue;
+        }
+
+    }
+    $actions = array_values($actions);
+
     // NPC-to-NPC INITIATION GATE (user directive 2026-07-05): after target resolution, drop any sex-scene
     // START whose speaker is an NPC and whose target is ANOTHER NPC unless A->B is eligible (affinity + rel
     // type; prostitute A bypasses, slave A is player-only). Player-directed scenes are NEVER touched (empty
@@ -2306,7 +2354,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
     $skoomaBargain = !$isSlave && function_exists('getDrugStageForActor') && (int)getDrugStageForActor($npcName, 'skooma') >= 3;
     $openModeAdultPlayerRoute = !$isSlave && !$isProstitute && !$isNpcScene && !$skoomaBargain
         && function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode()
-        && function_exists('aiagentNsfwIsChildNpc') && !aiagentNsfwIsChildNpc($npcName);
+        && function_exists('aiagentNsfwIsProtectedNpc') && !aiagentNsfwIsProtectedNpc($npcName);
 
     // SCENE-CALL AFFINITY GATE (user directive 2026-06-29): the relationship floor at which an NPC may autonomously
     // CALL/initiate an OStim/SexLab sex scene with the player. Default 56 = Fond (romance tier). Adjustable in the UI

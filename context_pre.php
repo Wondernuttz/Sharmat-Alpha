@@ -10,6 +10,37 @@ require_once __DIR__ . "/common.php";
 
 $actorName = $GLOBALS["HERIKA_NAME"] ?? "";
 
+// HARD CHILD/EXCLUSION TOOL STRIP. The child frame below is behavioral guidance; this is the
+// deterministic boundary. Strip all affection/sexual commands from every representation consumed
+// by text and structured-output connectors so the model cannot call them in the first place.
+if ($actorName !== "" && function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($actorName)) {
+    if (aiagentNsfwIsChildNpc($actorName)) { $GLOBALS["AIAGENTNSFW_IS_CHILD"] = true; }
+    if (function_exists('aiagentNsfwIsExcludedNpc') && aiagentNsfwIsExcludedNpc($actorName)) { $GLOBALS["AIAGENTNSFW_IS_EXCLUDED"] = true; }
+    $__minorStrip = [
+        "ExtCmdHug","ExtCmdHoldHands","ExtCmdKiss","ExtCmdStartSex","ExtCmdStartBlowJob",
+        "ExtCmdStartAnalSex","ExtCmdStartMassage","ExtCmdStartThreesome","ExtCmdStartHandJobSex",
+        "ExtCmdStartHandjobSex","ExtCmdStartTitfuck","ExtCmdStartSelfMasturbation","ExtCmdSexCommand",
+        "ExtCmdAcceptSex","ExtCmdQuickenPace","ExtCmdSlowPace","ExtCmdRemoveClothes","ExtCmdDrinkBloodSex"
+    ];
+    if (isset($GLOBALS["ENABLED_FUNCTIONS"]) && is_array($GLOBALS["ENABLED_FUNCTIONS"])) {
+        $GLOBALS["ENABLED_FUNCTIONS"] = array_values(array_filter($GLOBALS["ENABLED_FUNCTIONS"], function ($f) use ($__minorStrip) {
+            return !in_array($f, $__minorStrip, true);
+        }));
+    }
+    if (isset($GLOBALS["FUNC_LIST"]) && is_array($GLOBALS["FUNC_LIST"]) && function_exists('getFunctionCodeName')) {
+        $GLOBALS["FUNC_LIST"] = array_values(array_filter($GLOBALS["FUNC_LIST"], function ($n) use ($__minorStrip) {
+            return !in_array(getFunctionCodeName($n), $__minorStrip, true);
+        }));
+        if (isset($GLOBALS["responseTemplate"]["action"])) {
+            $GLOBALS["responseTemplate"]["action"] = implode("|", $GLOBALS["FUNC_LIST"]);
+        }
+        if (isset($GLOBALS["structuredOutputTemplate"]["json_schema"]["schema"]["properties"]["action"]["enum"])) {
+            $GLOBALS["structuredOutputTemplate"]["json_schema"]["schema"]["properties"]["action"]["enum"] = array_values($GLOBALS["FUNC_LIST"]);
+        }
+    }
+    error_log("[AIAGENTNSFW] HARD CHILD/EXCLUSION STRIP: removed all intimacy tools for {$actorName}");
+}
+
 // ============================================================
 // REL-TYPE SEX-TOOL STRIP (deterministic gate - the real enforcement)
 // ------------------------------------------------------------

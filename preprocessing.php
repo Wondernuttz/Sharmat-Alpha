@@ -1088,8 +1088,8 @@ if (isset($GLOBALS["gameRequest"])) {
             $dResult = 'missing_name';
         } elseif (!$dEnabled) {
             $dResult = 'disabled_by_setting';
-        } elseif (function_exists('aiagentNsfwIsChildNpc') && aiagentNsfwIsChildNpc($dName)) {
-            $dResult = 'child_blocked';
+        } elseif (function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($dName)) {
+            $dResult = 'protected_actor_blocked';
         } elseif (function_exists('isNpcSlave') && isNpcSlave($dName)) {
             $dResult = 'already_slave';
         } elseif (!function_exists('setNpcSlaveStatus')) {

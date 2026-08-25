@@ -50,12 +50,14 @@
                     <p class="legend">NPCs will talk at the selected speed when in idle/foreplay scenes. Lower = slower, sexier. Default: 0.8x</p>
                 </div>
 
+                <!-- Action Voice / Random Moans -->
+                <h3 style="margin: 20px 0 15px; color: #FDF5D0; font-size: 16px; animation: subPulse 3s ease-in-out infinite alternate;">Action Voice &amp; Random Moans</h3>
                 <div class="settings-slider-group">
                     <div style="display: flex; align-items: center; gap: 15px;">
                         <div class="settings-checkbox-group" style="margin: 0; padding: 0; border: none; min-width: 280px;">
                             <label for="xttsModifyLevel2">
                                 <input type="checkbox" id="xttsModifyLevel2" name="XTTS_MODIFY_LEVEL2">
-                                <span>TTS Modifier - Level 2 (Action)</span>
+                                <span>Enable TTS Modifier - Level 2 (Action)</span>
                             </label>
                         </div>
                         <div class="slider-container" style="flex: 1;">
@@ -63,11 +65,9 @@
                             <span class="slider-value" id="xttsSpeedLevel2Value">0.7x</span>
                         </div>
                     </div>
-                    <p class="legend">NPCs will talk at the selected speed during action scenes, plus moans/gasps. Lower = slower, breathier. Default: 0.7x</p>
+                    <p class="legend">This is the Level 2 control required by Random Moans. It applies the selected action-scene voice speed and enables moan/gasp insertion below. Lower speed = slower and breathier. Default: 0.7x.</p>
                 </div>
 
-                <!-- Random Moans -->
-                <h3 style="margin: 20px 0 15px; color: #FDF5D0; font-size: 16px; animation: subPulse 3s ease-in-out infinite alternate;">Random Moans</h3>
                 <div style="display: flex; align-items: center; gap: 15px; margin: 10px 0 5px 0;">
                     <div class="settings-checkbox-group" style="margin: 0; padding: 0; border: none;">
                         <label for="enableRandomMoans">
@@ -89,7 +89,7 @@
                         <option value="91">Bonded (91)</option>
                     </select>
                 </div>
-                <p class="legend" style="margin: 0;">Requires TTS Modifier Level 2. Random moans/gasps are inserted into NPC speech during intimate scenes. The affinity dropdown sets the minimum relationship level - NPCs below this won't moan (e.g., a hostile victim won't moan with pleasure).</p>
+                <p class="legend" style="margin: 0;">Random moans/gasps are inserted only when Level 2 above is enabled. The affinity dropdown sets the minimum relationship level - NPCs below this won't moan (e.g., a hostile victim won't moan with pleasure).</p>
                 <div class="form-group" style="margin: 5px 0 15px 0;">
                     <label style="color: #9988BB; font-size: 12px; margin-bottom: 3px; display: block;">Moan Sounds (one per line)</label>
                     <textarea id="randomMoanSounds" class="auto-resize" style="min-height: 80px; width: 100%; resize: none; overflow: hidden; background: #252233; border: 1px solid #3A3545; border-radius: 5px; padding: 10px; color: #B8A8D0;"> ... oh ...
@@ -392,37 +392,6 @@
                         <span class="slider-value" id="prostitutePaymentWindowValue">20 minutes</span>
                     </div>
                     <p class="legend">How long a confirmed prostitute payment stays valid before she requires paying again. The payment is also consumed the moment the player orgasms (service rendered), whichever comes first. Set to 0 to make payment last only until the player orgasms (no time limit). Default 20 minutes.</p>
-                </div>
-
-                <!-- Token Limits -->
-                <h3 style="margin: 20px 0 15px; color: #FDF5D0; font-size: 16px; animation: subPulse 3s ease-in-out infinite alternate;">Response Token Limits</h3>
-                <p class="legend" style="margin-bottom: 15px;">Control how long the AI's responses can be during intimate scenes. Lower values = shorter, punchier dialogue. Higher values = more verbose responses. These limits prevent the AI from rambling during sex scenes.</p>
-
-                <div class="settings-slider-group">
-                    <span class="slider-title">Sex Scene Token Limit</span>
-                    <div class="slider-container">
-                        <input type="range" id="tokenLimitSexScene" name="TOKEN_LIMIT_SEX_SCENE" min="50" max="10000" step="50" value="100">
-                        <span class="slider-value" id="tokenLimitSexSceneValue">100 tokens</span>
-                    </div>
-                    <p class="legend">Maximum tokens for regular sex scene dialogue (chatnf_sl events). Lower = shorter moans/dirty talk. Default: 100 tokens (~25-50 words).</p>
-                </div>
-
-                <div class="settings-slider-group">
-                    <span class="slider-title">Climax/Orgasm Token Limit</span>
-                    <div class="slider-container">
-                        <input type="range" id="tokenLimitClimax" name="TOKEN_LIMIT_CLIMAX" min="50" max="10000" step="50" value="50">
-                        <span class="slider-value" id="tokenLimitClimaxValue">50 tokens</span>
-                    </div>
-                    <p class="legend">Maximum tokens for orgasm/climax responses. Should be VERY short - just moans and exclamations. Default: 50 tokens (~10-20 words).</p>
-                </div>
-
-                <div class="settings-slider-group">
-                    <span class="slider-title">VR Physics Token Limit</span>
-                    <div class="slider-container">
-                        <input type="range" id="tokenLimitPhysics" name="TOKEN_LIMIT_PHYSICS" min="120" max="400" step="20" value="240">
-                        <span class="slider-value" id="tokenLimitPhysicsValue">240 tokens</span>
-                    </div>
-                    <p class="legend">Maximum tokens for VR touch, grab, and slap reactions. Default: 240 tokens, high enough for JSON-mode replies to finish reliably.</p>
                 </div>
 
                 <!-- Scene Event Cooldowns -->
@@ -1351,14 +1320,20 @@ IdleWarmHands</textarea>
                 </div>
             </div>
             <div id="excludedNpcsContent" class="collapsible-content" style="display: none; padding: 20px; background: #1C1A24; border: 1px solid #3A3545; border-top: none; border-radius: 0 0 8px 8px;">
-                <p class="legend" style="margin-bottom: 15px;">NPCs detected as children are permanently excluded from all NSFW processing, and the prompt below is injected so the model always treats them as a child. Hard-flagged children (the <code>IsChild</code> flag, a child race, or the built-in child list) are locked and cannot be removed. <strong>This protection is always on and cannot be disabled</strong> &mdash; you can only edit the wording of the frame below.</p>
+                <p class="legend" style="margin-bottom: 15px;">Child race/flag detection is a permanent hard block. Use the editable list below for modded actors SHARMAT cannot reliably identify; exact names on that list are blocked from every affection and sex command. You can remove a manual entry later if that actor becomes an adult.</p>
+
+                <div class="form-group" style="margin: 5px 0 15px 0;">
+                    <label style="color: #FDF5D0; font-size: 13px; margin-bottom: 5px; display: block;">Manually Excluded NPC Names</label>
+                    <textarea id="nsfwExcludedNpcs" class="auto-resize" placeholder="One exact display name per line" style="min-height: 110px; width: 100%; resize: vertical; background: #252233; border: 1px solid #3A3545; border-radius: 5px; padding: 10px; color: #B8A8D0;"></textarea>
+                    <p class="legend" style="margin-top: 6px;">Case-insensitive exact display-name matching. One name per line is recommended; commas and semicolons also work.</p>
+                </div>
 
                 <div class="form-group" style="margin: 5px 0 15px 0;">
                     <label style="color: #9988BB; font-size: 12px; margin-bottom: 3px; display: block;">Child Frame Prompt (injected into the character block)</label>
                     <textarea id="childProtectionFrame" class="auto-resize" style="min-height: 90px; width: 100%; resize: none; overflow: hidden; background: #252233; border: 1px solid #3A3545; border-radius: 5px; padding: 10px; color: #B8A8D0;">You are a child, not an adult. The people around you are grown-ups - some strangers, some not. You react like a kid would: curious, playful, blunt, sometimes shy or bratty. You do NOT flirt, and you never read an adult's attention, gifts, or kindness as romantic - children do not experience the world that way.</textarea>
                 </div>
 
-                <h3 style="margin: 20px 0 12px; color: #FDF5D0; font-size: 16px; animation: subPulse 3s ease-in-out infinite alternate;">Currently Excluded <span style="color:#7A6890; font-size:12px;">(locked - child-flagged)</span></h3>
+                <h3 style="margin: 20px 0 12px; color: #FDF5D0; font-size: 16px; animation: subPulse 3s ease-in-out infinite alternate;">Detected Child Blocks <span style="color:#7A6890; font-size:12px;">(locked)</span></h3>
                 <?php
                 $__excludedChildNpcs = [];
                 try {
@@ -1395,7 +1370,7 @@ IdleWarmHands</textarea>
                             <span class="npc-purple-glow" title="locked (<?php echo htmlspecialchars($__reason, ENT_QUOTES, 'UTF-8'); ?>)">&#128274; <?php echo htmlspecialchars($__cn, ENT_QUOTES, 'UTF-8'); ?></span>
                         <?php endforeach; ?>
                     </div>
-                    <p class="legend" style="margin-top: 8px;">These are hard-flagged children (locked, permanent). Model-inferred detection and the manual override list come in a later update.</p>
+                    <p class="legend" style="margin-top: 8px;">These actors are blocked by child name, child flag, or child race independently of the manual list.</p>
                 <?php endif; ?>
             </div>
 
