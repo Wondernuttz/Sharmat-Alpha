@@ -16,6 +16,51 @@ SexLabFramework Function GetSexLab() global
     return Game.GetFormFromFile(0xD62, "SexLab.esm") as SexLabFramework
 EndFunction
 
+; PapyrusUtil JsonUtil root is Data/SKSE/Plugins/StorageUtilData/. Missing file = both on.
+string Function SceneFrameworkFile() global
+    return "SHARMAT_scene_framework"
+EndFunction
+
+bool Function DetectOStimScenes() global
+    string f = SceneFrameworkFile()
+    if !JsonUtil.JsonExists(f)
+        return true
+    endif
+    return JsonUtil.GetPathIntValue(f, ".ostim", 1) != 0
+EndFunction
+
+bool Function DetectSexLabScenes() global
+    string f = SceneFrameworkFile()
+    if !JsonUtil.JsonExists(f)
+        return true
+    endif
+    return JsonUtil.GetPathIntValue(f, ".sexlab", 1) != 0
+EndFunction
+
+bool Function UseOStimEngine() global
+    return DetectOStimScenes() && HasOStim()
+EndFunction
+
+bool Function UseSexLabEngine() global
+    return DetectSexLabScenes() && GetSexLab() != None
+EndFunction
+
+string Function AppendFwTag(string payload, string fw) global
+    if fw == ""
+        return payload
+    endif
+    if StringUtil.Find(payload, "fw=") >= 0
+        return payload
+    endif
+    if payload == ""
+        return "fw=" + fw
+    endif
+    if StringUtil.Find(payload, "^") >= 0
+        return payload + "^fw=" + fw
+    endif
+    return payload + "/fw=" + fw
+EndFunction
+
 ; ============================================================
 ; ACT -> ENGINE VOCAB. sceneAct is a normalized keyword from CommandManager:
 ; "vaginal" "anal" "oral" "handjob" "boobjob" or "" (empty = any/random). Each engine translates it into its own
@@ -162,10 +207,10 @@ bool Function StartOrJoinScene(Actor akSpeaker, Actor akTarget, bool bAllowJoin 
         Debug.Trace("[CHIM-NSFW SceneEngine] StartOrJoinScene aborted: missing/identical actors")
         return false
     endif
-    if HasOStim()
+    if UseOStimEngine()
         return StartOrJoinOStim(akSpeaker, akTarget, bAllowJoin, sceneAct)
     endif
-    if GetSexLab() != None
+    if UseSexLabEngine()
         return StartOrJoinSexLab(akSpeaker, akTarget, bAllowJoin, sceneAct)
     endif
     Debug.Trace("[CHIM-NSFW SceneEngine] No OStim or SexLab detected")
@@ -180,7 +225,7 @@ bool Function StartSoloScene(Actor akActor, string sceneAct = "") global
         Debug.Trace("[CHIM-NSFW SceneEngine] StartSoloScene aborted: missing actor")
         return false
     endif
-    if HasOStim()
+    if UseOStimEngine()
         if OActor.GetSceneID(akActor) >= 0
             return true ; already in a scene
         endif
@@ -190,7 +235,7 @@ bool Function StartSoloScene(Actor akActor, string sceneAct = "") global
         return StartOStimScene(solo, sceneAct) >= 0
     endif
     SexLabFramework slf = GetSexLab()
-    if slf != None
+    if UseSexLabEngine() && slf != None
         if slf.FindActorController(akActor) >= 0
             return true ; already in a scene
         endif
@@ -230,7 +275,7 @@ bool Function StartGroupScene(Actor[] actors, int count, string sceneAct = "") g
     if group.Length < 2
         return false
     endif
-    if HasOStim()
+    if UseOStimEngine()
         int liveThread = -1
         bool conflictingThreads = false
         i = 0

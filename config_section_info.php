@@ -81,7 +81,7 @@
 
             <h3 class="info-subtitle">Overview</h3>
             <p style="line-height: 1.6; color: #B8A8C8; margin-bottom: 15px;">
-                This extension makes NPCs aware of intimate scenes and lets them speak and act in character during them. It works with <strong style="color: #FDF5D0;">both OStim and SexLab</strong>: the server reacts to scene events from either framework, for player scenes, player group scenes (orgies), and NPC-to-NPC scenes. NPC behaviour is shaped by the <strong style="color: #FDF5D0;">relationship model</strong> (affinity tiers), an optional <strong style="color: #FDF5D0;">arousal gate</strong>, and the per-NPC profile (sex prompt, speech style, kinks). So it is recommended that you at least use the relationship model for the most authentic experience.
+                This extension makes NPCs aware of intimate scenes and lets them speak and act in character during them. It works with <strong style="color: #FDF5D0;">OStim and/or SexLab</strong> (Settings &rarr; Player Scene Routing: Detect OStim Scenes / Detect SexLab Scenes). The server reacts to scene events from the enabled framework(s), for player scenes, player group scenes (orgies), and NPC-to-NPC scenes. NPC behaviour is shaped by the <strong style="color: #FDF5D0;">relationship model</strong> (affinity tiers), an optional <strong style="color: #FDF5D0;">arousal gate</strong>, and the per-NPC profile (sex prompt, speech style, kinks). So it is recommended that you at least use the relationship model for the most authentic experience.
             </p>
 
             <h3 class="info-subtitle">How It Works</h3>

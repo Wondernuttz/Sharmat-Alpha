@@ -843,31 +843,23 @@ function DoRegister()
 	RegisterForModEvent("CHIM_CommandReceived", "CommandManager")
 	RegisterForModEvent("CHIM_SpeechStopped", "HelperSpeechStop")
 	RegisterForModEvent("CHIM_SpeechStarted", "HelperSpeechStart")
-	
-	RegisterForModEvent("ostim_event", "OstimEvent")
-	RegisterForModEvent("ostim_actor_orgasm", "OStimOrgasm")
-	;RegisterForModEvent("ocum_play_cum_shoot_effect", "OCumPlayCumShoot")
-	RegisterForModEvent("ostim_scenechanged", "OStimSceneChanged")
-	RegisterForModEvent("ostim_end", "OStimEnd")
-	RegisterForModEvent("ostim_thread_start", "OStimThreadStart")
-	RegisterForModEvent("ostim_thread_scenechanged", "OStimThreadSceneChanged")
-	RegisterForModEvent("ostim_thread_end", "OStimThreadEnd")
 
+	Debug.Trace("[CHIM-NSFW] Scene framework detect ostim=" + (AIAgentNSFWSceneEngine.DetectOStimScenes() as int) + " sexlab=" + (AIAgentNSFWSceneEngine.DetectSexLabScenes() as int))
 
-	; ============================================
-	; SUBTHREAD EVENTS (NPC-to-NPC scenes from OStim NPCs mod)
-	; These fire for NPC-only scenes that don't involve player
-	; ============================================
-	UnRegisterForModEvent("ostim_subthread_start")
-	UnRegisterForModEvent("ostim_subthread_end")
-	UnRegisterForModEvent("ostim_subthread_orgasm")
-	RegisterForModEvent("ostim_subthread_start", "OStimSubthreadStart")
-	RegisterForModEvent("ostim_subthread_end", "OStimSubthreadEnd")
-	RegisterForModEvent("ostim_subthread_orgasm", "OStimSubthreadOrgasm")
-
-	; NPC-to-NPC invite phase - when dom actor approaches sub actor
-	UnRegisterForModEvent("ostim_npc_invite")
-	RegisterForModEvent("ostim_npc_invite", "OStimNpcInvite")
+	if AIAgentNSFWSceneEngine.DetectOStimScenes()
+		RegisterForModEvent("ostim_event", "OstimEvent")
+		RegisterForModEvent("ostim_actor_orgasm", "OStimOrgasm")
+		;RegisterForModEvent("ocum_play_cum_shoot_effect", "OCumPlayCumShoot")
+		RegisterForModEvent("ostim_scenechanged", "OStimSceneChanged")
+		RegisterForModEvent("ostim_end", "OStimEnd")
+		RegisterForModEvent("ostim_thread_start", "OStimThreadStart")
+		RegisterForModEvent("ostim_thread_scenechanged", "OStimThreadSceneChanged")
+		RegisterForModEvent("ostim_thread_end", "OStimThreadEnd")
+		RegisterForModEvent("ostim_subthread_start", "OStimSubthreadStart")
+		RegisterForModEvent("ostim_subthread_end", "OStimSubthreadEnd")
+		RegisterForModEvent("ostim_subthread_orgasm", "OStimSubthreadOrgasm")
+		RegisterForModEvent("ostim_npc_invite", "OStimNpcInvite")
+	endif
 
 	; ============================================
 	; ACHERON / SIMPLE DEFEAT (feature 2026-07-17): defeating a hostile named NPC marks them as the
@@ -888,10 +880,12 @@ function DoRegister()
 	UnRegisterForModEvent("HookStageStart")
 	UnRegisterForModEvent("HookAnimationEnd")
 	UnRegisterForModEvent("SexLabOrgasm")
-	RegisterForModEvent("HookAnimationStart", "OnSexLabAnimStart")
-	RegisterForModEvent("HookStageStart", "OnSexLabStageStart")
-	RegisterForModEvent("HookAnimationEnd", "OnSexLabAnimEnd")
-	RegisterForModEvent("SexLabOrgasm", "OnSexLabActorOrgasm")
+	if AIAgentNSFWSceneEngine.DetectSexLabScenes()
+		RegisterForModEvent("HookAnimationStart", "OnSexLabAnimStart")
+		RegisterForModEvent("HookStageStart", "OnSexLabStageStart")
+		RegisterForModEvent("HookAnimationEnd", "OnSexLabAnimEnd")
+		RegisterForModEvent("SexLabOrgasm", "OnSexLabActorOrgasm")
+	endif
 
 	; ============================================
 	; DEVIOUS DEVICES EVENTS (soft - only matter if DD is installed)
@@ -3276,6 +3270,9 @@ endFunction
 
 ; OSTIM related
 Event OstimEvent(Int ThreadId,String type, Form eActor,Form eTarget,Form ePerformer)
+	if !AIAgentNSFWSceneEngine.DetectOStimScenes()
+		return
+	endif
 
 	Debug.Trace("[CHIM-NSFW] OSTIM event: "+ThreadId+","+type+","+eActor.GetName())
 	Debug.Trace("[CHIM-NSFW] OSTIM event: "+OThread.GetScene(ThreadId))
@@ -3283,6 +3280,9 @@ Event OstimEvent(Int ThreadId,String type, Form eActor,Form eTarget,Form ePerfor
 EndEvent
 
 Event OStimStart(string eventName, string strArg, float numArg, Form sender)
+	if !AIAgentNSFWSceneEngine.DetectOStimScenes()
+		return
+	endif
 
 	Debug.Trace("[CHIM-NSFW] OStimStart: "+eventName+","+StrArg+","+numArg+","+sender.GetName())
 
@@ -3344,7 +3344,7 @@ Event OStimStart(string eventName, string strArg, float numArg, Form sender)
 		String sceneTags = OCSV.ToCSVList(tags)
 
 		; Format: SceneID/tags/SceneID/actors (matches ext_nsfw_sexcene format)
-		string sceneData = SceneID + "/" + sceneTags + "/" + SceneID + actorList
+		string sceneData = AIAgentNSFWSceneEngine.AppendFwTag(SceneID + "/" + sceneTags + "/" + SceneID + actorList, "ostim")
 
 		; USE requestMessageForActor TO TRIGGER LLM RESPONSE!!!
 		AIAgentFunctions.requestMessageForActor(sceneData, "ext_nsfw_sexcene", npcName)
@@ -3712,6 +3712,9 @@ Event OstimOrgasm(string eventName, string strArg, float numArg, Form sender)
 EndEvent
 
 Event OStimSceneChanged(string EventName, string SceneID, float NumArg, Form Sender)
+	if !AIAgentNSFWSceneEngine.DetectOStimScenes()
+		return
+	endif
 	Debug.Trace("[CHIM-NSFW] OStimSceneChanged: "+EventName+","+SceneID+","+numArg+","+sender.GetName())
 	
 	string sexPos=SceneID
@@ -3773,7 +3776,7 @@ Event OStimSceneChanged(string EventName, string SceneID, float NumArg, Form Sen
 		endwhile
 	endif
 
-	string scenePayload = sexPos+"/"+sceneTags+"/"+SceneID+actorList
+	string scenePayload = AIAgentNSFWSceneEngine.AppendFwTag(sexPos+"/"+sceneTags+"/"+SceneID+actorList, "ostim")
 	bool consentBarkFired = false
 
 	; CONSENT BARK (fast accept/refuse decision). participantTalk is only set when the scene is at an explicit
@@ -3805,6 +3808,9 @@ Event OStimSceneChanged(string EventName, string SceneID, float NumArg, Form Sen
 EndEvent
 
 Event OStimEnd(string EventName, string Json, float NumArg, Form Sender)
+	if !AIAgentNSFWSceneEngine.DetectOStimScenes()
+		return
+	endif
 	; the following code only works with API version 7.3.1 or higher
 	Debug.Trace("[CHIM-NSFW] OStimEnd: "+EventName+","+Json+","+numArg+","+sender.GetName())
 	int threadID = NumArg as int
@@ -3935,6 +3941,9 @@ Function RequestNpcSceneTurn(Actor[] participants, string npcSceneData, string r
 EndFunction
 
 Event OStimThreadStart(string EventName, string Json, float ThreadID, Form Sender)
+	if !AIAgentNSFWSceneEngine.DetectOStimScenes()
+		return
+	endif
 	; Registered start path for both player and NPC-only threads. Dialogue routing below remains
 	; NPC-only, but SHARMAT arousal authority applies to every NPC participant here.
 
@@ -3996,6 +4005,9 @@ Event OStimThreadStart(string EventName, string Json, float ThreadID, Form Sende
 EndEvent
 
 Event OStimThreadSceneChanged(string EventName, string SceneID, float ThreadID, Form Sender)
+	if !AIAgentNSFWSceneEngine.DetectOStimScenes()
+		return
+	endif
 	int npcSceneThreadInt = ThreadID as int
 	Actor[] participants = GetOStimThreadParticipantsSafe(npcSceneThreadInt)
 	string resolvedSceneID = SceneID
@@ -4040,6 +4052,9 @@ Event OStimThreadSceneChanged(string EventName, string SceneID, float ThreadID, 
 EndEvent
 
 Event OStimActorOrgasm(string EventName, string SceneID, float ThreadID, Form Sender)
+	if !AIAgentNSFWSceneEngine.DetectOStimScenes()
+		return
+	endif
 	Actor OrgasmedActor = Sender as Actor
 	
 	Debug.Trace("[CHIM-NSFW] OStimActorOrgasm: "+EventName+","+SceneID+","+ThreadID+","+sender.GetName())
@@ -4048,6 +4063,9 @@ Event OStimActorOrgasm(string EventName, string SceneID, float ThreadID, Form Se
 EndEvent
 
 Event OStimThreadEnd(string EventName, string Json, float ThreadID, Form Sender)
+	if !AIAgentNSFWSceneEngine.DetectOStimScenes()
+		return
+	endif
 	; the following code only works with API version 7.3.1 or higher
 	int threadEndIDInt = ThreadID as int
 	Actor[] Actors = None
@@ -4148,6 +4166,9 @@ Event OnActorDefeated(Actor akVictim)
 EndEvent
 
 Event OStimSubthreadStart(string EventName, string SceneID, float SubthreadID, Form Sender)
+	if !AIAgentNSFWSceneEngine.DetectOStimScenes()
+		return
+	endif
 	; Subthread started - NPC-to-NPC scene beginning
 	; SceneID contains the scene identifier, SubthreadID is the subthread index
 	Debug.Trace("[CHIM-NSFW] OStimSubthreadStart: " + EventName + ", SceneID: " + SceneID + ", SubthreadID: " + SubthreadID)
@@ -4208,6 +4229,9 @@ EndEvent
 
 
 Event OStimSubthreadEnd(string EventName, string SceneID, float SubthreadID, Form Sender)
+	if !AIAgentNSFWSceneEngine.DetectOStimScenes()
+		return
+	endif
 	; Subthread ended - NPC-to-NPC scene finished
 	Debug.Trace("[CHIM-NSFW] OStimSubthreadEnd: " + EventName + ", SceneID: " + SceneID + ", SubthreadID: " + SubthreadID)
 
@@ -4259,6 +4283,9 @@ EndEvent
 
 
 Event OStimSubthreadOrgasm(string EventName, string SceneID, float SubthreadID, Form Sender)
+	if !AIAgentNSFWSceneEngine.DetectOStimScenes()
+		return
+	endif
 	; NPC orgasm in subthread scene
 	; Sender is the Actor who orgasmed
 	Actor orgasmedActor = Sender as Actor
@@ -4286,6 +4313,9 @@ EndEvent
 
 
 Event OStimNpcInvite(string EventName, string InviteData, float ThreadID, Form Sender)
+	if !AIAgentNSFWSceneEngine.DetectOStimScenes()
+		return
+	endif
 	; NPC-to-NPC invite phase - when dom actor is approaching sub actor
 	; This fires BEFORE the scene starts, perfect time for tier prompts
 	; InviteData format: DomActor^SubActor^ThirdActor (third is optional)
@@ -4860,6 +4890,9 @@ EndFunction
 ; ============================================================================
 
 Event OnSexLabAnimStart(int tid, bool HasPlayer)
+	if !AIAgentNSFWSceneEngine.DetectSexLabScenes()
+		return
+	endif
 	SexLabFramework SexLab = SexLabUtil.GetAPI()
 	if (!SexLab)
 		return
@@ -4924,12 +4957,15 @@ Event OnSexLabAnimStart(int tid, bool HasPlayer)
 	; NO consent bark here (user-confirmed 2026-07-01): the bark path is vestigial/unreliable - live logs show every
 	; bark ever fired was routed to The Narrator and blocked by policy. The tier-3 consent decision is driven by the
 	; AcceptSex/RefuseSex toolset strip on the normal scene turn, not by a fast bark.
-	string sceneData = sceneID + "/" + sceneTags + "/" + sceneID + actorList
+	string sceneData = AIAgentNSFWSceneEngine.AppendFwTag(sceneID + "/" + sceneTags + "/" + sceneID + actorList, "sexlab")
 	AIAgentFunctions.requestMessageForActor(sceneData, "ext_nsfw_sexcene", firstNpc.GetDisplayName())
 	Debug.Trace("[CHIM-NSFW] SexLab scene start tid=" + tid + " player=" + HasPlayer)
 EndEvent
 
 Event OnSexLabStageStart(int tid, bool HasPlayer)
+	if !AIAgentNSFWSceneEngine.DetectSexLabScenes()
+		return
+	endif
 	SexLabFramework SexLab = SexLabUtil.GetAPI()
 	if (!SexLab)
 		return
@@ -4988,7 +5024,7 @@ Event OnSexLabStageStart(int tid, bool HasPlayer)
 
 	; Exactly one route for the stage. Prefer a mouth-free NPC. If every NPC is mouth-busy,
 	; retain the canonical state event without also submitting a second directed request.
-	string sceneData = sceneID + "/" + sceneTags + "/" + stageDesc + actorList
+	string sceneData = AIAgentNSFWSceneEngine.AppendFwTag(sceneID + "/" + sceneTags + "/" + stageDesc + actorList, "sexlab")
 	Actor[] sorted = SexLab.SortActors(actors, false)
 	i = sorted.Length
 	Actor participantTalk = None
@@ -5008,6 +5044,9 @@ Event OnSexLabStageStart(int tid, bool HasPlayer)
 EndEvent
 
 Event OnSexLabActorOrgasm(Form akActor, int FullEnjoyment, int Orgasms)
+	if !AIAgentNSFWSceneEngine.DetectSexLabScenes()
+		return
+	endif
 	Actor orgasmer = akActor as Actor
 	if (!orgasmer)
 		return
@@ -5052,7 +5091,7 @@ Event OnSexLabActorOrgasm(Form akActor, int FullEnjoyment, int Orgasms)
 
 	if (orgasmer.GetFormID() == 0x14)
 		; Player came - everyone in THIS scene hears it (fan out to every non-player actor)
-		string playerData = "PLAYER_ORGASM/" + sceneID + "/" + orgasmerIndex + "/" + partnerName + "/" + slOrgasmTags ; [3]=partner [4]=action (fix 2026-07-01: was the player's own name at [3] and no action field)
+		string playerData = AIAgentNSFWSceneEngine.AppendFwTag("PLAYER_ORGASM/" + sceneID + "/" + orgasmerIndex + "/" + partnerName + "/" + slOrgasmTags, "sexlab") ; [3]=partner [4]=action (fix 2026-07-01: was the player's own name at [3] and no action field)
 		int m = 0
 		while (m < actors.Length)
 			if (actors[m].GetFormID() != 0x14)
@@ -5075,6 +5114,9 @@ Event OnSexLabActorOrgasm(Form akActor, int FullEnjoyment, int Orgasms)
 EndEvent
 
 Event OnSexLabAnimEnd(int tid, bool HasPlayer)
+	if !AIAgentNSFWSceneEngine.DetectSexLabScenes()
+		return
+	endif
 	SexLabFramework SexLab = SexLabUtil.GetAPI()
 	if (!SexLab)
 		return

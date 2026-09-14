@@ -744,6 +744,8 @@ SQL;
                 'PLAYER_SCENE_RECHAT_CADENCE_SECONDS' => 0,  // 0 = hard-block rechat in player scenes; >0 = one scene-cued line per interval
                 'NSFW_SCENE_SPEAK_ON_SCENE_CHANGE' => true,  // Beat-driven line on scene/position changes (state always processed)
                 'NSFW_SCENE_SPEAK_ON_ORGASM' => true,  // Spoken climax reactions (orgasm state always processed)
+                'DETECT_OSTIM_SCENES' => true,  // Listen to OStim scene/orgasm events
+                'DETECT_SEXLAB_SCENES' => true,  // Listen to SexLab scene/orgasm events
                 'GROUP_SCENE_TICK_SECONDS' => 0,  // Group-scene chime-in interval; 0 = follow NPC_SCENE_GLOBAL_COOLDOWN_SECONDS
                 'NSFW_DEFEAT_AUTO_ENSLAVE' => true,  // Acheron defeat of a hostile named NPC sets is_slave automatically
                 'NSFW_OSLA_SYNC_ENABLED' => true,  // Publish SHARMAT arousal to OSL/OStim consumers (one-way, including scenes)
@@ -1183,6 +1185,8 @@ SQL;
                 'PLAYER_SCENE_RECHAT_CADENCE_SECONDS' => isset($_POST['PLAYER_SCENE_RECHAT_CADENCE_SECONDS']) ? max(0, intval($_POST['PLAYER_SCENE_RECHAT_CADENCE_SECONDS'])) : 0,
                 'NSFW_SCENE_SPEAK_ON_SCENE_CHANGE' => isset($_POST['NSFW_SCENE_SPEAK_ON_SCENE_CHANGE']) ? filter_var($_POST['NSFW_SCENE_SPEAK_ON_SCENE_CHANGE'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_SCENE_SPEAK_ON_ORGASM' => isset($_POST['NSFW_SCENE_SPEAK_ON_ORGASM']) ? filter_var($_POST['NSFW_SCENE_SPEAK_ON_ORGASM'], FILTER_VALIDATE_BOOLEAN) : true,
+                'DETECT_OSTIM_SCENES' => isset($_POST['DETECT_OSTIM_SCENES']) ? filter_var($_POST['DETECT_OSTIM_SCENES'], FILTER_VALIDATE_BOOLEAN) : true,
+                'DETECT_SEXLAB_SCENES' => isset($_POST['DETECT_SEXLAB_SCENES']) ? filter_var($_POST['DETECT_SEXLAB_SCENES'], FILTER_VALIDATE_BOOLEAN) : true,
                 'GROUP_SCENE_TICK_SECONDS' => isset($_POST['GROUP_SCENE_TICK_SECONDS']) ? max(0, intval($_POST['GROUP_SCENE_TICK_SECONDS'])) : 0,
                 'NSFW_DEFEAT_AUTO_ENSLAVE' => isset($_POST['NSFW_DEFEAT_AUTO_ENSLAVE']) ? filter_var($_POST['NSFW_DEFEAT_AUTO_ENSLAVE'], FILTER_VALIDATE_BOOLEAN) : true,
                 'NSFW_OSLA_SYNC_ENABLED' => isset($_POST['NSFW_OSLA_SYNC_ENABLED']) ? filter_var($_POST['NSFW_OSLA_SYNC_ENABLED'], FILTER_VALIDATE_BOOLEAN) : true,
@@ -7590,6 +7594,8 @@ PROMPT;
                         }
                         if (document.getElementById('sceneSpeakOnSceneChange')) elSet('sceneSpeakOnSceneChange', 'checked', data.data.NSFW_SCENE_SPEAK_ON_SCENE_CHANGE !== false);  // Default true
                         if (document.getElementById('sceneSpeakOnOrgasm')) elSet('sceneSpeakOnOrgasm', 'checked', data.data.NSFW_SCENE_SPEAK_ON_ORGASM !== false);  // Default true
+                        if (document.getElementById('detectOStimScenes')) elSet('detectOStimScenes', 'checked', data.data.DETECT_OSTIM_SCENES !== false);  // Default true
+                        if (document.getElementById('detectSexLabScenes')) elSet('detectSexLabScenes', 'checked', data.data.DETECT_SEXLAB_SCENES !== false);  // Default true
                         const groupSceneTickSeconds = data.data.GROUP_SCENE_TICK_SECONDS !== undefined ? data.data.GROUP_SCENE_TICK_SECONDS : 0;
                         const groupSceneTickSecondsEl = document.getElementById('groupSceneTickSeconds');
                         if (groupSceneTickSecondsEl) {
@@ -7906,6 +7912,8 @@ PROMPT;
             if (playerSceneRechatCadenceSave) { formData.append('PLAYER_SCENE_RECHAT_CADENCE_SECONDS', playerSceneRechatCadenceSave.value); }
             if (document.getElementById('sceneSpeakOnSceneChange')) fdSet('NSFW_SCENE_SPEAK_ON_SCENE_CHANGE', 'sceneSpeakOnSceneChange', 'checked');
             if (document.getElementById('sceneSpeakOnOrgasm')) fdSet('NSFW_SCENE_SPEAK_ON_ORGASM', 'sceneSpeakOnOrgasm', 'checked');
+            if (document.getElementById('detectOStimScenes')) fdSet('DETECT_OSTIM_SCENES', 'detectOStimScenes', 'checked');
+            if (document.getElementById('detectSexLabScenes')) fdSet('DETECT_SEXLAB_SCENES', 'detectSexLabScenes', 'checked');
             if (document.getElementById('groupSceneTickSeconds')) fdSet('GROUP_SCENE_TICK_SECONDS', 'groupSceneTickSeconds', 'value');
             if (document.getElementById('defeatAutoEnslave')) fdSet('NSFW_DEFEAT_AUTO_ENSLAVE', 'defeatAutoEnslave', 'checked');
             if (document.getElementById('oslaSyncEnabled')) fdSet('NSFW_OSLA_SYNC_ENABLED', 'oslaSyncEnabled', 'checked');

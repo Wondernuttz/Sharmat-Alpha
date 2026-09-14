@@ -81,6 +81,15 @@ class NsfwOstimHandler {
     public static function processEvent() {
         global $gameRequest;
 
+        $fwEvent = $gameRequest[0] ?? '';
+        $fwData = $gameRequest[3] ?? '';
+        if (function_exists('aiagentNsfwSceneFrameworkAllowed') && !aiagentNsfwSceneFrameworkAllowed($fwEvent, $fwData)) {
+            error_log("[AIAGENTNSFW] Blocked {$fwEvent} by scene-framework detect toggle (handler)");
+            $gameRequest[0] = "nsfw_blocked_policy";
+            $GLOBALS["gameRequest"][0] = "nsfw_blocked_policy";
+            return;
+        }
+
         // Track if this is The Narrator profile. Scene state updates (handleSceneUpdate)
         // MUST still run for Narrator — Papyrus routes scene events through The Narrator,
         // and handleSceneUpdate() updates intimacy data for the ACTUAL scene actors
