@@ -308,6 +308,22 @@
                 <p class="legend" style="margin-bottom: 15px;">Player-involved scene routing, legacy scene event policy, response caps, and player-scene cooldowns.</p>
 
                 <div class="settings-checkbox-group">
+                    <label for="detectOStimScenes">
+                        <input type="checkbox" id="detectOStimScenes" name="DETECT_OSTIM_SCENES" checked>
+                        <span>Detect OStim Scenes</span>
+                    </label>
+                    <p class="legend">When checked, SHARMAT describes OStim scenes (player, group, and NPC-to-NPC). Uncheck to ignore OStim events so another plugin can own that framework.</p>
+                </div>
+
+                <div class="settings-checkbox-group">
+                    <label for="detectSexLabScenes">
+                        <input type="checkbox" id="detectSexLabScenes" name="DETECT_SEXLAB_SCENES" checked>
+                        <span>Detect SexLab Scenes</span>
+                    </label>
+                    <p class="legend">When checked, SHARMAT describes SexLab scenes. Uncheck to let another overlay (for example SexLab Defeat) own victim scenes. The game also reads <code>Data/SKSE/Plugins/StorageUtilData/SHARMAT_scene_framework.json</code> (<code>ostim</code>/<code>sexlab</code> as 1 or 0) so hooks are not registered; reload a save after changing that file. These checkboxes do not write the JSON.</p>
+                </div>
+
+                <div class="settings-checkbox-group">
                     <label for="blockRechatInScene">
                         <input type="checkbox" id="blockRechatInScene" name="BLOCK_RECHAT_IN_SCENE" checked>
                         <span>Throttle Rechat During Scenes</span>

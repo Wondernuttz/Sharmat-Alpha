@@ -926,6 +926,12 @@ function aiagentNsfwNpcSceneCadenceDecisionForPreprocess($meta)
 if (isset($GLOBALS["gameRequest"])) {
     $currentEvent = $GLOBALS["gameRequest"][0] ?? '';
     $currentActor = $GLOBALS["HERIKA_NAME"] ?? 'unknown';
+    if (function_exists('aiagentNsfwSceneFrameworkAllowed') && !aiagentNsfwSceneFrameworkAllowed($currentEvent, $GLOBALS["gameRequest"][3] ?? '')) {
+        $blockedFwEvent = $currentEvent;
+        $GLOBALS["gameRequest"][0] = "nsfw_blocked_policy";
+        $currentEvent = "nsfw_blocked_policy";
+        error_log("[AIAGENTNSFW] Blocked {$blockedFwEvent} by scene-framework detect toggle");
+    }
     if (aiagentNsfwIsBlankPlayerInputForPreprocess($currentEvent, $GLOBALS["gameRequest"][3] ?? '')) {
         $GLOBALS["gameRequest"][0] = "nsfw_blocked_blank_input";
         $currentEvent = "nsfw_blocked_blank_input";

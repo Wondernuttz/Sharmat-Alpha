@@ -2882,6 +2882,56 @@ function _getNsfwSetting($key, $default = null) {
     return isset($cache[$key]) ? $cache[$key] : $default;
 }
 
+
+function aiagentNsfwSettingBool($key, $default = true) {
+    $v = _getNsfwSetting($key, $default);
+    if (is_bool($v)) {
+        return $v;
+    }
+    if (is_int($v) || is_float($v)) {
+        return ((int)$v) !== 0;
+    }
+    if (is_string($v)) {
+        $s = strtolower(trim($v));
+        if (in_array($s, ['0', 'false', 'no', 'off', ''], true)) {
+            return false;
+        }
+        if (in_array($s, ['1', 'true', 'yes', 'on'], true)) {
+            return true;
+        }
+    }
+    return (bool)$default;
+}
+
+function aiagentNsfwDetectOStimScenes() {
+    return aiagentNsfwSettingBool('DETECT_OSTIM_SCENES', true);
+}
+
+function aiagentNsfwDetectSexLabScenes() {
+    return aiagentNsfwSettingBool('DETECT_SEXLAB_SCENES', true);
+}
+
+function aiagentNsfwPayloadFramework($data) {
+    if (!is_string($data) || $data === '') {
+        return '';
+    }
+    if (preg_match('/(?:^|[\\/^])fw=(ostim|sexlab)(?:$|[\\/^])/i', $data, $m)) {
+        return strtolower($m[1]);
+    }
+    return '';
+}
+
+function aiagentNsfwSceneFrameworkAllowed($event, $data) {
+    $fw = aiagentNsfwPayloadFramework($data);
+    if ($fw === 'ostim' && !aiagentNsfwDetectOStimScenes()) {
+        return false;
+    }
+    if ($fw === 'sexlab' && !aiagentNsfwDetectSexLabScenes()) {
+        return false;
+    }
+    return true;
+}
+
 // Numeric setting with a safe fallback - arousal gains/thresholds are UI-tunable numbers.
 function aiagentNsfwArousalNum($key, $default) {
     $v = _getNsfwSetting($key, $default);

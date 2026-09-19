@@ -1424,6 +1424,8 @@ function nsfw_default_settings_config() {
         'PLAYER_SCENE_RECHAT_CADENCE_SECONDS' => 0,
         'NSFW_SCENE_SPEAK_ON_SCENE_CHANGE' => true,
         'NSFW_SCENE_SPEAK_ON_ORGASM' => true,
+        'DETECT_OSTIM_SCENES' => true,
+        'DETECT_SEXLAB_SCENES' => true,
         'GROUP_SCENE_TICK_SECONDS' => 0,
         'NSFW_DEFEAT_AUTO_ENSLAVE' => true,
         'NSFW_OSLA_SYNC_ENABLED' => true,
