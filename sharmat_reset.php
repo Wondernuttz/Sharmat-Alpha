@@ -2,7 +2,8 @@
 /**
  * SHARMAT-only destructive reset.
  *
- * This file deliberately uses an allowlist. It must not touch CHIM core NPC,
+ * This file deliberately uses an allowlist. Only the sharmat plugin namespace may be cleared on core NPCs;
+ * it must not touch other CHIM core NPC,
  * relationship, memory, event, or unrelated conf_opts data.
  */
 
@@ -335,6 +336,14 @@ function sharmat_reset_all_data()
             }
 
             sharmat_reset_create_runtime_tables($schema);
+            $pluginColumn = $GLOBALS['db']->fetchOne("SELECT 1 AS present FROM information_schema.columns
+                WHERE table_schema = $1 AND table_name = 'core_npc_master'
+                AND column_name = 'plugin_extended_data'", [$schema]);
+            if (!empty($pluginColumn['present'])) {
+                sharmat_reset_exec("UPDATE {$qSchema}.core_npc_master
+                    SET plugin_extended_data = plugin_extended_data - 'sharmat'
+                    WHERE plugin_extended_data ? 'sharmat'");
+            }
             $summary['runtime_tables_created'] = ['nsfw_npc_data', 'nsfw_profile_queue'];
             $summary['conf_opts_seeded'] = sharmat_reset_seed_schema($schema, $seed);
             $result['schemas'][$schema] = $summary;
