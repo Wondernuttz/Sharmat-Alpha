@@ -1,4 +1,6 @@
 <?php
+
+require_once __DIR__ . "/npc_plugin_data.php";
 /**
  * NSFW Data Manager - JSONB Storage Layer
  * =========================================
@@ -1172,6 +1174,7 @@ class NsfwNpcData {
             }
 
             // Update cache with normalized key
+            sharmatSyncNpcPluginData($npcName);
             self::$cache[$normalizedName] = $data;
 
             return true;
@@ -1228,6 +1231,8 @@ class NsfwNpcData {
                      VALUES ('$escapedDisplay', jsonb_build_object('$escapedKey', '$jsonValue'::jsonb), CURRENT_TIMESTAMP)"
                 );
             }
+
+            sharmatSyncNpcPluginData($npcName);
 
             // Update cache with normalized key
             if (isset(self::$cache[$normalizedName])) {

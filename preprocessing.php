@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . "/npc_plugin_data.php";
+
 // This is called at the very beginning, before any context is created
 // These events are NOT fast commands - they trigger NPC dialogue responses
 // Fast commands bypass normal LLM flow and don't generate dialogue
@@ -294,6 +296,7 @@ function aiagentNsfwClearStaleNpcScenesForPreprocess($staleSeconds = null)
     } catch (Exception $e) {
         error_log("[AIAGENTNSFW] Stale NPC scene preprocessing cleanup failed: " . $e->getMessage());
     }
+    sharmatSyncNpcPluginData();
 }
 
 function aiagentNsfwNormalizeSceneActorName($name)
@@ -2189,6 +2192,11 @@ if (isset($GLOBALS["gameRequest"])) {
                   )
             ");
         } catch (Exception $e) {}
+    }
+
+    // Save/load resets above also refresh the optional NPC copy of plugin state.
+    if ($GLOBALS["gameRequest"][0] === 'init') {
+        sharmatSyncNpcPluginData();
     }
 
     // Blocked events terminate immediately - no LLM processing
