@@ -124,6 +124,53 @@ bool Function OStimActIsChasteAffection(string sceneAct) global
     return sceneAct == "kiss" || sceneAct == "hug" || sceneAct == "holdhands"
 EndFunction
 
+bool Function ActorAppearsFemale(Actor akActor) global
+    if akActor == None
+        return false
+    endif
+    ActorBase base = akActor.GetActorBase()
+    if base == None
+        return false
+    endif
+    return base.GetSex() == 1
+EndFunction
+
+; Player + one NPC, both female. MakeLove/StartSex steers to vaginalsex first; that miss
+; used to fall through to OStim's standing hub (OStim2PStandingCloseFF) instead of a lesbian act.
+bool Function RosterIsPlayerFemaleFemalePair(Actor[] actors) global
+    if actors.Length != 2 || actors[0] == None || actors[1] == None
+        return false
+    endif
+    if actors.Find(Game.GetPlayer()) < 0
+        return false
+    endif
+    return ActorAppearsFemale(actors[0]) && ActorAppearsFemale(actors[1])
+EndFunction
+
+string Function OStimLesbianActionCSV() global
+    return "cunnilingus,vaginalfingering,fingering,tribbing,grinding"
+EndFunction
+
+string Function OStimLesbianTagCSV() global
+    return "cunnilingus,tribbing,vaginalfingering,fingering"
+EndFunction
+
+; Prefer actual FF sex actions. A bare "lesbian" tag also matches idle hubs such as
+; OStim2PStandingCloseFF, so reject idle/intro if we have to use that broader tag.
+string Function OStimPickLesbianScene(Actor[] actors) global
+    string sceneName = OLibrary.GetRandomSceneWithAnyActionCSV(actors, OStimLesbianActionCSV())
+    if sceneName == ""
+        sceneName = OLibrary.GetRandomSceneWithAnySceneTagCSV(actors, OStimLesbianTagCSV())
+    endif
+    if sceneName == ""
+        string tagged = OLibrary.GetRandomSceneWithAnySceneTagCSV(actors, "lesbian,Lesbian")
+        if tagged != "" && !OMetadata.HasAnySceneTagCSV(tagged, "idle,intro,Idle,Intro")
+            sceneName = tagged
+        endif
+    endif
+    return sceneName
+EndFunction
+
 bool Function IsProtectedMinorActor(Actor akActor) global
     if akActor == None
         return false
@@ -326,7 +373,7 @@ bool Function StartGroupScene(Actor[] actors, int count, string sceneAct = "") g
         return StartOStimScene(group, sceneAct, true) >= 0
     endif
     SexLabFramework slf = GetSexLab()
-    if slf != None
+    if UseSexLabEngine() && slf != None
         int liveController = -1
         bool conflictingControllers = false
         i = 0
@@ -573,6 +620,12 @@ int Function StartOStimScene(Actor[] actors, string sceneAct = "", bool allowRol
     if sceneName == "" && !chasteAffection
         sceneName = OStimExactSceneForAct(sceneAct) ; affection acts pin their OARE staple, never a random scene
     endif
+    if sceneName == "" && !chasteAffection && RosterIsPlayerFemaleFemalePair(actors)
+        sceneName = OStimPickLesbianScene(actors)
+        if sceneName != ""
+            Debug.Trace("[CHIM-NSFW SceneEngine] OStim FF player pair: using lesbian start " + sceneName + " instead of hub fallback")
+        endif
+    endif
     if sceneName == "" && chasteAffection
         Debug.Trace("[CHIM-NSFW SceneEngine] OStim affection start aborted: no exact chaste scene for act=" + sceneAct)
         return -1
@@ -668,6 +721,12 @@ int Function TransitionOStimSceneToAct(int threadID, string sceneAct, string req
     endif
     if sceneName == "" && !chasteAffection && !hasFurniture && desiredOrder.Length == 2
         sceneName = OStimExactSceneForAct(sceneAct) ; e.g. shift a hug to hand-holding (tagged only "oare")
+    endif
+    if sceneName == "" && !chasteAffection && RosterIsPlayerFemaleFemalePair(desiredOrder)
+        sceneName = OStimPickLesbianScene(desiredOrder)
+        if sceneName != ""
+            Debug.Trace("[CHIM-NSFW SceneEngine] OStim FF player pair shift: using lesbian scene " + sceneName)
+        endif
     endif
     if sceneName == ""
         Debug.Trace("[CHIM-NSFW SceneEngine] OStim shift: no scene matched act=" + sceneAct + " - leaving current scene")
@@ -919,16 +978,33 @@ bool Function StartSexLabScene(SexLabFramework slf, Actor[] actors, string scene
     int females = genders[1]
     sslBaseAnimation[] anims = slf.GetAnimationsByDefault(males, females) ; default baseline (always valid)
     string tags = SexLabTagsForAct(sceneAct)
+    sslBaseAnimation[] tagged
+    int taggedCount = 0
     if tags != ""
-        sslBaseAnimation[] tagged = slf.GetAnimationsByDefaultTags(males, females, false, false, true, tags, "", false)
-        if tagged.Length < 1 && sceneAct == "bloodfeed"
+        tagged = slf.GetAnimationsByDefaultTags(males, females, false, false, true, tags, "", false)
+        if tagged
+            taggedCount = tagged.Length
+        endif
+        if taggedCount < 1 && sceneAct == "bloodfeed"
             ; No vampire-tagged SexLab animations installed (vanilla registry has none) - prefer an embrace-style
             ; foreplay/leadin scene over a random default so the feed still reads as a neck bite (fix 2026-07-01)
             tagged = slf.GetAnimationsByDefaultTags(males, females, false, false, true, "Foreplay,LeadIn", "", false)
+            if tagged
+                taggedCount = tagged.Length
+            endif
         endif
-        if tagged.Length >= 1
-            anims = tagged ; steer to the requested act when matches exist
+    endif
+    if taggedCount < 1 && RosterIsPlayerFemaleFemalePair(actors)
+        tagged = slf.GetAnimationsByDefaultTags(males, females, false, false, true, "Lesbian,Cunnilingus", "", false)
+        if tagged
+            taggedCount = tagged.Length
         endif
+        if taggedCount >= 1
+            Debug.Trace("[CHIM-NSFW SceneEngine] SexLab FF player pair: using lesbian/cunnilingus animations")
+        endif
+    endif
+    if taggedCount >= 1
+        anims = tagged ; steer to the requested act when matches exist
     endif
     return slf.StartSex(actors, anims) >= 0
 EndFunction
