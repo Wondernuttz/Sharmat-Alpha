@@ -157,13 +157,28 @@ EndFunction
 
 ; Prefer actual FF sex actions. A bare "lesbian" tag also matches idle hubs such as
 ; OStim2PStandingCloseFF, so reject idle/intro if we have to use that broader tag.
-string Function OStimPickLesbianScene(Actor[] actors) global
-    string sceneName = OLibrary.GetRandomSceneWithAnyActionCSV(actors, OStimLesbianActionCSV())
-    if sceneName == ""
-        sceneName = OLibrary.GetRandomSceneWithAnySceneTagCSV(actors, OStimLesbianTagCSV())
+string Function OStimPickLesbianScene(Actor[] actors, string furnitureType = "") global
+    bool hasFurniture = furnitureType != "" && furnitureType != "none"
+    string sceneName = ""
+    if hasFurniture
+        sceneName = OLibrary.GetRandomFurnitureSceneWithAnyActionCSV(actors, furnitureType, OStimLesbianActionCSV())
+    else
+        sceneName = OLibrary.GetRandomSceneWithAnyActionCSV(actors, OStimLesbianActionCSV())
     endif
     if sceneName == ""
-        string tagged = OLibrary.GetRandomSceneWithAnySceneTagCSV(actors, "lesbian,Lesbian")
+        if hasFurniture
+            sceneName = OLibrary.GetRandomFurnitureSceneWithAnySceneTagCSV(actors, furnitureType, OStimLesbianTagCSV())
+        else
+            sceneName = OLibrary.GetRandomSceneWithAnySceneTagCSV(actors, OStimLesbianTagCSV())
+        endif
+    endif
+    if sceneName == ""
+        string tagged = ""
+        if hasFurniture
+            tagged = OLibrary.GetRandomFurnitureSceneWithAnySceneTagCSV(actors, furnitureType, "lesbian,Lesbian")
+        else
+            tagged = OLibrary.GetRandomSceneWithAnySceneTagCSV(actors, "lesbian,Lesbian")
+        endif
         if tagged != "" && !OMetadata.HasAnySceneTagCSV(tagged, "idle,intro,Idle,Intro")
             sceneName = tagged
         endif
@@ -620,8 +635,12 @@ int Function StartOStimScene(Actor[] actors, string sceneAct = "", bool allowRol
     if sceneName == "" && !chasteAffection
         sceneName = OStimExactSceneForAct(sceneAct) ; affection acts pin their OARE staple, never a random scene
     endif
-    if sceneName == "" && !chasteAffection && RosterIsPlayerFemaleFemalePair(actors)
-        sceneName = OStimPickLesbianScene(actors)
+    if sceneName == "" && !OStimActKeepsInitiatorOrder(sceneAct) && RosterIsPlayerFemaleFemalePair(actors)
+        string fallbackFurnitureType = ""
+        if npcFurnRef != None
+            fallbackFurnitureType = OFurniture.GetFurnitureType(npcFurnRef)
+        endif
+        sceneName = OStimPickLesbianScene(actors, fallbackFurnitureType)
         if sceneName != ""
             Debug.Trace("[CHIM-NSFW SceneEngine] OStim FF player pair: using lesbian start " + sceneName + " instead of hub fallback")
         endif
@@ -722,8 +741,8 @@ int Function TransitionOStimSceneToAct(int threadID, string sceneAct, string req
     if sceneName == "" && !chasteAffection && !hasFurniture && desiredOrder.Length == 2
         sceneName = OStimExactSceneForAct(sceneAct) ; e.g. shift a hug to hand-holding (tagged only "oare")
     endif
-    if sceneName == "" && !chasteAffection && RosterIsPlayerFemaleFemalePair(desiredOrder)
-        sceneName = OStimPickLesbianScene(desiredOrder)
+    if sceneName == "" && !OStimActKeepsInitiatorOrder(sceneAct) && RosterIsPlayerFemaleFemalePair(desiredOrder)
+        sceneName = OStimPickLesbianScene(desiredOrder, furnitureType)
         if sceneName != ""
             Debug.Trace("[CHIM-NSFW SceneEngine] OStim FF player pair shift: using lesbian scene " + sceneName)
         endif
@@ -994,7 +1013,7 @@ bool Function StartSexLabScene(SexLabFramework slf, Actor[] actors, string scene
             endif
         endif
     endif
-    if taggedCount < 1 && RosterIsPlayerFemaleFemalePair(actors)
+    if taggedCount < 1 && !OStimActKeepsInitiatorOrder(sceneAct) && RosterIsPlayerFemaleFemalePair(actors)
         tagged = slf.GetAnimationsByDefaultTags(males, females, false, false, true, "Lesbian,Cunnilingus", "", false)
         if tagged
             taggedCount = tagged.Length

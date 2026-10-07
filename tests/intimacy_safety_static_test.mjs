@@ -18,7 +18,11 @@ assert.ok(sceneEngine.includes('sceneName = OStimExactSceneForAct(sceneAct)'));
 assert.ok(sceneEngine.includes('elseif sceneName == ""\n        sceneName = OLibrary.GetRandomScene(actors)'), 'random fallback remains available for non-affection acts');
 assert.ok(sceneEngine.includes('if sceneName == "" && chasteAffection'), 'chaste affection must fail before random fallback');
 assert.ok(sceneEngine.includes('RosterIsPlayerFemaleFemalePair(actors)'), 'FF player pair must be detected before hub fallback');
-assert.ok(sceneEngine.includes('OStimPickLesbianScene(actors)'), 'FF player pair must prefer a lesbian scene over the standing hub');
+assert.ok(sceneEngine.includes('OStimPickLesbianScene(actors, fallbackFurnitureType)'), 'FF player pair start must preserve its furniture constraint');
+assert.ok(sceneEngine.includes('OStimPickLesbianScene(desiredOrder, furnitureType)'), 'FF player pair transition must preserve its furniture constraint');
+const ffFallbackGuards = sceneEngine.split('\n').filter(line => /^\s*if .*RosterIsPlayerFemaleFemalePair\(/.test(line));
+assert.equal(ffFallbackGuards.length, 3, 'check OStim start, OStim transition, and SexLab start');
+assert.ok(ffFallbackGuards.every(line => line.includes('!OStimActKeepsInitiatorOrder(sceneAct)')), 'affection, massage, and feeding must not enter the sexual FF fallback');
 assert.ok(sceneEngine.includes('RosterContainsProtectedMinor(actors)'), 'Papyrus scene start must reject protected actors');
 
 const common = read('common.php');
