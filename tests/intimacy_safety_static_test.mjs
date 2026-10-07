@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(here);
-const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
+const read = (name) => fs.readFileSync(path.join(root, name), 'utf8').replace(/\r\n/g, '\n');
 
 const catalog = read('catalog_seed.php');
 const upsert = catalog.slice(catalog.indexOf('ON CONFLICT (code_name)'));
@@ -17,6 +17,8 @@ assert.ok(sceneEngine.includes('bool Function OStimActIsChasteAffection'));
 assert.ok(sceneEngine.includes('sceneName = OStimExactSceneForAct(sceneAct)'));
 assert.ok(sceneEngine.includes('elseif sceneName == ""\n        sceneName = OLibrary.GetRandomScene(actors)'), 'random fallback remains available for non-affection acts');
 assert.ok(sceneEngine.includes('if sceneName == "" && chasteAffection'), 'chaste affection must fail before random fallback');
+assert.ok(sceneEngine.includes('RosterIsPlayerFemaleFemalePair(actors)'), 'FF player pair must be detected before hub fallback');
+assert.ok(sceneEngine.includes('OStimPickLesbianScene(actors)'), 'FF player pair must prefer a lesbian scene over the standing hub');
 assert.ok(sceneEngine.includes('RosterContainsProtectedMinor(actors)'), 'Papyrus scene start must reject protected actors');
 
 const common = read('common.php');
