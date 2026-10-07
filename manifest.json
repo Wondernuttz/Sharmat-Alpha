@@ -4,11 +4,11 @@
     "featured": true,
     "icon": "images/ChimNSFWLogoTransparent.png",
     "description": "An NSFW framework for CHIM. Consent-driven intimacy and scenes (OStim + SexLab), arousal and relationship-aware behavior, VR touch reactions.",
-    "version": "3.1.9.3",
+    "version": "3.1.9.4",
     "config_url": "/HerikaServer/ext/aiagent_nsfw/config_manager.php",
     "config_url_target": "_blank",
     "git_repo": "Wondernuttz/Sharmat-Alpha",
-    "mod_download_url": "https://github.com/Wondernuttz/Sharmat-Alpha/tree/main/mod",
+    "mod_download_url": "https://github.com/Wondernuttz/Sharmat-Alpha/releases/download/v3.1.9.4/SHARMAT-3.1.9.4.zip",
     "schema_version": 2,
     "default_channel": "main",
     "channels": {

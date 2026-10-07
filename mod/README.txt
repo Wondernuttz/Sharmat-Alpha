@@ -1,41 +1,30 @@
-SHARMAT GAME MOD (Papyrus scripts + plugin)
-===========================================
+SHARMAT 3.1.9.4 - Female/Female Scene Update
 
-This folder is the SHARMAT Skyrim mod itself:
+INSTALL / UPDATE
+1. Fully exit Skyrim.
+2. Install the complete release ZIP into your existing SHARMAT mod in MO2 or Vortex.
+3. Keep AIAgentNSFW.esp enabled. Preserve any custom values in
+   SKSE/Plugins/StorageUtilData/SHARMAT_scene_framework.json.
+4. Restart Skyrim and load a save.
 
-  AIAgentNSFW.esp
-  Scripts\          (compiled .pex files)
-  Seq\
-  Source\Scripts\   (source .psc, for reference)
+Requires CHIM and its normal dependencies, plus the enabled OStim or SexLab
+framework and suitable installed animations. Those frameworks and animation
+packs are separate downloads.
 
-HOW TO INSTALL / UPDATE
------------------------
-1. Download this whole "mod" folder from GitHub
-   (Code -> Download ZIP, or grab just this folder).
-2. Copy its CONTENTS into your SHARMAT mod in MO2 / Vortex
-   (the mod that contains AIAgentNSFW.esp), overwriting when asked.
-3. Load a save. Script changes take effect after a save load.
-   You do NOT need a new game.
+This update selects an available female/female sexual scene before the generic
+fallback for a female player and female NPC. It covers OStim starts and act
+changes and SexLab starts. Requested matching scenes retain priority.
+Affection/service requests and furniture constraints remain separate.
 
-WHEN DO I NEED THIS?
---------------------
-Whenever a fix or feature says "needs a mod re-download", "new pex",
-or "Papyrus update". The Update button on the Sharmat web page only
-updates the SERVER side - it deliberately never touches these game
-files, so mod updates are always a manual download of this folder.
+The Sharmat web updater updates the SERVER component. After updating, use
+Download Game Mod on the Info page to obtain the matching game files.
+The web updater alone does not replace the Papyrus scripts in your game.
 
-If a fix says "Update button is enough", you do not need anything
-from here.
+Release ZIPs also include a matching server component under CHIM/server-plugins.
+CHIM versions supporting embedded server packages install it on save load.
 
-SCENE FRAMEWORK TOGGLE
-----------------------
-SHARMAT can listen to OStim, SexLab, or both. The web Settings page has
-"Detect OStim Scenes" / "Detect SexLab Scenes" (both on by default).
-
-Papyrus cannot read those server checkboxes. In-game hook registration
-uses Data/SKSE/Plugins/StorageUtilData/SHARMAT_scene_framework.json:
-
+SCENE FRAMEWORK SETTINGS
+SKSE/Plugins/StorageUtilData/SHARMAT_scene_framework.json defaults to:
   { "ostim": 1, "sexlab": 1 }
-
-Set a value to 0 to skip that framework's hooks (reload a save after).
-Missing file = both on. The JSON is independent of the web checkboxes.
+Set a value to 0 to disable that framework's game-side hooks, then reload a save.
+These settings are independent of the web Detect OStim / Detect SexLab options.

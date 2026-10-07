@@ -50,6 +50,14 @@ function updaterBuildPackage($root)
     updaterWrite($root . '/mod/version.txt', '9.9.9');
     updaterWrite($root . '/mod/AIAgentNSFW.esp', 'test plugin');
     updaterWrite($root . '/mod/Scripts/AIAgentNSFW.pex', 'test script');
+    updaterWrite($root . '/mod/Scripts/AIAgentNSFWPlayerAlias.pex', 'test alias script');
+    updaterWrite($root . '/mod/Scripts/AIAgentNSFWSceneEngine.pex', 'test scene engine');
+    updaterWrite($root . '/mod/Scripts/AIAgentVRItems.pex', 'test VR script');
+    updaterWrite($root . '/mod/Seq/AIAgentNSFW.seq', 'test sequence');
+    updaterWrite($root . '/mod/SKSE/Plugins/StorageUtilData/SHARMAT_scene_framework.json', '{"ostim":1,"sexlab":1}');
+    updaterWrite($root . '/mod/README.txt', 'Installation instructions');
+    updaterWrite($root . '/mod/Source/Scripts/AIAgentNSFWSceneEngine.psc', 'development source');
+    updaterWrite($root . '/mod/Scripts/unused.pex', 'unused script');
     updaterWrite($root . '/mod/Source/ignored.bak', 'backup junk');
     updaterWrite($root . '/mod/meta.ini', 'manager junk');
     updaterWrite($root . '/conf/conf.php', '<?php $source = true;');
@@ -127,13 +135,37 @@ try {
 
     $modArchivePath = $testRoot . '/game-mod.zip';
     $modFileCount = _sharmatBuildModArchive($extractedRoot . '/mod', $modArchivePath);
-    updaterAssert($modFileCount === 3, 'game-mod archive contains only distributable files');
+    updaterAssert($modFileCount === 9, 'game-mod archive contains the complete runtime payload');
     $modArchive = new ZipArchive();
     updaterAssert($modArchive->open($modArchivePath) === true, 'game-mod archive opens');
     updaterAssert($modArchive->locateName('AIAgentNSFW.esp') !== false, 'game-mod archive contains the plugin');
     updaterAssert($modArchive->locateName('Scripts/AIAgentNSFW.pex') !== false, 'game-mod archive contains the compiled script');
+    updaterAssert($modArchive->locateName('Scripts/AIAgentNSFWSceneEngine.pex') !== false, 'game-mod archive contains the scene engine');
+    updaterAssert($modArchive->locateName('Source/Scripts/AIAgentNSFWSceneEngine.psc') === false, 'game-mod archive excludes development source');
+    updaterAssert($modArchive->locateName('Scripts/unused.pex') === false, 'game-mod archive excludes unused scripts');
     updaterAssert($modArchive->locateName('Source/ignored.bak') === false, 'game-mod archive excludes backup junk');
     updaterAssert($modArchive->locateName('meta.ini') === false, 'game-mod archive excludes mod-manager metadata');
+    $modArchive->close();
+
+    $sceneEnginePath = $extractedRoot . '/mod/Scripts/AIAgentNSFWSceneEngine.pex';
+    rename($sceneEnginePath, $sceneEnginePath . '.missing');
+    $missingSceneEngineRejected = false;
+    try {
+        _sharmatBuildModArchive($extractedRoot . '/mod', $testRoot . '/incomplete-mod.zip');
+    } catch (RuntimeException $error) {
+        $missingSceneEngineRejected = strpos($error->getMessage(), 'AIAgentNSFWSceneEngine.pex') !== false;
+    }
+    updaterAssert($missingSceneEngineRejected, 'game-mod download rejects a missing scene engine');
+    updaterAssert(!file_exists($testRoot . '/incomplete-mod.zip'), 'incomplete mod is not offered as an archive');
+    rename($sceneEnginePath . '.missing', $sceneEnginePath);
+
+    updaterWrite($extractedRoot . '/mod/CHIM/server-plugins/aiagent_nsfw/9.9.9.dwpkg', 'matching server package');
+    updaterWrite($extractedRoot . '/mod/CHIM/server-plugins/aiagent_nsfw/1.0.0.dwpkg', 'stale server package');
+    $embeddedArchivePath = $testRoot . '/game-mod-embedded.zip';
+    updaterAssert(_sharmatBuildModArchive($extractedRoot . '/mod', $embeddedArchivePath) === 10, 'matching embedded package is included');
+    updaterAssert($modArchive->open($embeddedArchivePath) === true, 'embedded mod archive opens');
+    updaterAssert($modArchive->locateName('CHIM/server-plugins/aiagent_nsfw/9.9.9.dwpkg') !== false, 'current embedded package is present');
+    updaterAssert($modArchive->locateName('CHIM/server-plugins/aiagent_nsfw/1.0.0.dwpkg') === false, 'stale embedded package is excluded');
     $modArchive->close();
 
     $current = $testRoot . '/current';

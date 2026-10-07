@@ -550,9 +550,41 @@ function _sharmatBuildModArchive($modDir, $archivePath)
     if (!is_dir($modDir) || is_link($modDir)) {
         throw new RuntimeException('Game mod directory is not available');
     }
-    foreach (['version.txt', 'AIAgentNSFW.esp', 'Scripts/AIAgentNSFW.pex'] as $marker) {
-        if (!is_file($modDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $marker))) {
+    $runtimeFiles = [
+        'AIAgentNSFW.esp',
+        'Scripts/AIAgentNSFW.pex',
+        'Scripts/AIAgentNSFWPlayerAlias.pex',
+        'Scripts/AIAgentNSFWSceneEngine.pex',
+        'Scripts/AIAgentVRItems.pex',
+        'Seq/AIAgentNSFW.seq',
+        'SKSE/Plugins/StorageUtilData/SHARMAT_scene_framework.json',
+        'version.txt',
+        'README.txt',
+    ];
+    foreach ($runtimeFiles as $marker) {
+        $path = $modDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $marker);
+        if (!is_file($path)) {
             throw new RuntimeException("Game mod directory is missing required file {$marker}");
+        }
+        $resolved = realpath($path);
+        $root = realpath($modDir);
+        if (is_link($path) || $resolved === false || $root === false
+            || strpos($resolved, $root . DIRECTORY_SEPARATOR) !== 0) {
+            throw new RuntimeException("Game mod file is outside the package directory: {$marker}");
+        }
+    }
+    // Include the matching embedded server package when this installation carries it.
+    $version = trim((string)file_get_contents($modDir . DIRECTORY_SEPARATOR . 'version.txt'));
+    if (preg_match('/^[0-9]+(?:\.[0-9]+)*$/', $version)) {
+        $embedded = 'CHIM/server-plugins/aiagent_nsfw/' . $version . '.dwpkg';
+        $embeddedPath = $modDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $embedded);
+        if (is_file($embeddedPath)) {
+            $resolved = realpath($embeddedPath);
+            if (is_link($embeddedPath) || $resolved === false
+                || strpos($resolved, realpath($modDir) . DIRECTORY_SEPARATOR) !== 0) {
+                throw new RuntimeException('Embedded server package is outside the package directory');
+            }
+            $runtimeFiles[] = $embedded;
         }
     }
 
@@ -565,23 +597,9 @@ function _sharmatBuildModArchive($modDir, $archivePath)
     $added = 0;
     $failures = [];
     try {
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($modDir, FilesystemIterator::SKIP_DOTS)
-        );
-        foreach ($iterator as $file) {
-            if ($file->isLink()) {
-                $failures[] = $file->getPathname() . ': symbolic links are not supported';
-                continue;
-            }
-            if (!$file->isFile()) {
-                continue;
-            }
-            $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($modDir) + 1));
-            $relative = _sharmatNormalizeRelativePath($relative);
-            if (preg_match('/(?:\.bak|meta\.ini)$/i', $relative)) {
-                continue;
-            }
-            if (!$archive->addFile($file->getPathname(), $relative)) {
+        foreach ($runtimeFiles as $relative) {
+            $path = $modDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relative);
+            if (!$archive->addFile($path, $relative)) {
                 $failures[] = $relative . ': could not add file to archive';
                 continue;
             }
@@ -595,7 +613,7 @@ function _sharmatBuildModArchive($modDir, $archivePath)
     if (!$closed) {
         $failures[] = 'could not finalize game-mod archive';
     }
-    if ($added < 3) {
+    if ($added !== count($runtimeFiles)) {
         $failures[] = "only {$added} game-mod files were archived";
     }
     if (!empty($failures)) {
