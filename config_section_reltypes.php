@@ -7,11 +7,32 @@
 // (RelationshipManager) so new types appear here automatically.
 // ============================================================================
 require_once __DIR__ . "/../../lib/relationship_manager.php";
-$_rtRow = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
-$_rtCfg = ($_rtRow && !empty($_rtRow['value'])) ? json_decode($_rtRow['value'], true) : [];
-if (!is_array($_rtCfg)) { $_rtCfg = []; }
-$_rtEnabled  = array_key_exists('enabled', $_rtCfg) ? (bool)$_rtCfg['enabled'] : true;  // master toggle (default on)
-$_rtEligible = $_rtCfg['eligible_types'] ?? ['romantic', 'crush', 'ex'];                 // default sex-eligible: the romantic ones
+require_once __DIR__ . '/open_mode_policy.php';
+$_rtReadStatus = 'error';
+$_rtDecoded = null;
+try {
+    if (!isset($GLOBALS["db"]) || !$GLOBALS["db"]) {
+        throw new RuntimeException('Database handle unavailable');
+    }
+    $_rtRow = $GLOBALS["db"]->fetchOne("SELECT COALESCE((SELECT value::text FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'), '') AS value");
+    if (!is_array($_rtRow) || !array_key_exists('value', $_rtRow) || !is_string($_rtRow['value'])) {
+        $_rtReadStatus = 'error';
+    } elseif (trim($_rtRow['value']) === '') {
+        $_rtReadStatus = 'missing';
+    } else {
+        $_rtDecoded = json_decode($_rtRow['value']);
+        $_rtReadStatus = json_last_error() === JSON_ERROR_NONE ? 'present' : 'malformed';
+    }
+} catch (Throwable $e) {
+    $_rtReadStatus = 'error';
+}
+$_rtPolicy = aiagentNsfwNormalizeRelTypeConfig($_rtDecoded, $_rtReadStatus);
+$_rtCfg = ($_rtDecoded instanceof stdClass) ? get_object_vars($_rtDecoded) : [];
+$_rtReadError = $_rtReadStatus === 'error';
+$_rtEnabled  = $_rtPolicy['enabled'];
+$_rtEligible = $_rtPolicy['eligible_types'];
+$_rtNonRomantic = $_rtPolicy['non_romantic_types'];
+$_rtUseIntimacyArrangements = $_rtPolicy['use_intimacy_arrangements'];
 // Treat an EMPTY saved string as "use the default". A blank save previously wiped these to '' -> empty textareas ->
 // the gate silently no-op'd. The ?? operator alone does NOT catch '' (empty string is not null), so sanitize blanks.
 $_rtVal = function ($v, $d) { return (is_string($v) && trim($v) !== '') ? $v : $d; };
@@ -20,7 +41,7 @@ $_rtFond     = $_rtVal($_rtCfg['prompt_fond'] ?? null, "You have genuine affecti
 $_rtDevoted  = $_rtVal($_rtCfg['prompt_devoted'] ?? null, "You care deeply for #PLAYER_NAME#, but what the two of you share isn't romantic - the bond runs deep, just not that way. Gently and kindly turn down the advance while honoring how much they mean to you. Politely refuse.");
 $_rtBonded   = $_rtVal($_rtCfg['prompt_bonded'] ?? null, "#PLAYER_NAME# means the world to you, but your bond isn't a romantic or sexual one and you won't cross that line. Tenderly, lovingly decline - the closeness stays, the line stays. Politely refuse.");
 $_rtMarried  = $_rtVal($_rtCfg['prompt_married_addon'] ?? null, "You are also married to #SPOUSE#.");  // additive - appended to the refusal when she is also married
-$_rtTypes = RelationshipManager::TYPES;
+$_rtTypes = array_values(array_unique(array_merge(RelationshipManager::TYPES, $_rtEligible, $_rtNonRomantic)));
 $_rtEmoji = RelationshipManager::TYPE_EMOJI;
 ?>
             <!-- ============================================ -->
@@ -31,11 +52,12 @@ $_rtEmoji = RelationshipManager::TYPE_EMOJI;
                 .reltype-box {
                     display: flex; align-items: center; gap: 12px;
                     background: #221E30; border: 1px solid #3A3545; border-radius: 8px;
-                    padding: 13px 16px; cursor: pointer; transition: all 0.3s ease;
+                    padding: 13px 16px; transition: all 0.3s ease;
                 }
                 .reltype-box:hover { border-color: rgba(253,245,208,0.5); box-shadow: 0 0 8px rgba(139,92,246,0.25); }
                 .reltype-box .rt-emoji { font-size: 24px; flex-shrink: 0; line-height: 1; }
                 .reltype-box .rt-name { flex: 1; font-size: 18px; word-spacing: normal; margin: 0; }
+                .reltype-choice { display: flex; align-items: center; gap: 6px; color: #B8A8C8; font-size: 11px; }
                 .reltype-box input[type="checkbox"] {
                     appearance: none; -webkit-appearance: none;
                     width: 22px; height: 22px; border: 2px solid #FDF5D0; border-radius: 4px;
@@ -56,13 +78,20 @@ $_rtEmoji = RelationshipManager::TYPE_EMOJI;
                         <img src="images/ChimNSFWsoulgem.png" class="chim-icon" style="width: 24px; height: 24px;"> Relationship Type Gates
                     </h3>
                     <div style="display: flex; gap: 8px;">
-                        <span class="section-save-btn" onclick="event.stopPropagation(); saveRelTypes();">Save</span>
+                        <?php if ($_rtReadError): ?>
+                            <span class="section-save-btn" aria-disabled="true" style="opacity:.5;cursor:not-allowed;" title="Settings could not be read">Save</span>
+                        <?php else: ?>
+                            <span class="section-save-btn" onclick="event.stopPropagation(); saveRelTypes();">Save</span>
+                        <?php endif; ?>
                         <span id="reltypeGatesToggle" class="section-toggle-btn">Open</span>
                     </div>
                 </div>
                 <div id="reltypeGatesContent" class="collapsible-content" style="display: none; padding: 20px; background: #1C1A24; border: 1px solid #3A3545; border-top: none; border-radius: 0 0 8px 8px;">
                     <div class="alert success" id="reltypesSuccessAlert"></div>
                     <div class="alert error" id="reltypesErrorAlert"></div>
+                    <?php if ($_rtReadError): ?>
+                        <p role="alert" style="color:#F87171;">Relationship-type settings could not be read. Saving is disabled until they can be loaded.</p>
+                    <?php endif; ?>
 
                     <p style="color: #9988BB; font-size: 12px; margin-bottom: 18px;">
                         Choose which relationship types may lead to <strong style="color:#B8A8C8;">sex</strong>. This keeps SHARMAT's existing one-way initiator check; Hug, Kiss, and Hold Hands remain free/OStim-driven. Excluded and child NPCs are always blocked. Types are pulled live from CHIM, so new ones appear here automatically. Use <code style="background: #252233; padding: 2px 6px; border-radius: 3px;">#PLAYER_NAME#</code> in the refusal prompts.
@@ -75,6 +104,14 @@ $_rtEmoji = RelationshipManager::TYPE_EMOJI;
                             <span>Enable Relationship-Type Gating</span>
                         </label>
                         <p class="legend" style="color: #9988BB; font-size: 11px; margin: 8px 0 0 30px;">When OFF, this whole section is bypassed &mdash; every NPC falls back to the normal affinity tier prompts (no type restriction).</p>
+                    </div>
+
+                    <div class="settings-checkbox-group" style="margin-top:12px;">
+                        <label>
+                            <input type="checkbox" id="reltypeUseIntimacyArrangements" <?php echo $_rtUseIntimacyArrangements ? 'checked' : ''; ?>>
+                            <span>Use current directed intimacy arrangements</span>
+                        </label>
+                        <p class="legend" style="color: #9988BB; font-size: 11px; margin: 8px 0 0 30px;">When enabled, a validated current Mind Poisoning arrangement may replace the ordinary type and affinity gate for that exact NPC-to-partner direction. It does not change relationship type or affinity, and does not establish the partner's agreement or current consent. Off by default; unavailable or older Mind Poisoning APIs grant no arrangement lane.</p>
                     </div>
 
                     <!-- The tiered polite-refusal prompts -->
@@ -100,20 +137,27 @@ $_rtEmoji = RelationshipManager::TYPE_EMOJI;
                         <textarea id="reltypePromptMarried" class="auto-resize" style="min-height: 40px; width: 100%; resize: none; overflow: hidden;"><?php echo htmlspecialchars($_rtMarried); ?></textarea>
                     </div>
 
-                    <!-- Sex-eligible relationship types: little boxes, breathing-purple name + gold checkbox -->
-                    <label style="display:block; color:#B8A8C8; font-weight:bold; margin: 22px 0 4px;">Sex-Eligible Relationship Types</label>
-                    <p style="color: #9988BB; font-size: 11px; margin: 0 0 6px;">Checked = this type can lead to sex (goes through the normal rel gate). Unchecked = polite refusal.</p>
-                    <div class="reltype-grid">
+                    <label style="display:block; color:#B8A8C8; font-weight:bold; margin: 22px 0 4px;">Relationship Type Settings</label>
+                    <p style="color: #9988BB; font-size: 11px; margin: 0 0 6px;">Eligibility permits the existing relationship gate. The separate non-romantic mark only prevents SHARMAT automatic-crush conversion; it does not grant eligibility or indicate mutual agreement.</p>
+                    <div class="reltype-grid" id="reltypeGrid">
                         <?php foreach ($_rtTypes as $_t):
                             $_emoji = $_rtEmoji[$_t] ?? '&bull;';
-                            $_checked = in_array($_t, $_rtEligible, true) ? 'checked' : '';
+                            $_escapedType = htmlspecialchars($_t, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                         ?>
-                        <label class="reltype-box">
+                        <div class="reltype-box">
                             <span class="rt-emoji"><?php echo $_emoji; ?></span>
-                            <span class="rt-name section-header"><?php echo htmlspecialchars(ucfirst($_t)); ?></span>
-                            <input type="checkbox" class="reltype-checkbox" value="<?php echo htmlspecialchars($_t); ?>" <?php echo $_checked; ?>>
-                        </label>
+                            <span class="rt-name section-header"><?php echo htmlspecialchars(ucfirst($_t), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></span>
+                            <label class="reltype-choice"><input type="checkbox" class="reltype-checkbox" value="<?php echo $_escapedType; ?>" <?php echo in_array($_t, $_rtEligible, true) ? 'checked' : ''; ?>>Eligible</label>
+                            <label class="reltype-choice"><input type="checkbox" class="reltype-nonromantic-checkbox" value="<?php echo $_escapedType; ?>" <?php echo in_array($_t, $_rtNonRomantic, true) ? 'checked' : ''; ?>>Keep non-romantic</label>
+                        </div>
                         <?php endforeach; ?>
+                    </div>
+                    <div class="form-group" style="margin-top:12px;">
+                        <label for="reltypeCustomInput">Add a custom relationship type</label>
+                        <div style="display:flex;gap:8px;">
+                            <input id="reltypeCustomInput" type="text" autocomplete="off" style="flex:1;">
+                            <button type="button" class="section-save-btn" onclick="addRelType();">Add type</button>
+                        </div>
                     </div>
                 </div>
             </div>

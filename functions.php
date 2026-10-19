@@ -7,6 +7,10 @@
 
 require_once(__DIR__."/common.php");
 
+if (function_exists('aiagentNsfwBeginIntimacyArrangementOfferReadCache')) {
+    aiagentNsfwBeginIntimacyArrangementOfferReadCache();
+}
+
 // Load NSFW prompts AFTER core prompts (TEMPLATE_DIALOG is now available)
 require_once(__DIR__."/prompts.php");
 
@@ -1935,127 +1939,34 @@ $GLOBALS["FUNCSERV"]["ExtCmdCollectPayment"]=function() {
 
 // POST FILTER HOOK. Used for cleaning actions returned by LLM
 $GLOBALS["action_post_process_fnct_ex"][]=function($actions) {
-
-    foreach ($actions as $n=>$action) {
-        
-        $actionParts=explode("|",$action);
-        $actionParts2=explode("@",$actionParts[2]);
-        
-        if (isset($actionParts2[1])) {
-            // Parameter part 
-            if ($actionParts2[0]=="ExtCmdStartSex") {
-                // Lets polish the parameters
-                $localtarget=$actionParts2[1];
-                $mang1=explode(",",$localtarget);
-                $mang2=explode(" and ",$mang1[0]);
-                $mang3=explode("(",$mang2[0]);
-
-                if (empty(trim($mang3[0])))
-                    $mang4=$GLOBALS["PLAYER_NAME"];
-                else
-                    $mang4=FindClosestNPCName($mang3[0]);
-
-                if (empty($mang4))
-                    $mang4=$mang3[0];
-
-                $actions[$n]="{$actionParts[0]}|{$actionParts[1]}|ExtCmdStartSex@{$mang4}";
-
-                error_log("[ACTION POSTFILTER ExtCmdStartSex] $localtarget => {$mang3[0]} => $mang4");
-
-            } else  if ($actionParts2[0]=="ExtCmdKiss") {
-                // Lets polish the parameters
-                $localtarget=$actionParts2[1];
-                $mang1=explode(",",$localtarget);
-                $mang2=explode(" and ",$mang1[0]);
-                $mang3=explode("(",$mang2[0]);
-
-                if (empty(trim($mang3[0])))
-                    $mang4=trim($GLOBALS["PLAYER_NAME"]);
-                else
-                    $mang4=trim(FindClosestNPCName($mang3[0]));
-
-                if (empty($mang4))
-                    $mang4=$mang3[0];
-
-                $actions[$n]="{$actionParts[0]}|{$actionParts[1]}|ExtCmdKiss@{$mang4}";
-
-                // When looking for cooldown, Kiss cooldown will apply globally if player involved, if not, ony apply for involved actors.
-                if ($mang4==trim($GLOBALS["PLAYER_NAME"]))
-                    $GLOBALS["PATCH_ACTION_ALL_ACTORS"]="*";
-                else
-                    $GLOBALS["PATCH_ACTION_ALL_ACTORS"]="{$actionParts[0]},{$mang4}";
-
-                error_log("[ACTION POSTFILTER ExtCmdKiss] $localtarget => {$mang3[0]} => $mang4. Cooldown will apply to {$GLOBALS["PATCH_ACTION_ALL_ACTORS"]}");
-            
-            } else  if ($actionParts2[0]=="ExtCmdStartBlowJob") {
-                // Lets polish the parameters
-                $localtarget=$actionParts2[1];
-                $mang1=explode(",",$localtarget);
-                $mang2=explode(" and ",$mang1[0]);
-                $mang3=explode("(",$mang2[0]);
-
-                if (empty(trim($mang3[0])))
-                    $mang4=trim($GLOBALS["PLAYER_NAME"]);
-                else
-                    $mang4=trim(FindClosestNPCName($mang3[0]));
-
-                if (empty($mang4))
-                    $mang4=$mang3[0];
-
-
-                    
-                $actions[$n]="{$actionParts[0]}|{$actionParts[1]}|ExtCmdStartBlowJob@{$mang4}";
-
-                error_log("[ACTION POSTFILTER ExtCmdStartBlowJob] $localtarget => {$mang3[0]} => $mang4");
-            } else  if ($actionParts2[0]=="ExtCmdStartMassage") {
-                // Lets polish the parameters
-                $localtarget=$actionParts2[1];
-                $mang1=explode(",",$localtarget);
-                $mang2=explode(" and ",$mang1[0]);
-                $mang3=explode("(",$mang2[0]);
-
-                if (empty(trim($mang3[0])))
-                    $mang4=trim($GLOBALS["PLAYER_NAME"]);
-                else
-                    $mang4=trim(FindClosestNPCName($mang3[0]));
-
-                if (empty($mang4))
-                    $mang4=$mang3[0];
-
-
-                    
-                $actions[$n]="{$actionParts[0]}|{$actionParts[1]}|ExtCmdStartMassage@{$mang4}";
-
-                error_log("[ACTION POSTFILTER ExtCmdStartMassage] $localtarget => {$mang3[0]} => $mang4");
-           
-            } else  if ($actionParts2[0]=="ExtCmdStartThreesome") {
-                // Lets polish the parameters
-                $localtarget=$actionParts2[1];
-                $mang1=explode(",",$localtarget);
-                
-
-                $sanitized=[];
-                if (!is_array($mang1)) {
-                    error_log("[ACTION POSTFILTER ExtCmdStartThreesome] Error $localtarget ");
-
-                } else {
-                    foreach ($mang1 as $participator) {
-                        $sanitized[]=trim($participator);
-
-                    }
-
-
-                }
-                $mang4=implode(",",$sanitized);
-                $GLOBALS["PATCH_ACTION_ALL_ACTORS"]="*";//Improve this
-                    
-                $actions[$n]="{$actionParts[0]}|{$actionParts[1]}|ExtCmdStartThreesome@{$mang4}";
-
-                error_log("[ACTION POSTFILTER ExtCmdStartThreesome] $localtarget => {$mang3[0]} => $mang4");
-            }
-        }
+    if (function_exists('aiagentNsfwClearIntimacyArrangementOfferReadCache')) {
+        aiagentNsfwClearIntimacyArrangementOfferReadCache();
     }
 
+    foreach ($actions as $n => $action) {
+        $actionParts = explode("|", $action, 3);
+        $actionParts2 = explode("@", $actionParts[2] ?? "", 2);
+        if (($actionParts2[0] ?? "") !== "ExtCmdKiss" || !isset($actionParts2[1])) { continue; }
+
+        // Keep the existing Kiss canonicalization. Sexual-start targets are exact-validated below.
+        $localtarget = $actionParts2[1];
+        $mang1 = explode(",", $localtarget);
+        $mang2 = explode(" and ", $mang1[0]);
+        $mang3 = explode("(", $mang2[0]);
+        if (empty(trim($mang3[0]))) {
+            $mang4 = trim($GLOBALS["PLAYER_NAME"]);
+        } else {
+            $mang4 = trim(FindClosestNPCName($mang3[0]));
+        }
+        if (empty($mang4)) { $mang4 = $mang3[0]; }
+        $actions[$n] = "{$actionParts[0]}|{$actionParts[1]}|ExtCmdKiss@{$mang4}";
+        if ($mang4 === trim($GLOBALS["PLAYER_NAME"])) {
+            $GLOBALS["PATCH_ACTION_ALL_ACTORS"] = "*";
+        } else {
+            $GLOBALS["PATCH_ACTION_ALL_ACTORS"] = "{$actionParts[0]},{$mang4}";
+        }
+        error_log("[ACTION POSTFILTER ExtCmdKiss] $localtarget => {$mang3[0]} => $mang4. Cooldown will apply to {$GLOBALS["PATCH_ACTION_ALL_ACTORS"]}");
+    }
     // HARD INTIMACY SAFETY FILTER: validate the speaking actor and every named target after the
     // model's target text has been normalized. Prompt instructions are not enforcement. Child actors
     // and names on the user's exclusion list are dropped before Papyrus can receive the action. This
@@ -2104,34 +2015,41 @@ $GLOBALS["action_post_process_fnct_ex"][]=function($actions) {
     }
     $actions = array_values($actions);
 
-    // NPC-to-NPC INITIATION GATE (user directive 2026-07-05): after target resolution, drop any sex-scene
-    // START whose speaker is an NPC and whose target is ANOTHER NPC unless A->B is eligible (affinity + rel
-    // type; prostitute A bypasses, slave A is player-only). Player-directed scenes are NEVER touched (empty
-    // target defaults to the player downstream; player named in a threesome CSV counts as player-directed).
-    $__nnSpeaker = trim((string)($GLOBALS["HERIKA_NAME"] ?? ""));
-    $__nnPlayer  = trim((string)($GLOBALS["PLAYER_NAME"] ?? ""));
-    if ($__nnSpeaker !== "" && function_exists('aiagentNsfwNpcToNpcSexEligible')) {
-        $__nnStarts = ["ExtCmdStartSex","ExtCmdStartBlowJob","ExtCmdStartAnalSex","ExtCmdStartThreesome","ExtCmdStartTitfuck","ExtCmdStartHandJobSex","ExtCmdStartHandjobSex","ExtCmdStartMassage","ExtCmdDrinkBloodSex"];
-        foreach ($actions as $__nnN => $__nnAction) {
-            $__nnP = explode("|", $__nnAction);
-            if (!isset($__nnP[2])) { continue; }
-            $__nnCT = explode("@", $__nnP[2]);
-            if (!in_array($__nnCT[0], $__nnStarts, true)) { continue; }
-            $__nnTgt = trim((string)($__nnCT[1] ?? ""));
-            if ($__nnTgt === "" || strcasecmp($__nnTgt, $__nnSpeaker) === 0) { continue; }               // empty/self
-            if ($__nnPlayer !== "" && stripos($__nnTgt, $__nnPlayer) !== false) { continue; }            // player-directed (incl. threesome CSV)
-            $__nnFirst = trim(explode(",", $__nnTgt)[0]);                                                 // first named partner drives eligibility
-            if ($__nnFirst === "" || ($__nnPlayer !== "" && strcasecmp($__nnFirst, $__nnPlayer) === 0)) { continue; }
-            if (!aiagentNsfwNpcToNpcSexEligible($__nnSpeaker, $__nnFirst)) {
-                error_log("[AIAGENTNSFW] NPC-NPC sex BLOCKED: {$__nnSpeaker} not eligible to start with {$__nnFirst} (affinity/rel-type gate)");
-                unset($actions[$__nnN]);
-            } else {
-                error_log("[AIAGENTNSFW] NPC-NPC sex ALLOWED: {$__nnSpeaker} -> {$__nnFirst} (affinity/rel-type gate passed)");
-            }
-        }
-        $actions = array_values($actions);
-    }
+    // Sexual starts accept exact current recipients from the offered schema and current route.
+    $__nrSexStartCodes = function_exists('aiagentNsfwSexStartActionCodes') ? aiagentNsfwSexStartActionCodes() : [];
+    foreach ($actions as $__nrN => $__nrAction) {
+        $__nrP = explode("|", (string)$__nrAction);
+        $__nrPayload = (string)($__nrP[2] ?? "");
+        $__nrCommand = trim(explode("@", $__nrPayload, 2)[0]);
+        if (!in_array($__nrCommand, $__nrSexStartCodes, true)) { continue; }
 
+        $__nrAtParts = explode("@", $__nrPayload);
+        $__nrSpeaker = trim((string)($__nrP[0] ?? ""));
+        $__nrActualSpeaker = trim((string)($GLOBALS["HERIKA_NAME"] ?? ""));
+        $__nrTarget = trim((string)($__nrAtParts[1] ?? ""));
+        $__nrIntimacy = $__nrActualSpeaker !== "" && function_exists('getIntimacyForActor')
+            ? getIntimacyForActor($__nrActualSpeaker) : [];
+        $__nrCanonicalTargets = count($__nrP) === 3 && strpos($__nrPayload, "|") === false
+            && count($__nrAtParts) === 2 && $__nrSpeaker !== "" && $__nrActualSpeaker !== ""
+            && strcasecmp($__nrSpeaker, $__nrActualSpeaker) === 0
+            && function_exists('aiagentNsfwCanonicalSexStartTargets')
+            ? aiagentNsfwCanonicalSexStartTargets($__nrActualSpeaker, $__nrTarget, $__nrCommand, (array)$__nrIntimacy)
+            : null;
+        $__nrAllowedTargets = aiagentNsfwSexStartTargetOptions($__nrActualSpeaker, (array)$__nrIntimacy, $__nrCommand);
+        $__nrActionTarget = $__nrCommand === 'ExtCmdStartThreesome'
+            ? $__nrCanonicalTargets : ($__nrCanonicalTargets[0] ?? null);
+        $__nrOffered = $__nrCanonicalTargets !== null && function_exists('aiagentNsfwSexStartActionOffered')
+            && aiagentNsfwSexStartActionOffered($__nrCommand, $__nrActionTarget, $__nrAllowedTargets);
+        if (!$__nrOffered) {
+            error_log("[AIAGENTNSFW] sexual-start blocked at final target gate: {$__nrCommand}");
+            unset($actions[$__nrN]);
+            continue;
+        }
+
+        $actions[$__nrN] = $__nrActualSpeaker . "|" . $__nrP[1] . "|" . $__nrCommand . "@" . implode(',', $__nrCanonicalTargets);
+        if ($__nrCommand === "ExtCmdStartThreesome") { $GLOBALS["PATCH_ACTION_ALL_ACTORS"] = "*"; }
+    }
+    $actions = array_values($actions);
     // AFFECTION LEGACY-ANIM FLAG (user directive 2026-07-05): when the opt-out is ON, tag Kiss/Hug with a
     // trailing @legacy token so the mod script uses the lightweight legacy animation instead of a persistent
     // OStim scene. Default OFF = OStim (shipped behavior). HoldHands is always OStim (no legacy anim exists).
@@ -2376,6 +2294,19 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
         || $frameworkForcedAggressor
     );
 
+    // An active directed arrangement replaces only this exact Player pair's ordinary
+    // relationship/liking gate. The shared helper retains protection and affair floors.
+    $playerArrangementStartLane = !$isNpcScene && !$isSlave && !$isProstitute
+        && empty($intimacyStatus['refused_until_scene_end'])
+        && empty($intimacyStatus['refusal_expressed'])
+        && (($intimacyStatus['scene_phase'] ?? '') !== 'rejected')
+        && !(($intimacyStatus['scene_phase'] ?? '') === 'tier_prompt'
+            && (int)($intimacyStatus['intensity_tier'] ?? 0) >= 3
+            && empty($intimacyStatus['accepted_sex']))
+        && function_exists('aiagentNsfwIntimacyArrangementAllowsSexPair')
+        && aiagentNsfwIntimacyArrangementAllowsSexPair($npcName, $GLOBALS['PLAYER_NAME'] ?? 'Player')
+        && (!function_exists('aiagentNsfwRelTypeSexEligible') || aiagentNsfwRelTypeSexEligible($npcName, true));
+
 // Only offer this action if sex disposal is >20 for this actor (when gating enabled)
     if (isset($intimacyStatus["level"])&&$intimacyStatus["level"]==0) {
 
@@ -2406,7 +2337,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             $currentArousal = $intimacyStatus["sex_disposal"] ?? 0;
             $isNaked = $intimacyStatus["is_naked"] ?? 0;
             // Fond+ (>=56): a regular NPC has her OWN autonomy to initiate sex - she does not need AcceptSex.
-            $_consentedFns = $frameworkForcedAggressor || !empty($intimacyStatus["accepted_sex"]) || $isSlave || $npcSceneGateDisabled || $skoomaBargain || ($affinity >= $sceneCallMinAffinity);
+            $_consentedFns = $frameworkForcedAggressor || !empty($intimacyStatus["accepted_sex"]) || $isSlave || $npcSceneGateDisabled || $skoomaBargain || ($affinity >= $sceneCallMinAffinity) || $playerArrangementStartLane;
             // Sticky refusal also blocks re-initiating sex acts until the scene ends.
             if (!$isSlave && !empty($intimacyStatus["refused_until_scene_end"])) { $_consentedFns = false; }
 
@@ -2459,7 +2390,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
                 $_consentedFns = $frameworkForcedAggressor || $prostituteServiceUnlocked || $isSlave || $npcSceneGateDisabled || $skoomaBargain;
             } else {
                 // Fond+ (>=56): a regular NPC has her OWN autonomy to initiate sex - she does not need AcceptSex.
-                $_consentedFns = $frameworkForcedAggressor || !empty($intimacyStatus["accepted_sex"]) || $isSlave || $npcSceneGateDisabled || $skoomaBargain || ($affinity >= $sceneCallMinAffinity);
+                $_consentedFns = $frameworkForcedAggressor || !empty($intimacyStatus["accepted_sex"]) || $isSlave || $npcSceneGateDisabled || $skoomaBargain || ($affinity >= $sceneCallMinAffinity) || $playerArrangementStartLane;
             }
             // Sticky refusal also blocks re-initiating sex acts until the scene ends.
             if (!$isSlave && !empty($intimacyStatus["refused_until_scene_end"])) { $_consentedFns = false; }
@@ -2608,7 +2539,7 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
             && ($openModeAdultPlayerRoute
                 || (((int)$affinity >= $sceneCallMinAffinity)
                     && function_exists('aiagentNsfwRelTypeSexEligible')
-                    && aiagentNsfwRelTypeSexEligible($npcName)));
+                    && aiagentNsfwRelTypeSexEligible($npcName, false)));
         $playerNeedsDecision =
             empty($intimacyStatus["is_npc_scene"])
             && (int)($intimacyStatus["intensity_tier"] ?? 0) >= 3
@@ -2817,7 +2748,19 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0]!="instruction" 
 	        // initiate a scene. Strip the sex-act initiators + scene driver unless romanticized (Fond+, aff>=56),
 	        // already consented, slave, or skooma-bargain. Affection + Accept/Refuse stay so they can still react.
 	        $fallbackAffinity = function_exists('getNpcAffinity') ? (int)getNpcAffinity($fallbackNpcName) : 0;
+	        $fallbackPendingDecision = (($fallbackIntimacy['scene_phase'] ?? '') === 'tier_prompt')
+	            && (int)($fallbackIntimacy['intensity_tier'] ?? 0) >= 3
+	            && empty($fallbackIntimacy['accepted_sex']);
+	        $fallbackArrangementLane = !$fallbackIsSlaveActor && !$fallbackIsProstitute
+	            && empty($fallbackIntimacy['is_npc_scene']) && !$fallbackPendingDecision
+	            && empty($fallbackIntimacy['refused_until_scene_end'])
+	            && empty($fallbackIntimacy['refusal_expressed'])
+	            && (($fallbackIntimacy['scene_phase'] ?? '') !== 'rejected')
+	            && function_exists('aiagentNsfwIntimacyArrangementAllowsSexPair')
+	            && aiagentNsfwIntimacyArrangementAllowsSexPair($fallbackNpcName, $GLOBALS['PLAYER_NAME'] ?? 'Player')
+	            && (!function_exists('aiagentNsfwRelTypeSexEligible') || aiagentNsfwRelTypeSexEligible($fallbackNpcName, true));
 		        $fallbackConsented = !empty($fallbackIntimacy["accepted_sex"]) || $fallbackIsSlaveActor || $fallbackSkoomaBargain || ($fallbackAffinity >= $fallbackSceneCallMin)
+		            || $fallbackArrangementLane
 		            || (function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode());   // OPEN MODE: strangers keep the toolset (sticky refusal below still dominates; prostitutes still charge)
 		        // REFUSAL DOMINATES (fix 2026-07-01): mirror the main route's sticky-refusal block (~2248). Without this a
 		        // refusing Fond+ NPC kept Start* tools on funcret turns and their FUNCSERV auto-consent ERASED the refusal.
@@ -2865,6 +2808,53 @@ if (isset($GLOBALS["ENABLED_FUNCTIONS"]) && is_array($GLOBALS["ENABLED_FUNCTIONS
     error_log("[AIAGENTNSFW] Affection throttle active - HoldHands/Hug/Kiss withheld for " . ($GLOBALS["HERIKA_NAME"] ?? "?") . " (anti-spam)");
 }
 
+$targetedSexStartCodes = aiagentNsfwSexStartActionCodes();
+if (isset($GLOBALS['ENABLED_FUNCTIONS']) && is_array($GLOBALS['ENABLED_FUNCTIONS'])
+    && function_exists('aiagentNsfwSexStartActionAvailable')) {
+    $GLOBALS['ENABLED_FUNCTIONS'] = array_values(array_filter($GLOBALS['ENABLED_FUNCTIONS'], function ($code) use ($targetedSexStartCodes) {
+        return !in_array($code, $targetedSexStartCodes, true) || aiagentNsfwSexStartActionAvailable($code);
+    }));
+}
+$GLOBALS['AIAGENTNSFW_PLAYER_START_OFFER_SNAPSHOT'] = array_values(array_intersect(
+    $targetedSexStartCodes,
+    (array)($GLOBALS['ENABLED_FUNCTIONS'] ?? [])
+));
+
+// A low-affinity arrangement can expose initiation actions without the existing Fond+ cue.
+// Add a narrow current-intent cue only when a Player start survived the real offer pipeline.
+$arrangementCueStatus = is_array($intimacyStatus ?? null) ? $intimacyStatus : [];
+$arrangementCuePendingDecision = (($arrangementCueStatus['scene_phase'] ?? '') === 'tier_prompt')
+    && (int)($arrangementCueStatus['intensity_tier'] ?? 0) >= 3
+    && empty($arrangementCueStatus['accepted_sex']);
+$arrangementCueStarts = array_intersect(
+    ['ExtCmdStartSex', 'ExtCmdStartBlowJob', 'ExtCmdStartAnalSex', 'ExtCmdStartThreesome', 'ExtCmdStartTitfuck', 'ExtCmdStartHandJobSex', 'ExtCmdStartHandjobSex'],
+    $GLOBALS['AIAGENTNSFW_PLAYER_START_OFFER_SNAPSHOT']
+);
+if (empty($arrangementCueStatus['is_npc_scene'])
+    && (int)($arrangementCueStatus['level'] ?? 0) === 0
+    && !$arrangementCuePendingDecision
+    && empty($arrangementCueStatus['refused_until_scene_end'])
+    && empty($arrangementCueStatus['refusal_expressed'])
+    && (($arrangementCueStatus['scene_phase'] ?? '') !== 'rejected')
+    && $arrangementCueStarts !== []
+    && function_exists('aiagentNsfwIntimacyArrangementAllowsSexPair')
+    && aiagentNsfwIntimacyArrangementAllowsSexPair($GLOBALS['HERIKA_NAME'] ?? '', $GLOBALS['PLAYER_NAME'] ?? 'Player')) {
+    $GLOBALS['AIAGENTNSFW_ARRANGEMENT_INITIATION'] = true;
+}
+
+// Add only the NPC target route after recording which starts the original per-action
+// offer builder allowed for Player. Newly added starts therefore cannot restore Player.
+if (isset($intimacyStatus) && is_array($intimacyStatus) && (int)($intimacyStatus['level'] ?? -1) === 0
+    && empty($playerNeedsDecision)
+    && function_exists('aiagentNsfwAddEligibleNpcSexStartActions')) {
+    aiagentNsfwAddEligibleNpcSexStartActions(
+        $GLOBALS['HERIKA_NAME'] ?? '',
+        $intimacyStatus,
+        $sexDisposalEnabled ?? false,
+        $intimacyStatus['sex_disposal'] ?? 0
+    );
+}
+
 // RELATIONSHIP-TYPE SEX GATE (user directive 2026-06-29): a regular NPC is sexually available ONLY if her relationship
 // TYPE with the PLAYER is one of the UI-eligible types (aiagent_nsfw_reltypes.eligible_types). Affinity does NOT
 // override this - a Bonded "student" still kindly refuses. Slaves (forced), prostitutes (paid), and skooma-bargain
@@ -2879,16 +2869,25 @@ if (isset($GLOBALS["ENABLED_FUNCTIONS"]) && is_array($GLOBALS["ENABLED_FUNCTIONS
     $relGateFrameworkAggressor = isset($intimacyStatus) && !empty($intimacyStatus["framework_forced_scene"]) && !empty($intimacyStatus["scene_actor_is_aggressor"]);
     if ($relGateNpc !== "" && $relGateNpc !== "(actor)" && strcasecmp($relGateNpc, "The Narrator") !== 0 && !$relGateIsNpcScene && !$relGateSlave && !$relGateProstitute && !$relGateSkooma && !$relGateFrameworkAggressor && !aiagentNsfwRelTypeSexEligible($relGateNpc)) {
         $relGateStrip = ["ExtCmdStartSex","ExtCmdStartBlowJob","ExtCmdStartAnalSex","ExtCmdStartMassage","ExtCmdStartThreesome","ExtCmdStartHandJobSex","ExtCmdStartTitfuck","ExtCmdStartSelfMasturbation","ExtCmdSexCommand","ExtCmdAcceptSex","ExtCmdQuickenPace","ExtCmdSlowPace","ExtCmdRemoveClothes","ExtCmdDrinkBloodSex"];
+        $relGateNpcStartCodes = array_values(array_diff(aiagentNsfwSexStartActionCodes(), ["ExtCmdStartThreesome"]));
+        foreach ($relGateNpcStartCodes as $startCode) {
+            $targets = aiagentNsfwSexStartTargetOptions($relGateNpc, (array)$intimacyStatus, $startCode);
+            if (array_filter($targets, function ($target) { return strcasecmp($target, (string)($GLOBALS['PLAYER_NAME'] ?? '')) !== 0; }) !== []) {
+                $relGateStrip = array_values(array_diff($relGateStrip, [$startCode]));
+            }
+        }
+        if (aiagentNsfwSexStartTargetOptions($relGateNpc, (array)$intimacyStatus, 'ExtCmdStartThreesome') !== []) {
+            $relGateStrip = array_values(array_diff($relGateStrip, ['ExtCmdStartThreesome']));
+        }
         $GLOBALS["ENABLED_FUNCTIONS"] = array_values(array_filter($GLOBALS["ENABLED_FUNCTIONS"], function($f) use ($relGateStrip) { return !in_array($f, $relGateStrip, true); }));
         if (!in_array("ExtCmdRefuseSex", $GLOBALS["ENABLED_FUNCTIONS"], true)) { $GLOBALS["ENABLED_FUNCTIONS"][] = "ExtCmdRefuseSex"; }
         error_log("[AIAGENTNSFW] REL-TYPE SEX GATE: {$relGateNpc} relationship type NOT sex-eligible - sex tools + AcceptSex stripped, RefuseSex offered (kind decline)");
     }
 }
 
-// PRESENT-ACTOR TARGET ENUM (user directive 2026-06-29): constrain every sex-action 'target' to actors who are actually
-// present (scene partners + player + nearby), so the model cannot emit an empty/garbage target that resolves to "no
-// action returned". Built at request time because the actor list is per-turn. The enum becomes the closed list of
-// valid targets. Group/threesome actions especially need nearby actors in the enum so she can pull someone in.
+// PRESENT-ACTOR TARGET ENUM: sex starts use exact, route-specific recipients. Other existing target actions
+// retain their current present-actor enum. NPC starts never inherit Player eligibility; group validation
+// later enforces the native rule that one NPC target implicitly adds Player.
 if (isset($GLOBALS["FUNCTIONS"]) && is_array($GLOBALS["FUNCTIONS"]) && function_exists('getFunctionCodeName')) {
     $nsfwValidTargets = [];
     $nsfwSceneActors = (isset($intimacyStatus) && is_array($intimacyStatus["scene_actors"] ?? null)) ? $intimacyStatus["scene_actors"] : [];
@@ -2900,17 +2899,35 @@ if (isset($GLOBALS["FUNCTIONS"]) && is_array($GLOBALS["FUNCTIONS"]) && function_
     $nsfwValidTargets = array_values(array_unique(array_filter($nsfwValidTargets, function($t){
         return $t !== '' && (!function_exists('nsfwIsNarratorName') || !nsfwIsNarratorName($t));
     })));
-    if (!empty($nsfwValidTargets)) {
-        $nsfwTargetActions = ["ExtCmdStartSex","ExtCmdStartBlowJob","ExtCmdStartAnalSex","ExtCmdStartThreesome","ExtCmdStartTitfuck","ExtCmdStartHandJobSex","ExtCmdStartMassage","ExtCmdAcceptSex","ExtCmdRefuseSex","ExtCmdKiss","ExtCmdHug","ExtCmdHoldHands","ExtCmdDrinkBloodSex"];
-        foreach ($GLOBALS["FUNCTIONS"] as $i => $fn) {
-            if (!is_array($fn) || empty($fn["name"])) { continue; }
-            $code = getFunctionCodeName($fn["name"]);
-            if (in_array($code, $nsfwTargetActions, true) && isset($GLOBALS["FUNCTIONS"][$i]["parameters"]["properties"]["target"])) {
-                $GLOBALS["FUNCTIONS"][$i]["parameters"]["properties"]["target"]["enum"] = $nsfwValidTargets;
+    $nsfwStartActions = aiagentNsfwSexStartActionCodes();
+    $nsfwAcceptSexAllowed = in_array('ExtCmdAcceptSex', (array)($GLOBALS['ENABLED_FUNCTIONS'] ?? []), true);
+    foreach ($GLOBALS["FUNCTIONS"] as $i => $fn) {
+        if (!is_array($fn) || empty($fn["name"])) { continue; }
+        $code = getFunctionCodeName($fn["name"]);
+        if (!isset($GLOBALS["FUNCTIONS"][$i]["parameters"]["properties"]["target"])) { continue; }
+
+        if (in_array($code, $nsfwStartActions, true)) {
+            $targets = [];
+            if (in_array($code, (array)($GLOBALS['ENABLED_FUNCTIONS'] ?? []), true)
+                && function_exists('aiagentNsfwSexStartActionAvailable')
+                && aiagentNsfwSexStartActionAvailable($code)) {
+                $targets = aiagentNsfwSexStartTargetOptions($GLOBALS['HERIKA_NAME'] ?? '', (array)($intimacyStatus ?? []), $code);
             }
+            $GLOBALS["FUNCTIONS"][$i]["parameters"]["properties"]["target"]["enum"] = $targets;
+            $targetNote = " Use one exact listed name, without a RefID suffix, commas, or 'and'. Starting states the speaker's intent and does not establish recipient agreement.";
+            $GLOBALS["FUNCTIONS"][$i]["parameters"]["properties"]["target"]["description"] = trim((string)($GLOBALS["FUNCTIONS"][$i]["parameters"]["properties"]["target"]["description"] ?? '') . $targetNote);
+            if (isset($GLOBALS["FUNCTIONS"][$i]["description"])) {
+                $GLOBALS["FUNCTIONS"][$i]["description"] = rtrim((string)$GLOBALS["FUNCTIONS"][$i]["description"]) . $targetNote;
+            }
+        } elseif ($code === 'ExtCmdAcceptSex') {
+            $GLOBALS["FUNCTIONS"][$i]["parameters"]["properties"]["target"]["enum"] = $nsfwAcceptSexAllowed ? [$GLOBALS['PLAYER_NAME']] : [];
+        } elseif ($code === 'ExtCmdRefuseSex') {
+            $GLOBALS["FUNCTIONS"][$i]["parameters"]["properties"]["target"]["enum"] = [$GLOBALS['PLAYER_NAME'] ?? ''];
+        } elseif (in_array($code, ["ExtCmdKiss","ExtCmdHug","ExtCmdHoldHands"], true)) {
+            $GLOBALS["FUNCTIONS"][$i]["parameters"]["properties"]["target"]["enum"] = $nsfwValidTargets;
         }
-        error_log("[AIAGENTNSFW] Sex-action target enum constrained to present actors: " . implode(", ", $nsfwValidTargets));
     }
+    error_log("[AIAGENTNSFW] Sexual-start target enums constrained to exact eligible recipients; other affection targets remain present-actor scoped");
 }
 
 // AcceptSex is REQUIRED again. Consent is now a MANDATORY SOFT GATE (user directive 2026-06-28, reversing the

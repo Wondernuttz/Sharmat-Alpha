@@ -95,6 +95,94 @@ function aiagentNsfwCanonicalRelationshipType($type)
 }
 
 /**
+ * Normalize the stored relationship-type policy at its JSON/DB boundary.
+ * Callers should decode JSON without associative mode so a top-level list
+ * cannot be mistaken for a config object.
+ */
+function aiagentNsfwNormalizeRelTypeConfig($config, $readStatus = 'present')
+{
+    $defaults = [
+        'status' => 'missing',
+        'valid' => true,
+        'enabled' => true,
+        'eligible_types' => ['romantic', 'crush', 'ex'],
+        'non_romantic_types' => [],
+        'use_intimacy_arrangements' => false,
+    ];
+    $invalid = static function ($status) {
+        return [
+            'status' => $status,
+            'valid' => false,
+            'enabled' => true,
+            'eligible_types' => [],
+            'non_romantic_types' => [],
+            'use_intimacy_arrangements' => false,
+        ];
+    };
+
+    if ($readStatus === 'missing') { return $defaults; }
+    if ($readStatus === 'error') { return $invalid('error'); }
+    if ($readStatus === 'malformed') { return $invalid('malformed'); }
+    if ($readStatus !== 'present') { return $invalid('error'); }
+
+    if ($config instanceof stdClass) {
+        $values = get_object_vars($config);
+    } elseif (is_array($config) && $config !== [] && !array_is_list($config)) {
+        $values = $config;
+    } else {
+        return $invalid('malformed');
+    }
+
+    if (array_key_exists('enabled', $values) && !is_bool($values['enabled'])) {
+        return $invalid('malformed');
+    }
+    if (array_key_exists('use_intimacy_arrangements', $values) && !is_bool($values['use_intimacy_arrangements'])) {
+        return $invalid('malformed');
+    }
+
+    $normalizeList = static function ($items, &$valid) {
+        if (!is_array($items) || !array_is_list($items)) {
+            $valid = false;
+            return [];
+        }
+        $normalized = [];
+        foreach ($items as $item) {
+            if (!is_string($item) || trim($item) === '') {
+                $valid = false;
+                return [];
+            }
+            $type = aiagentNsfwCanonicalRelationshipType($item);
+            if ($type === '') {
+                $valid = false;
+                return [];
+            }
+            if (!in_array($type, $normalized, true)) { $normalized[] = $type; }
+        }
+        return $normalized;
+    };
+
+    $valid = true;
+    $eligible = array_key_exists('eligible_types', $values)
+        ? $normalizeList($values['eligible_types'], $valid)
+        : ['romantic', 'crush', 'ex'];
+    $nonRomantic = array_key_exists('non_romantic_types', $values)
+        ? $normalizeList($values['non_romantic_types'], $valid)
+        : [];
+    if (!$valid) { return $invalid('malformed'); }
+
+    return [
+        'status' => 'present',
+        'valid' => true,
+        'enabled' => array_key_exists('enabled', $values) ? $values['enabled'] : true,
+        'eligible_types' => $eligible,
+        'non_romantic_types' => $nonRomantic,
+        'use_intimacy_arrangements' => array_key_exists('use_intimacy_arrangements', $values)
+            ? $values['use_intimacy_arrangements']
+            : false,
+    ];
+}
+
+/**
  * Open Mode and a disabled relationship-type gate must not reuse legacy saved
  * overhead text. Older installations can retain directives such as "not into
  * romance or intimacy" in those editable fields, which silently recreates the

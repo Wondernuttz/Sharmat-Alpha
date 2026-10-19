@@ -1899,6 +1899,196 @@ function aiagentNsfwIsSlutNpc($npcName) {
     return $flag;
 }
 
+// Read the shared relationship-type policy once per request. The scalar subquery
+// guarantees one row on success, so [] from fetchOne means the read failed while
+// a blank value means the setting is absent and should use legacy defaults.
+function aiagentNsfwGetRelTypePolicy() {
+    if (isset($GLOBALS['AIAGENTNSFW_RELTYPE_POLICY']) && is_array($GLOBALS['AIAGENTNSFW_RELTYPE_POLICY'])) {
+        return $GLOBALS['AIAGENTNSFW_RELTYPE_POLICY'];
+    }
+
+    $readStatus = 'error';
+    $config = null;
+    try {
+        if (isset($GLOBALS['db']) && $GLOBALS['db']) {
+            $row = $GLOBALS['db']->fetchOne("SELECT COALESCE((SELECT value::text FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'), '') AS value");
+            if (is_array($row) && array_key_exists('value', $row)) {
+                if (!is_string($row['value'])) {
+                    $readStatus = 'malformed';
+                } else {
+                    $raw = trim($row['value']);
+                    if ($raw === '') {
+                        $readStatus = 'missing';
+                    } else {
+                        $config = json_decode($raw);
+                        $readStatus = (json_last_error() === JSON_ERROR_NONE && $config instanceof stdClass)
+                            ? 'present'
+                            : 'malformed';
+                    }
+                }
+            }
+        }
+    } catch (Throwable $t) {
+        $readStatus = 'error';
+    }
+
+    $policy = aiagentNsfwNormalizeRelTypeConfig($config, $readStatus);
+    $policy['prompts'] = [];
+    if ($readStatus === 'present' && $config instanceof stdClass && !empty($policy['valid'])) {
+        foreach (['prompt_friendly', 'prompt_fond', 'prompt_devoted', 'prompt_bonded', 'prompt_married_addon'] as $key) {
+            if (isset($config->{$key}) && is_string($config->{$key})) {
+                $policy['prompts'][$key] = $config->{$key};
+            }
+        }
+    }
+    $GLOBALS['AIAGENTNSFW_RELTYPE_POLICY'] = $policy;
+    return $policy;
+}
+
+function aiagentNsfwBeginIntimacyArrangementOfferReadCache() {
+    if (!isset($GLOBALS['AIAGENTNSFW_INTIMACY_ARRANGEMENT_OFFER_CACHE'])
+        || !is_array($GLOBALS['AIAGENTNSFW_INTIMACY_ARRANGEMENT_OFFER_CACHE'])) {
+        $GLOBALS['AIAGENTNSFW_INTIMACY_ARRANGEMENT_OFFER_CACHE'] = [];
+    }
+}
+
+function aiagentNsfwClearIntimacyArrangementOfferReadCache() {
+    unset($GLOBALS['AIAGENTNSFW_INTIMACY_ARRANGEMENT_OFFER_CACHE']);
+}
+
+// Read the optional MP v1 projection. The short-lived offer cache is cleared at
+// the final action callback so dispatch always validates against current MP state.
+function aiagentNsfwReadIntimacyArrangement($ownerName, $targetName) {
+    $ownerName = trim((string)$ownerName);
+    $targetName = trim((string)$targetName);
+    $playerName = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
+    $unavailable = ['state' => 'unavailable', 'kind' => null];
+    if ($ownerName === '' || $targetName === '' || $playerName === ''
+        || strcasecmp($ownerName, $playerName) === 0 || strcasecmp($ownerName, 'Player') === 0
+        || !defined('ChimMindPoisoning\\MIND_POISONING_INTIMACY_API_VERSION')
+        || constant('ChimMindPoisoning\\MIND_POISONING_INTIMACY_API_VERSION') !== 1
+        || !function_exists('ChimMindPoisoning\\mindPoisoningReadIntimacyArrangement')
+        || !class_exists('RelationshipManager')) {
+        return $unavailable;
+    }
+
+    try {
+        $owner = RelationshipManager::resolveNpcByName($ownerName);
+        if (!is_array($owner) || !isset($owner['id']) || !ctype_digit((string)$owner['id'])
+            || (int)$owner['id'] <= 0 || !is_string($owner['npc_name'] ?? null)
+            || strcasecmp(trim($owner['npc_name']), $ownerName) !== 0) {
+            return $unavailable;
+        }
+        $ownerId = (int)$owner['id'];
+
+        if (strcasecmp($targetName, $playerName) === 0 || strcasecmp($targetName, 'Player') === 0) {
+            $targetSubject = 'player';
+        } else {
+            $target = RelationshipManager::resolveNpcByName($targetName);
+            if (!is_array($target) || !isset($target['id']) || !ctype_digit((string)$target['id'])
+                || (int)$target['id'] <= 0 || !is_string($target['npc_name'] ?? null)
+                || strcasecmp(trim($target['npc_name']), $targetName) !== 0
+                || (int)$target['id'] === $ownerId) {
+                return $unavailable;
+            }
+            $targetSubject = 'npc:' . (int)$target['id'];
+        }
+
+        $cacheKey = $ownerId . ':' . $targetSubject;
+        $cacheActive = isset($GLOBALS['AIAGENTNSFW_INTIMACY_ARRANGEMENT_OFFER_CACHE'])
+            && is_array($GLOBALS['AIAGENTNSFW_INTIMACY_ARRANGEMENT_OFFER_CACHE']);
+        if ($cacheActive && array_key_exists($cacheKey, $GLOBALS['AIAGENTNSFW_INTIMACY_ARRANGEMENT_OFFER_CACHE'])) {
+            return $GLOBALS['AIAGENTNSFW_INTIMACY_ARRANGEMENT_OFFER_CACHE'][$cacheKey];
+        }
+        $finish = static function (array $result) use ($cacheActive, $cacheKey) {
+            if ($cacheActive) { $GLOBALS['AIAGENTNSFW_INTIMACY_ARRANGEMENT_OFFER_CACHE'][$cacheKey] = $result; }
+            return $result;
+        };
+
+        $reader = 'ChimMindPoisoning\\mindPoisoningReadIntimacyArrangement';
+        $projection = $reader($ownerId, $targetSubject);
+    } catch (Throwable $t) {
+        return isset($cacheKey, $finish) ? $finish($unavailable) : $unavailable;
+    }
+
+    if (!is_array($projection) || !isset($projection['state']) || !is_string($projection['state'])
+        || !in_array($projection['state'], ['active', 'ended', 'none', 'unavailable'], true)
+        || $projection['state'] === 'unavailable') {
+        return $finish($unavailable);
+    }
+    if (!isset($projection['owner_id']) || !is_int($projection['owner_id']) || $projection['owner_id'] !== $ownerId
+        || !isset($projection['target']) || !is_string($projection['target']) || $projection['target'] !== $targetSubject
+        || !isset($projection['playthrough_id']) || !is_string($projection['playthrough_id'])
+        || trim($projection['playthrough_id']) === '') {
+        return $finish($unavailable);
+    }
+    $kind = $projection['kind'] ?? null;
+    if ($projection['state'] === 'active' && !in_array($kind, ['casual', 'romantic'], true)) {
+        return $finish($unavailable);
+    }
+    if ($projection['state'] === 'none' && $kind !== null) { return $finish($unavailable); }
+    if ($projection['state'] === 'ended' && $kind !== null && !in_array($kind, ['casual', 'romantic'], true)) {
+        return $finish($unavailable);
+    }
+    return $finish(['state' => $projection['state'], 'kind' => $kind]);
+}
+
+function aiagentNsfwHasActiveIntimacyArrangement($ownerName, $targetName, $kind = null) {
+    $projection = aiagentNsfwReadIntimacyArrangement($ownerName, $targetName);
+    if (($projection['state'] ?? '') !== 'active') { return false; }
+    if ($kind === null) { return true; }
+    return ($projection['kind'] ?? null) === $kind;
+}
+
+function aiagentNsfwIntimacyArrangementAllowsSexPair($ownerName, $targetName) {
+    $policy = aiagentNsfwGetRelTypePolicy();
+    if (empty($policy['valid']) || empty($policy['use_intimacy_arrangements'])
+        || !aiagentNsfwHasActiveIntimacyArrangement($ownerName, $targetName)) { return false; }
+    $playerName = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
+    $targetName = trim((string)$targetName);
+    if ($targetName !== '' && ($targetName === 'Player' || ($playerName !== '' && strcasecmp($targetName, $playerName) === 0))
+        && !aiagentNsfwOpenMode() && function_exists('aiagentNsfwOrientationAllowsPlayer')
+        && !aiagentNsfwOrientationAllowsPlayer($ownerName)) { return false; }
+    return true;
+}
+
+function aiagentNsfwAcceptedPlayerArrangementEligible($ownerName, $intimacyStatus, $currentSceneActors = null) {
+    if (!is_array($intimacyStatus) || empty($intimacyStatus['accepted_sex']) || !empty($intimacyStatus['is_npc_scene'])) {
+        return false;
+    }
+    $playerName = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
+    if ($playerName === '') { return false; }
+    $playerAliases = [$playerName, 'Player'];
+    $acceptedPartner = trim((string)($intimacyStatus['last_accept_sex_partner'] ?? ''));
+    if ($acceptedPartner === '') { $acceptedPartner = trim((string)($intimacyStatus['sex_partner'] ?? '')); }
+    $acceptedPlayer = false;
+    foreach ($playerAliases as $alias) {
+        if ($acceptedPartner !== '' && strcasecmp($acceptedPartner, $alias) === 0) {
+            $acceptedPlayer = true;
+            break;
+        }
+    }
+    if (!$acceptedPlayer) { return false; }
+
+    $sceneActors = is_array($currentSceneActors)
+        ? $currentSceneActors
+        : ($intimacyStatus['scene_actors'] ?? null);
+    if (!is_array($sceneActors)) { return false; }
+    $playerInScene = false;
+    foreach ($sceneActors as $sceneActor) {
+        $sceneActor = trim((string)$sceneActor);
+        foreach ($playerAliases as $alias) {
+            if ($sceneActor !== '' && strcasecmp($sceneActor, $alias) === 0) {
+                $playerInScene = true;
+                break 2;
+            }
+        }
+    }
+    if (!$playerInScene) { return false; }
+    return function_exists('aiagentNsfwRelTypeSexEligible')
+        && aiagentNsfwRelTypeSexEligible($ownerName, true);
+}
+
 // Effective scene-call affinity floor for THIS NPC: a promiscuous-marked NPC drops to the
 // Acquaintance boundary (6) unless the user set the global slider even lower (min, never
 // raised). Everyone else gets the slider value. Use this instead of reading
@@ -2002,7 +2192,7 @@ function aiagentNsfwRuntimeStateClear() {
     }
 }
 
-function aiagentNsfwRelTypeSexEligible($npcName) {
+function aiagentNsfwRelTypeSexEligible($npcName, $allowArrangement = false) {
     $npcName = trim((string)$npcName);
     if ($npcName === '') { return true; }
     if (function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($npcName)) { return false; }
@@ -2025,32 +2215,30 @@ function aiagentNsfwRelTypeSexEligible($npcName) {
         error_log("[AIAGENTNSFW] SLUT (promiscuous mark) eligibility {$npcName}: aff={$smAff}/floor=6(acquaintance) => " . ($smOk ? 'ELIGIBLE (sex allowed)' : 'NOT eligible (should refuse)'));
         return $smOk;
     }
-    $eligible = [];
-    try {
-        $row = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
-        if ($row && !empty($row['value'])) {
-            $cfg = json_decode($row['value'], true);
-            if (is_array($cfg)) {
-                if (array_key_exists('enabled', $cfg) && !$cfg['enabled']) { return true; }
-                if (is_array($cfg['eligible_types'] ?? null)) { $eligible = array_map('strtolower', $cfg['eligible_types']); }
-            }
-        }
-    } catch (Exception $e) { return true; }
-    if (empty($eligible)) { return true; }
+    $policy = aiagentNsfwGetRelTypePolicy();
+    if (empty($policy['valid'])) {
+        error_log("[AIAGENTNSFW] rel-type gate: invalid or unreadable policy for {$npcName} - failing CLOSED");
+        return false;
+    }
+    if (empty($policy['enabled'])) { return true; }
+    $eligible = $policy['eligible_types'] ?? [];
     $relType = '';
     try {
         if (class_exists('RelationshipManager')) {
             $rel = RelationshipManager::getPlayerRelationship($npcName);
             $relType = aiagentNsfwCanonicalRelationshipType($rel['type'] ?? '');
         } else {
-            error_log("[AIAGENTNSFW] rel-type gate: RelationshipManager class NOT available for {$npcName} - failing OPEN (eligible)");
-            return true;
+            error_log("[AIAGENTNSFW] rel-type gate: RelationshipManager class NOT available for {$npcName} - failing CLOSED");
+            return false;
         }
     } catch (Exception $e) {
-        error_log("[AIAGENTNSFW] rel-type gate exception for {$npcName}: " . $e->getMessage() . " - failing OPEN");
-        return true;
+        error_log("[AIAGENTNSFW] rel-type gate exception for {$npcName}: " . $e->getMessage() . " - failing CLOSED");
+        return false;
     }
-    $result = ($relType !== '' && in_array($relType, $eligible, true));
+    $hasArrangement = $allowArrangement && function_exists('aiagentNsfwIntimacyArrangementAllowsSexPair')
+        && aiagentNsfwIntimacyArrangementAllowsSexPair($npcName, trim((string)($GLOBALS['PLAYER_NAME'] ?? '')));
+    $ordinaryEligible = ($relType !== '' && in_array($relType, $eligible, true));
+    $result = $ordinaryEligible || $hasArrangement;
     // AFFINITY FLOOR (user directive 2026-07-02): the ability to EVER consent requires BOTH the eligible
     // rel type AND at least the scene-call affinity floor (default Fond). Below the floor an eligible
     // type is treated exactly like an ineligible one - tools stripped, decline directive, no consent.
@@ -2059,7 +2247,8 @@ function aiagentNsfwRelTypeSexEligible($npcName) {
         // TIER LADDER (user directive 2026-07-02): below FRIENDLY nobody can consent. A married NPC whose
         // spouse is not the player cannot consent below DEVOTED - the affair decision only exists at
         // Devoted+. (Model-driven consent additionally keeps the Fond scene-call floor in the consent formula.)
-        $affFloor = 31; $affWhy = 'friendly';
+        $affFloor = $hasArrangement ? null : 31;
+        $affWhy = $hasArrangement ? 'active directed arrangement' : 'friendly';
         try {
             require_once __DIR__ . "/nsfw_data.php";
             $eligNsfw = NsfwNpcData::get($npcName);
@@ -2073,10 +2262,20 @@ function aiagentNsfwRelTypeSexEligible($npcName) {
                 $affFloor = (int)aiagentNsfwArousalNum('NSFW_AFFAIR_MIN_AFFINITY', 56);
                 $affWhy = 'affair floor (married to another)';
             }
-        } catch (Throwable $t) { /* profile unavailable - base Friendly floor applies */ }
+        } catch (Throwable $t) {
+            // Keep the legacy Friendly fallback for ordinary eligible types, but do not
+            // let an arrangement-only route bypass an unknown spouse/affair floor.
+            if ($hasArrangement) {
+                $result = $ordinaryEligible;
+                $affFloor = 31;
+                $affWhy = 'profile unavailable; ordinary Friendly floor';
+            }
+        }
         $affVal = (int)($rel['aff'] ?? 0);
-        $affNote = " aff={$affVal}/floor={$affFloor}({$affWhy})";
-        if ($affVal < $affFloor) { $result = false; }
+        $affNote = $affFloor === null
+            ? " aff={$affVal}/floor=bypassed({$affWhy})"
+            : " aff={$affVal}/floor={$affFloor}({$affWhy})";
+        if ($affFloor !== null && $affVal < $affFloor) { $result = false; }
     }
     error_log("[AIAGENTNSFW] rel-type eligibility {$npcName}: type='{$relType}'{$affNote} eligible=[" . implode(',', $eligible) . "] => " . ($result ? 'ELIGIBLE (sex allowed)' : 'NOT eligible (should refuse)'));
     return $result;
@@ -2351,6 +2550,11 @@ function aiagentNsfwInstantCrush($actorName, $trigger, $rawTarget = '') {
             return;
         }
         $type = aiagentNsfwCanonicalRelationshipType($rels['Player']['type'] ?? 'neutral');
+        $relTypePolicy = aiagentNsfwGetRelTypePolicy();
+        if (empty($relTypePolicy['valid'])
+            || in_array($type, $relTypePolicy['non_romantic_types'] ?? [], true)) { return; }
+        if (function_exists('aiagentNsfwHasActiveIntimacyArrangement')
+            && aiagentNsfwHasActiveIntimacyArrangement($actorName, $playerName, 'casual')) { return; }
         if (in_array($type, ['romantic', 'crush', 'admirer', 'obsessed', 'infatuated', 'lover'], true)) { return; }
 
         RelationshipManager::setRelationship($actorName, 'Player', $aff, 'crush');
@@ -2982,21 +3186,329 @@ function aiagentNsfwNpcToNpcSexEligible($npcA, $npcB) {
     // Promiscuous-marked initiator: NPC-to-NPC needs only Acquaintance affinity between the pair;
     // the type check is skipped. (Outbound gate = A's own standard for starting with B.)
     if (aiagentNsfwIsSlutNpc($npcA)) { return $aff >= 6; }
+    $policy = aiagentNsfwGetRelTypePolicy();
+    if (empty($policy['valid'])) { return false; }
+    $hasArrangement = function_exists('aiagentNsfwIntimacyArrangementAllowsSexPair')
+        && aiagentNsfwIntimacyArrangementAllowsSexPair($npcA, $npcB);
     $floor = (int)_getNsfwSetting('NSFW_SCENE_CALL_MIN_AFFINITY', 56);
-    if ($aff < $floor) { return false; }
-    $eligible = null;
-    try {
-        $row = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
-        if ($row && !empty($row['value'])) {
-            $cfg = json_decode($row['value'], true);
-            if (is_array($cfg)) {
-                if (array_key_exists('enabled', $cfg) && !$cfg['enabled']) { return true; }
-                if (is_array($cfg['eligible_types'] ?? null)) { $eligible = array_map('strtolower', $cfg['eligible_types']); }
+    if ($aff < $floor && !$hasArrangement) { return false; }
+    if (empty($policy['enabled'])) { return true; }
+    $eligible = $policy['eligible_types'] ?? [];
+    return $hasArrangement || (!empty($eligible) && in_array($type, $eligible, true));
+}
+
+function aiagentNsfwSexStartActionCodes() {
+    return [
+        'ExtCmdStartSex', 'ExtCmdStartBlowJob', 'ExtCmdStartAnalSex', 'ExtCmdStartThreesome',
+        'ExtCmdStartTitfuck', 'ExtCmdStartHandJobSex', 'ExtCmdStartHandjobSex', 'ExtCmdStartMassage',
+        'ExtCmdDrinkBloodSex',
+    ];
+}
+
+// Exact target options for the native sexual-start commands. NPC candidates come
+// only from the existing scene/nearby roster and retain the directed A-to-B gate.
+function aiagentNsfwSexStartTargetOptions($actorName, $intimacyStatus, $actionCode = 'ExtCmdStartSex') {
+    $actorName = trim((string)$actorName);
+    $playerName = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
+    if ($actorName === '' || $playerName === '' || !is_array($intimacyStatus)) { return []; }
+
+    if (!in_array($actionCode, aiagentNsfwSexStartActionCodes(), true)) { return []; }
+
+    $isNpcScene = !empty($intimacyStatus['is_npc_scene']);
+    $isSlave = function_exists('isNpcSlave') && isNpcSlave($actorName);
+    if (function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($actorName)) { return []; }
+
+    $isProstitute = function_exists('isProstitute') && isProstitute($actorName);
+    $isSkoomaBargain = !$isSlave && function_exists('getDrugStageForActor')
+        && (int)getDrugStageForActor($actorName, 'skooma') >= 3;
+    $isFrameworkAggressor = !empty($intimacyStatus['framework_forced_scene'])
+        && !empty($intimacyStatus['scene_player_is_victim'])
+        && !empty($intimacyStatus['scene_actor_is_aggressor']);
+    $npcJoinAllowed = $isNpcScene && _getNsfwSetting('NSFW_ALLOW_NPC_JOIN_SCENES', true);
+    $actorHasRefusal = !empty($intimacyStatus['refused_until_scene_end'])
+        || !empty($intimacyStatus['refusal_expressed'])
+        || (($intimacyStatus['scene_phase'] ?? '') === 'rejected');
+    $actorSceneActors = is_array($intimacyStatus['scene_actors'] ?? null) ? $intimacyStatus['scene_actors'] : [];
+    $actorSceneNames = [];
+    foreach ($actorSceneActors as $sceneName) {
+        if (is_string($sceneName)) { $actorSceneNames[strtolower(trim($sceneName))] = true; }
+    }
+    $activeAcceptedPlayerScene = !$isNpcScene && (int)($intimacyStatus['level'] ?? 0) > 0
+        && !empty($intimacyStatus['accepted_sex']) && isset($actorSceneNames[strtolower($playerName)]);
+    $actorRefusedPlayer = !$isSlave && $actorHasRefusal
+        && (!$isNpcScene || isset($actorSceneNames[strtolower($playerName)]));
+
+    $playerAllowed = $activeAcceptedPlayerScene || $isSlave || $isSkoomaBargain || $isFrameworkAggressor || $npcJoinAllowed;
+    if (!$playerAllowed && $isProstitute) {
+        $playerAllowed = !empty($intimacyStatus['payment_confirmed'])
+            || !empty($intimacyStatus['free_service'])
+            || (function_exists('aiagentNsfwProstitutePaymentWaived') && aiagentNsfwProstitutePaymentWaived($actorName));
+    }
+    if (!$playerAllowed && function_exists('aiagentNsfwOpenMode') && aiagentNsfwOpenMode()) {
+        $playerAllowed = empty($intimacyStatus['is_npc_scene'])
+            && !$isProstitute && !$isSkoomaBargain
+            && (!function_exists('aiagentNsfwIsProtectedNpc') || !aiagentNsfwIsProtectedNpc($actorName));
+    }
+    if (!$playerAllowed && !$isProstitute && !$isNpcScene && function_exists('aiagentNsfwRelTypeSexEligible')) {
+        $playerAllowed = aiagentNsfwRelTypeSexEligible($actorName, true);
+    }
+    $playerAllowed = $playerAllowed
+        && in_array($actionCode, (array)($GLOBALS['AIAGENTNSFW_PLAYER_START_OFFER_SNAPSHOT'] ?? []), true);
+    if ($playerAllowed && !$isNpcScene) {
+        if (function_exists('aiagentNsfwPlayerConflictActive') && aiagentNsfwPlayerConflictActive()) { $playerAllowed = false; }
+        if (function_exists('aiagentNsfwPlayerSceneCallCooldownActive') && aiagentNsfwPlayerSceneCallCooldownActive()) { $playerAllowed = false; }
+        if (function_exists('aiagentNsfwWhiskeyDickActive') && aiagentNsfwWhiskeyDickActive()) { $playerAllowed = false; }
+    }
+    if ($actorRefusedPlayer) { $playerAllowed = false; }
+
+    $roster = is_array($intimacyStatus['scene_actors'] ?? null) ? $intimacyStatus['scene_actors'] : [];
+    if (function_exists('getNormalizedNearbyDialogueListenerNames')) {
+        $roster = array_merge($roster, (array)getNormalizedNearbyDialogueListenerNames(true));
+    }
+    $npcTargets = [];
+    $seen = [];
+    foreach ($roster as $candidate) {
+        if (!is_string($candidate)) { continue; }
+        $candidate = trim($candidate);
+        $key = strtolower($candidate);
+        if ($candidate === '' || isset($seen[$key]) || strcasecmp($candidate, $actorName) === 0
+            || strcasecmp($candidate, $playerName) === 0 || strcasecmp($candidate, 'Player') === 0
+            || strpos($candidate, '@') !== false || strpos($candidate, '|') !== false || strpos($candidate, ',') !== false
+            || strpos($candidate, '(') !== false || strpos($candidate, ')') !== false
+            || preg_match('/\band\b/i', $candidate)
+            || stripos($candidate, $playerName) !== false
+            || (function_exists('nsfwIsNarratorName') && nsfwIsNarratorName($candidate))
+            || (function_exists('aiagentNsfwIsProtectedNpc') && aiagentNsfwIsProtectedNpc($candidate))) { continue; }
+
+        $pairStatus = function_exists('getIntimacyForActor') ? getIntimacyForActor($candidate) : [];
+        $pairActors = is_array($pairStatus['scene_actors'] ?? null) ? $pairStatus['scene_actors'] : [];
+        $pairNames = [];
+        foreach ($pairActors as $pairName) {
+            if (is_string($pairName)) { $pairNames[strtolower(trim($pairName))] = true; }
+        }
+        $pairInScene = !empty($pairStatus['is_npc_scene'])
+            && isset($pairNames[strtolower($actorName)]) && isset($pairNames[strtolower($candidate)]);
+        $pairRefused = $pairInScene && (!empty($pairStatus['refusal_expressed'])
+            || !empty($pairStatus['refused_until_scene_end'])
+            || (($pairStatus['scene_phase'] ?? '') === 'rejected'));
+        $actorPairRefused = $npcJoinAllowed && isset($actorSceneNames[strtolower($actorName)])
+            && isset($actorSceneNames[strtolower($candidate)]) && $actorHasRefusal;
+        if ($pairRefused || $actorPairRefused) { continue; }
+        if (!$npcJoinAllowed && !aiagentNsfwNpcToNpcSexEligible($actorName, $candidate)) { continue; }
+
+        $seen[$key] = true;
+        $npcTargets[] = $candidate;
+    }
+
+    // Threesome accepts an explicit group. A one-NPC form adds Player natively,
+    // so the final validator separately requires the Player route for that form.
+    return $playerAllowed ? array_merge([$playerName], $npcTargets) : $npcTargets;
+}
+
+function aiagentNsfwSexStartActionAvailable($actionCode) {
+    $catalogReady = false;
+    if (function_exists('herikaActionCatalogDbReady')) {
+        try { $catalogReady = (bool)herikaActionCatalogDbReady(); }
+        catch (Throwable $t) { return false; }
+    }
+    if ($catalogReady && function_exists('herikaLoadEnabledActionCodesForMode')) {
+        try {
+            $available = herikaLoadEnabledActionCodesForMode(!empty($GLOBALS['IS_NPC']), true);
+            return is_array($available) && in_array($actionCode, $available, true);
+        } catch (Throwable $t) { return false; }
+    }
+    if ($catalogReady) { return false; }
+    if (function_exists('herikaActionCatalogIsActionEnabled')) {
+        try { return (bool)herikaActionCatalogIsActionEnabled($actionCode); }
+        catch (Throwable $t) { return false; }
+    }
+    return true;
+}
+
+function aiagentNsfwSexStartTargetNote($actionCode, array $targets) {
+    if ($actionCode === 'ExtCmdStartThreesome') {
+        $playerName = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
+        $playerAllowed = $playerName !== '' && in_array($playerName, $targets, true);
+        $npcCount = count(array_filter($targets, static function ($target) use ($playerName) {
+            return strcasecmp((string)$target, $playerName) !== 0;
+        }));
+        if ($playerAllowed && $npcCount === 0) {
+            $groupRule = 'Use the exact listed Player name as the sole target.';
+        } elseif ($playerAllowed) {
+            $groupRule = 'Use one exact listed name or 2-4 distinct exact comma-separated listed names. A lone NPC adds Player implicitly; explicit Player is allowed only because Player is listed.';
+        } else {
+            $groupRule = 'Use 2-4 distinct exact listed NPC names; one NPC is invalid because native handling adds Player, and Player is not listed.';
+        }
+        return 'Allowed group members for this action: [' . implode(', ', $targets)
+            . ']. ' . $groupRule . ' Do not use RefID suffixes or conjunctions. Starting states the speaker\'s intent and does not establish recipient agreement.';
+    }
+    if (count($targets) === 1) {
+        $allowance = 'Allowed recipient for this action: ' . $targets[0] . ' only.';
+    } else {
+        $allowance = 'Allowed recipients for this action: ' . implode(', ', $targets) . '.';
+    }
+    return $allowance . ' Use one exact listed name, without a RefID suffix, comma, or conjunction. Starting states the speaker\'s intent and does not establish recipient agreement.';
+}
+
+function aiagentNsfwSexStartActionOffered($actionCode, $target = null, $targetOptions = null) {
+    if (!in_array($actionCode, (array)($GLOBALS['ENABLED_FUNCTIONS'] ?? []), true)
+        || !aiagentNsfwSexStartActionAvailable($actionCode)) { return false; }
+
+    $definitions = $GLOBALS['FUNCTIONS'] ?? null;
+    if (!is_array($definitions) || $definitions === [] || !function_exists('getFunctionCodeName')) { return false; }
+
+    if (isset($GLOBALS['FUNC_LIST']) && is_array($GLOBALS['FUNC_LIST']) && function_exists('getFunctionCodeName')) {
+        $listed = false;
+        foreach ($GLOBALS['FUNC_LIST'] as $displayName) {
+            if (getFunctionCodeName($displayName) === $actionCode) { $listed = true; break; }
+        }
+        if (!$listed) { return false; }
+    }
+    $defined = false;
+    foreach ($definitions as $definition) {
+        if (is_array($definition) && getFunctionCodeName($definition['name'] ?? '') === $actionCode) {
+            $property = $definition['parameters']['properties']['target'] ?? null;
+            if (!is_array($property) || ($property['type'] ?? null) !== 'string') { return false; }
+            if ($target !== null) {
+                $wireTarget = is_array($target) ? implode(',', $target) : $target;
+                if (array_key_exists('enum', $property)
+                    && (!is_array($property['enum']) || !in_array($wireTarget, $property['enum'], true))) { return false; }
+                if (isset($property['pattern'])) {
+                    if (!is_string($property['pattern'])) { return false; }
+                    $pattern = '~' . str_replace('~', '\\~', $property['pattern']) . '~u';
+                    if (@preg_match($pattern, $wireTarget) !== 1) { return false; }
+                }
+                if ($actionCode === 'ExtCmdStartThreesome') {
+                    if (!is_array($target) || !is_array($targetOptions)) { return false; }
+                    foreach ($target as $member) {
+                        if (!in_array($member, $targetOptions, true)) { return false; }
+                    }
+                    $requiredNote = aiagentNsfwSexStartTargetNote($actionCode, $targetOptions);
+                    if (strpos((string)($property['description'] ?? ''), $requiredNote) === false) { return false; }
+                } elseif (!is_string($target) || !isset($property['enum']) || !is_array($property['enum'])
+                    || !in_array($target, $property['enum'], true)) {
+                    return false;
+                }
+            }
+            $defined = true;
+        }
+    }
+    return $defined;
+}
+
+function aiagentNsfwCanonicalSexStartTarget($actorName, $target, $actionCode, $intimacyStatus) {
+    $target = trim((string)$target);
+    if ($target === '' || strpos($target, '@') !== false || strpos($target, '|') !== false
+        || strpos($target, '(') !== false || strpos($target, ')') !== false
+        || strpos($target, ',') !== false || preg_match('/\band\b/i', $target)) { return null; }
+    $options = aiagentNsfwSexStartTargetOptions($actorName, $intimacyStatus, $actionCode);
+    $playerName = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
+    if (($target === 'Player' || $target === 'player') && $playerName !== '') {
+        foreach ($options as $candidate) {
+            if (strcasecmp($candidate, $playerName) === 0) { return $candidate; }
+        }
+        return null;
+    }
+    foreach ($options as $candidate) {
+        if (strcasecmp($target, $candidate) === 0) { return $candidate; }
+    }
+    return null;
+}
+
+function aiagentNsfwCanonicalSexStartTargets($actorName, $target, $actionCode, $intimacyStatus) {
+    if ($actionCode !== 'ExtCmdStartThreesome') {
+        $single = aiagentNsfwCanonicalSexStartTarget($actorName, $target, $actionCode, $intimacyStatus);
+        return $single === null ? null : [$single];
+    }
+
+    $target = trim((string)$target);
+    if ($target === '' || strpos($target, '@') !== false || strpos($target, '|') !== false
+        || strpos($target, '(') !== false || strpos($target, ')') !== false
+        || preg_match('/\band\b/i', $target)) { return null; }
+    $parts = explode(',', $target);
+    if (count($parts) < 1 || count($parts) > 4) { return null; }
+
+    $playerName = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
+    $options = aiagentNsfwSexStartTargetOptions($actorName, $intimacyStatus, $actionCode);
+    $playerAllowed = $playerName !== '' && in_array($playerName, $options, true);
+    $canonical = [];
+    $seen = [];
+    foreach ($parts as $part) {
+        $part = trim($part);
+        if ($part === '' || strpos($part, ';') !== false || strpos($part, '@') !== false
+            || strpos($part, '|') !== false || strpos($part, '(') !== false || strpos($part, ')') !== false) { return null; }
+
+        if ($part === 'Player' || $part === 'player' || ($playerName !== '' && strcasecmp($part, $playerName) === 0)) {
+            if (!$playerAllowed) { return null; }
+            $member = $playerName;
+        } else {
+            $member = null;
+            foreach ($options as $candidate) {
+                if (strcasecmp($part, $candidate) === 0 && strcasecmp($candidate, $playerName) !== 0) {
+                    $member = $candidate;
+                    break;
+                }
+            }
+            if ($member === null) { return null; }
+        }
+
+        $key = strtolower($member);
+        if (isset($seen[$key])) { return null; }
+        $seen[$key] = true;
+        $canonical[] = $member;
+    }
+
+    if (count($canonical) === 1 && strcasecmp($canonical[0], $playerName) !== 0) {
+        if (!$playerAllowed) { return null; }
+    }
+    return $canonical;
+}
+
+function aiagentNsfwAddEligibleNpcSexStartActions($actorName, $intimacyStatus, $sexDisposalEnabled, $currentArousal = 0) {
+    if (!is_array($intimacyStatus) || (int)($intimacyStatus['level'] ?? -1) !== 0) { return []; }
+    $npcTargets = array_values(array_filter(
+        aiagentNsfwSexStartTargetOptions($actorName, $intimacyStatus, 'ExtCmdStartSex'),
+        static function ($target) { return strcasecmp($target, (string)($GLOBALS['PLAYER_NAME'] ?? '')) !== 0; }
+    ));
+    if ($npcTargets === []) { return []; }
+    $groupNpcTargets = array_values(array_filter(
+        aiagentNsfwSexStartTargetOptions($actorName, $intimacyStatus, 'ExtCmdStartThreesome'),
+        static function ($target) { return strcasecmp($target, (string)($GLOBALS['PLAYER_NAME'] ?? '')) !== 0; }
+    ));
+    $currentArousal = (float)$currentArousal;
+
+    $codes = [];
+    if (!$sexDisposalEnabled) {
+        $codes = ['ExtCmdStartMassage', 'ExtCmdStartHandJobSex', 'ExtCmdStartBlowJob', 'ExtCmdStartSex',
+            'ExtCmdStartTitfuck', 'ExtCmdStartAnalSex'];
+        if (function_exists('aiagentNsfwIsVampireNpc') && aiagentNsfwIsVampireNpc($actorName)) {
+            $codes[] = 'ExtCmdDrinkBloodSex';
+        }
+    } else {
+        if ($currentArousal >= (int)aiagentNsfwArousalNum('AROUSAL_THRESHOLD_FOREPLAY', 10)) {
+            $codes = ['ExtCmdStartMassage', 'ExtCmdStartHandJobSex'];
+        }
+        if ($currentArousal >= (int)aiagentNsfwArousalNum('AROUSAL_THRESHOLD_SEX', 20)) {
+            $codes = array_merge($codes, ['ExtCmdStartBlowJob', 'ExtCmdStartSex', 'ExtCmdStartTitfuck', 'ExtCmdStartAnalSex']);
+            if (function_exists('aiagentNsfwIsVampireNpc') && aiagentNsfwIsVampireNpc($actorName)) {
+                $codes[] = 'ExtCmdDrinkBloodSex';
             }
         }
-    } catch (Exception $e) { return true; }
-    if (empty($eligible)) { return true; }
-    return in_array($type, $eligible, true);
+    }
+    if (count($groupNpcTargets) >= 2
+        && (!$sexDisposalEnabled || $currentArousal >= (int)aiagentNsfwArousalNum('AROUSAL_THRESHOLD_SEX', 20))) {
+        $codes[] = 'ExtCmdStartThreesome';
+    }
+
+    $added = [];
+    foreach (array_unique($codes) as $code) {
+        if (!aiagentNsfwSexStartActionAvailable($code)) { continue; }
+        if (!in_array($code, (array)($GLOBALS['ENABLED_FUNCTIONS'] ?? []), true)) {
+            $GLOBALS['ENABLED_FUNCTIONS'][] = $code;
+        }
+        $added[] = $code;
+    }
+    return $added;
 }
 
 // Does this NPC's sexual orientation ALLOW attraction to the player's gender? (user directive 2026-07-05)

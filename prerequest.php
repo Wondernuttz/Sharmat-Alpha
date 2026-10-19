@@ -510,7 +510,10 @@ if ($isOrgasmEvent) {
             || !empty($orgIntimacy["refusal_expressed"])
         ) && !$orgServiceJustCompleted;
     $orgConsentConfirmed = !empty($orgIntimacy["scene_actor_is_aggressor"])
-        || (!empty($orgIntimacy["accepted_sex"]) && (!function_exists('aiagentNsfwRelTypeSexEligible') || aiagentNsfwRelTypeSexEligible($actorName))) // eligibility required to HOLD acceptance (fix 2026-07-01j)
+        || (!empty($orgIntimacy["accepted_sex"]) && (!function_exists('aiagentNsfwRelTypeSexEligible')
+            || aiagentNsfwRelTypeSexEligible($actorName)
+            || (function_exists('aiagentNsfwAcceptedPlayerArrangementEligible')
+                && aiagentNsfwAcceptedPlayerArrangementEligible($actorName, $orgIntimacy)))) // arrangement supplements only a current accepted Player pair
         || !empty($orgIntimacy["npc_is_slave"])
         || (!empty($orgIntimacy["npc_is_prostitute"]) && (!empty($orgIntimacy["payment_confirmed"]) || $orgServiceJustCompleted || !empty($orgIntimacy["free_service"])))
         || (!empty($orgIntimacy["is_npc_scene"]) && !empty($orgIntimacy["npc_affinity_gate_disabled"]))

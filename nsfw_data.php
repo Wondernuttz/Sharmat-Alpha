@@ -1398,6 +1398,8 @@ function nsfw_default_reltypes_config() {
     return [
         'enabled' => true,
         'eligible_types' => ['romantic', 'crush', 'ex'],
+        'non_romantic_types' => [],
+        'use_intimacy_arrangements' => false,
         'prompt_friendly' => "You like #PLAYER_NAME# and feel comfortable with them, but your relationship is not romantic or sexual. Kindly but clearly decline the advance and keep the boundary intact. Politely refuse.",
         'prompt_fond' => "You have genuine affection for #PLAYER_NAME# and care about them, but your relationship with them isn't a romantic or sexual one - you're simply not involved that way. Warmly but firmly decline the advance without hurting the bond. Politely refuse.",
         'prompt_devoted' => "You care deeply for #PLAYER_NAME#, but what the two of you share isn't romantic - the bond runs deep, just not that way. Gently and kindly turn down the advance while honoring how much they mean to you. Politely refuse.",

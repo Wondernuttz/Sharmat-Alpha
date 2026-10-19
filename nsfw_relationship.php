@@ -108,7 +108,12 @@ class NsfwRelationship {
         $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
         $prompt = str_replace('#TYPE#', $relationship['type'], $prompt);
 
-        return $prompt;
+        return self::appendNonRomanticRelationshipBoundary(
+            $prompt,
+            $relationship,
+            $npcName,
+            self::getPlayerRouteName($partnerName ?? 'Player')
+        );
     }
 
     /**
@@ -140,7 +145,7 @@ class NsfwRelationship {
                 $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
                 error_log("[NSFW_REL] Marriage scene detected for $npcName with spouse $partnerName (context: {$promptContext})");
                 // After marriage prompt, fall through to normal NSFW handling
-                return $prompt;
+                return self::appendNonRomanticRelationshipBoundaryForPair($prompt, $npcName, $partnerName);
             }
 
             // AFFAIR: Married but partner is NOT spouse - use affair prompts. A promiscuous-marked
@@ -156,12 +161,16 @@ class NsfwRelationship {
                 $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
                 error_log("[NSFW_REL] Affair detected for $npcName with $partnerName (spouse: $spouseName, context: {$promptContext})");
                 // After affair prompt, fall through to normal NSFW handling
-                return $prompt;
+                return self::appendNonRomanticRelationshipBoundaryForPair($prompt, $npcName, $partnerName);
             }
         }
 
         if ($isNpcPromptContext) {
-            return self::getNpcSceneTierPrompt($tier, $affinity, $isProstitute, $partnerName, $npcName ?? '');
+            $prompt = self::getNpcSceneTierPrompt($tier, $affinity, $isProstitute, $partnerName, $npcName ?? '');
+            if ($npcName) {
+                $prompt = self::appendNonRomanticRelationshipBoundaryForPair($prompt, $npcName, $partnerName);
+            }
+            return $prompt;
         }
 
         // REGULAR: Not married, or partner info not available - use standard prompts
@@ -185,6 +194,9 @@ class NsfwRelationship {
         $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
         $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
 
+        if ($npcName) {
+            $prompt = self::appendNonRomanticRelationshipBoundaryForPair($prompt, $npcName, $partnerName);
+        }
         return $prompt;
     }
 
@@ -258,6 +270,59 @@ class NsfwRelationship {
         $prompt = str_replace('#AFFINITY#', $affinity, $prompt);
         $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
         return $prompt;
+    }
+
+    private static function getNonRomanticRelationshipBoundary($relationship, $npcName, $partnerName) {
+        if (!is_array($relationship)) {
+            return null;
+        }
+
+        $npcName = trim((string)$npcName);
+        $partnerName = trim((string)$partnerName);
+        if ($npcName === '' || $partnerName === '') {
+            return null;
+        }
+
+        $policy = aiagentNsfwGetRelTypePolicy();
+        if (!$policy['valid']) {
+            return null;
+        }
+
+        $relType = aiagentNsfwCanonicalRelationshipType($relationship['type'] ?? '');
+        if ($relType === '' || !in_array($relType, $policy['non_romantic_types'], true)) {
+            return null;
+        }
+
+        return "The current directed relationship from {$npcName} toward {$partnerName} is explicitly designated non-romantic. "
+            . 'Apply this designation only to this pair, not other scene participants. '
+            . 'Treat it as controlling over affinity- or tier-based language for this pair. '
+            . "Do not infer romance, exclusivity, reciprocal feelings, or agreement between {$npcName} and {$partnerName} from affinity or this relationship record.";
+    }
+
+    private static function appendNonRomanticRelationshipBoundary($prompt, $relationship, $npcName, $partnerName) {
+        $boundary = self::getNonRomanticRelationshipBoundary($relationship, $npcName, $partnerName);
+        if ($boundary === null) {
+            return $prompt;
+        }
+
+        $prompt = (string)$prompt;
+        if (strpos($prompt, $boundary) !== false) {
+            return $prompt;
+        }
+
+        return (trim($prompt) === '') ? $boundary : rtrim($prompt) . "\n\n" . $boundary;
+    }
+
+    private static function appendNonRomanticRelationshipBoundaryForPair($prompt, $npcName, $partnerName) {
+        if (trim((string)$npcName) === '' || trim((string)$partnerName) === '') {
+            return $prompt;
+        }
+        try {
+            $relationship = self::getRelationshipWith($npcName, $partnerName);
+        } catch (Throwable $t) {
+            return $prompt;
+        }
+        return self::appendNonRomanticRelationshipBoundary($prompt, $relationship, $npcName, $partnerName);
     }
 
     /**
@@ -465,22 +530,14 @@ class NsfwRelationship {
         $prompts = self::loadPromptSettings();
         $promptKey = "relationship_overhead_{$family}_{$tier}";
 
-        // Read the type-gate master toggle before choosing the base overhead.
+        // Read the normalized type-gate policy before choosing the base overhead.
         // Legacy databases can retain old editable overheads that explicitly
         // forbid romance/intimacy. Reusing those while Open Mode is on, or while
         // the type gate is off, recreates the very gate the user disabled.
-        $rtEligibleOv = ['romantic', 'crush', 'ex'];
-        $rtGateEnabledOv = true;
-        $rtRowOv = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
-        if ($rtRowOv && !empty($rtRowOv['value'])) {
-            $rtCfgOv = json_decode($rtRowOv['value'], true);
-            if (is_array($rtCfgOv)) {
-                $rtGateEnabledOv = array_key_exists('enabled', $rtCfgOv) ? (bool)$rtCfgOv['enabled'] : true;
-                if (is_array($rtCfgOv['eligible_types'] ?? null)) {
-                    $rtEligibleOv = array_map('strtolower', $rtCfgOv['eligible_types']);
-                }
-            }
-        }
+        $rtPolicyOv = aiagentNsfwGetRelTypePolicy();
+        $rtPolicyValidOv = $rtPolicyOv['valid'];
+        $rtEligibleOv = $rtPolicyValidOv ? $rtPolicyOv['eligible_types'] : [];
+        $rtGateEnabledOv = !$rtPolicyValidOv || $rtPolicyOv['enabled'];
 
         $useNonGatingRegularOverhead = ($family === 'regular')
             && empty($isNpcPromptContext)
@@ -525,6 +582,11 @@ class NsfwRelationship {
                 // allows the player - so the prompt and the mechanical gate never disagree.
                 $typeIsEligibleOv = ((int)($relationship['aff'] ?? 0) >= 6)
                     && (!function_exists('aiagentNsfwOrientationAllowsPlayer') || aiagentNsfwOrientationAllowsPlayer($npcName));
+            } elseif ($rtPolicyValidOv && !empty($rtPolicyOv['use_intimacy_arrangements'])
+                && function_exists('aiagentNsfwRelTypeSexEligible')
+                && aiagentNsfwRelTypeSexEligible($npcName, true)) {
+                // Match the exact current Player-pair policy; this suppresses only the type-gate refusal.
+                $typeIsEligibleOv = true;
             }
 
             if (!$typeIsEligibleOv) {
@@ -1173,13 +1235,11 @@ class NsfwRelationship {
             return null;
         }
 
-        // Master config blob (same key the UI writes)
-        $row = (isset($GLOBALS["db"]) && $GLOBALS["db"]) ? $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'") : null;
-        $cfg = ($row && !empty($row['value'])) ? json_decode($row['value'], true) : [];
-        if (!is_array($cfg)) { $cfg = []; }
+        $policy = aiagentNsfwGetRelTypePolicy();
+        $policyValid = $policy['valid'];
 
         // Master toggle (default on, matching the UI default)
-        $enabled = array_key_exists('enabled', $cfg) ? (bool)$cfg['enabled'] : true;
+        $enabled = !$policyValid || $policy['enabled'];
         if (!$enabled) { return null; }
 
         // Player-only: never gate NPC<->NPC scenes
@@ -1192,18 +1252,20 @@ class NsfwRelationship {
         $aff = (int)($rel['aff'] ?? 0);
 
         // Sex-eligible types go through the normal rel gate
-        $eligible = $cfg['eligible_types'] ?? ['romantic', 'crush', 'ex'];
-        $eligible = is_array($eligible) ? array_map('strtolower', $eligible) : [];
+        $eligible = $policyValid ? $policy['eligible_types'] : [];
         if (in_array($relType, $eligible, true)) { return null; }
+        if ($policyValid && !empty($policy['use_intimacy_arrangements'])
+            && function_exists('aiagentNsfwRelTypeSexEligible')
+            && aiagentNsfwRelTypeSexEligible($npcName, true)) { return null; }
 
         // Tier comes from CHIM (single source of truth) - never hardcode the 56/76/91 boundaries.
         // getTierLabel() owns the bands; if CHIM rebalances them this gate tracks them automatically.
         $tier = strtolower(RelationshipManager::getTierLabel($aff));
         switch ($tier) {
-            case 'bonded':  $prompt = $cfg['prompt_bonded']  ?? ''; break;
-            case 'devoted': $prompt = $cfg['prompt_devoted'] ?? ''; break;
-            case 'fond':     $prompt = $cfg['prompt_fond']     ?? ''; break;
-            case 'friendly': $prompt = $cfg['prompt_friendly'] ?? ''; break;
+            case 'bonded':  $prompt = $policyValid ? ($policy['prompts']['prompt_bonded'] ?? '') : ''; break;
+            case 'devoted': $prompt = $policyValid ? ($policy['prompts']['prompt_devoted'] ?? '') : ''; break;
+            case 'fond':     $prompt = $policyValid ? ($policy['prompts']['prompt_fond'] ?? '') : ''; break;
+            case 'friendly': $prompt = $policyValid ? ($policy['prompts']['prompt_friendly'] ?? '') : ''; break;
             default:         return null; // Below Friendly -> normal affinity tier prompts handle it
         }
         // DEFAULT-IF-BLANK (user directive): an INELIGIBLE relationship type must ALWAYS produce a polite decline,
@@ -1224,7 +1286,7 @@ class NsfwRelationship {
         // Additive: if she is ALSO married, append the married-non-types clause
         $extended = NsfwNpcData::get($npcName);
         if (is_array($extended) && ($extended['spousal_status'] ?? 'single') === 'married') {
-            $addon = $cfg['prompt_married_addon'] ?? '';
+            $addon = $policyValid ? ($policy['prompts']['prompt_married_addon'] ?? '') : '';
             if (!empty($addon)) {
                 $spouse = $extended['spouse_names'] ?? '';
                 $addon = str_replace('#SPOUSE#', ($spouse !== '' ? $spouse : 'your spouse'), $addon);
@@ -1300,10 +1362,12 @@ class NsfwRelationship {
         $lowestAffinity = 100;
         $lowestPartner = null;
         $partnerLines = [];
+        $relationshipsByActor = [];
         $partnerNum = 1;
 
         foreach ($otherActors as $actor) {
             $relationship = self::getRelationshipWith($npcName, $actor);
+            $relationshipsByActor[$actor] = $relationship;
             $partnerLines[] = "Partner {$partnerNum} ({$actor}): {$relationship['tier']} (affinity: {$relationship['aff']})";
 
             // Track lowest affinity - this determines overall mood
@@ -1320,6 +1384,7 @@ class NsfwRelationship {
         // Get tier prompt based on LOWEST affinity (most restrictive)
         $routePartner = $lowestPartner;
         $routeAffinity = $lowestAffinity;
+        $routeRelationship = $relationshipsByActor[$routePartner] ?? null;
         $isNpcPromptContext = (strtolower((string)$promptContext) === 'npc');
         if (!$isNpcPromptContext) {
             $playerName = self::getPlayerRouteName();
@@ -1367,6 +1432,14 @@ class NsfwRelationship {
 
         $tierPrompt = str_replace('#AFFINITY#', $routeAffinity, $tierPrompt);
         $tierPrompt = str_replace('#TIER#', ucfirst($routeTier), $tierPrompt);
+        if (is_array($routeRelationship)) {
+            $tierPrompt = self::appendNonRomanticRelationshipBoundary(
+                $tierPrompt,
+                $routeRelationship,
+                $npcName,
+                $routePartner
+            );
+        }
 
         // Add note about group dynamics (configurable)
         if (count($otherActors) > 1) {
@@ -1714,7 +1787,7 @@ class NsfwRelationship {
                 $prompt = str_replace('#AFFINITY#', $relationship['aff'], $prompt);
                 $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
                 error_log("[NSFW_REL] Marriage scene detected for $npcName with spouse $partnerName (tier: $tier, context: {$promptContext})");
-                return $prompt;
+                return self::appendNonRomanticRelationshipBoundary($prompt, $relationship, $npcName, $partnerName);
             }
 
             // AFFAIR: Married but partner is NOT spouse - use affair prompts. Promiscuous-marked
@@ -1728,14 +1801,14 @@ class NsfwRelationship {
                 $prompt = str_replace('#AFFINITY#', $relationship['aff'], $prompt);
                 $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
                 error_log("[NSFW_REL] Affair detected for $npcName with $partnerName (spouse: $spouseName, tier: $tier, context: {$promptContext})");
-                return $prompt;
+                return self::appendNonRomanticRelationshipBoundary($prompt, $relationship, $npcName, $partnerName);
             }
         }
 
         if ($isNpcPromptContext) {
             $prompt = self::getNpcSceneTierPrompt($tier, $relationship['aff'], $isProstitute, $partnerName, $npcName ?? '');
             $prompt = str_replace('#TYPE#', $relationship['type'], $prompt);
-            return $prompt;
+            return self::appendNonRomanticRelationshipBoundary($prompt, $relationship, $npcName, $partnerName);
         }
 
         // Regular prompt selection (not married, or partner info not available)
@@ -1760,7 +1833,7 @@ class NsfwRelationship {
         $prompt = str_replace('#TIER#', ucfirst($tier), $prompt);
         $prompt = str_replace('#TYPE#', $relationship['type'], $prompt);
 
-        return $prompt;
+        return self::appendNonRomanticRelationshipBoundary($prompt, $relationship, $npcName, $partnerName);
     }
 
     /**

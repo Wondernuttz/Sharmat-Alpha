@@ -29,6 +29,7 @@
 
     require_once $enginePath . "lib" . DIRECTORY_SEPARATOR . "lazy_xml.php";
     require_once __DIR__ . "/nsfw_data.php";
+    require_once __DIR__ . "/open_mode_policy.php";
     require_once __DIR__ . "/sharmat_reset.php";
     require_once __DIR__ . "/sharmat_updater_lib.php";
 
@@ -1356,8 +1357,73 @@ SQL;
     function handleSaveRelTypes()
     {
         try {
-            $eligible = isset($_POST['eligible_types']) ? json_decode($_POST['eligible_types'], true) : [];
-            if (!is_array($eligible)) { $eligible = []; }
+            $rtRow = $GLOBALS["db"]->fetchOne("SELECT COALESCE((SELECT value::text FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'), '') AS value");
+            if (!is_array($rtRow) || !array_key_exists('value', $rtRow) || !is_string($rtRow['value'])) {
+                throw new Exception('Unable to read saved relationship-type settings');
+            }
+            $rtRaw = $rtRow['value'];
+            $rtDecoded = null;
+            $rtReadStatus = 'missing';
+            if (trim($rtRaw) !== '') {
+                $rtDecoded = json_decode($rtRaw);
+                $rtReadStatus = json_last_error() === JSON_ERROR_NONE ? 'present' : 'malformed';
+            }
+            $rtCurrentPolicy = aiagentNsfwNormalizeRelTypeConfig($rtDecoded, $rtReadStatus);
+            $rtCurrent = ($rtDecoded instanceof stdClass) ? get_object_vars($rtDecoded) : [];
+
+            $parsePostedList = static function ($field) {
+                if (!isset($_POST[$field]) || !is_string($_POST[$field])) {
+                    throw new Exception("Missing or invalid {$field} list");
+                }
+                $items = json_decode($_POST[$field]);
+                if (json_last_error() !== JSON_ERROR_NONE || !is_array($items)) {
+                    throw new Exception("Malformed {$field} list");
+                }
+                return $items;
+            };
+            $eligible = $parsePostedList('eligible_types');
+            if (array_key_exists('enabled', $_POST)) {
+                if ($_POST['enabled'] === true || $_POST['enabled'] === 'true') {
+                    $enabled = true;
+                } elseif ($_POST['enabled'] === false || $_POST['enabled'] === 'false') {
+                    $enabled = false;
+                } else {
+                    throw new Exception('Invalid relationship-type gating flag');
+                }
+            } else {
+                $enabled = $rtCurrentPolicy['valid'] ? $rtCurrentPolicy['enabled'] : true;
+            }
+            if (array_key_exists('use_intimacy_arrangements', $_POST)) {
+                if ($_POST['use_intimacy_arrangements'] === true || $_POST['use_intimacy_arrangements'] === 'true') {
+                    $useIntimacyArrangements = true;
+                } elseif ($_POST['use_intimacy_arrangements'] === false || $_POST['use_intimacy_arrangements'] === 'false') {
+                    $useIntimacyArrangements = false;
+                } else {
+                    throw new Exception('Invalid intimacy-arrangement policy flag');
+                }
+            } else {
+                if (!$rtCurrentPolicy['valid'] && $rtReadStatus !== 'missing') {
+                    throw new Exception('Cannot preserve intimacy-arrangement policy from an invalid saved config');
+                }
+                $useIntimacyArrangements = $rtCurrentPolicy['use_intimacy_arrangements'] ?? false;
+            }
+            if (array_key_exists('non_romantic_types', $_POST)) {
+                $nonRomantic = $parsePostedList('non_romantic_types');
+            } else {
+                if (!$rtCurrentPolicy['valid'] && $rtReadStatus !== 'missing') {
+                    throw new Exception('Cannot preserve non-romantic types from an invalid saved config');
+                }
+                $nonRomantic = $rtCurrentPolicy['non_romantic_types'];
+            }
+            $normalized = aiagentNsfwNormalizeRelTypeConfig((object)[
+                'enabled' => $enabled,
+                'eligible_types' => $eligible,
+                'non_romantic_types' => $nonRomantic,
+                'use_intimacy_arrangements' => $useIntimacyArrangements,
+            ]);
+            if (!$normalized['valid']) {
+                throw new Exception('Invalid relationship-type settings');
+            }
 
             // PRESERVE-ON-BLANK: a blank textarea submit must NOT wipe the saved refusal prompts (that silently
             // disabled the whole rel-type gate). If a field arrives empty, keep the current DB value; if that is also
@@ -1369,9 +1435,6 @@ SQL;
                 'prompt_bonded'   => "#PLAYER_NAME# means the world to you, but your bond isn't a romantic or sexual one and you won't cross that line. Tenderly, lovingly decline - the closeness stays, the line stays. Politely refuse.",
                 'prompt_married_addon' => "You are also married to #SPOUSE#.",
             ];
-            $rtCurrent = [];
-            $rtRow = $GLOBALS["db"]->fetchOne("SELECT value FROM conf_opts WHERE id = 'aiagent_nsfw_reltypes'");
-            if ($rtRow && !empty($rtRow['value'])) { $rtCurrent = json_decode($rtRow['value'], true) ?: []; }
             $rtPrompt = function ($key) use ($rtDefaults, $rtCurrent) {
                 $posted = $_POST[$key] ?? null;
                 if (is_string($posted) && trim($posted) !== '') { return $posted; }
@@ -1380,8 +1443,10 @@ SQL;
             };
 
             $cfg = [
-                'enabled'         => isset($_POST['enabled']) ? filter_var($_POST['enabled'], FILTER_VALIDATE_BOOLEAN) : true,
-                'eligible_types'  => array_values(array_map('strval', $eligible)),
+                'enabled'         => $normalized['enabled'],
+                'eligible_types'  => $normalized['eligible_types'],
+                'non_romantic_types' => $normalized['non_romantic_types'],
+                'use_intimacy_arrangements' => $normalized['use_intimacy_arrangements'],
                 'prompt_friendly' => $rtPrompt('prompt_friendly'),
                 'prompt_fond'     => $rtPrompt('prompt_fond'),
                 'prompt_devoted'  => $rtPrompt('prompt_devoted'),
@@ -1394,7 +1459,7 @@ SQL;
                 'id'
             );
             echo json_encode(['success' => true, 'message' => 'Relationship types saved successfully']);
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
         exit;
@@ -7848,13 +7913,57 @@ PROMPT;
                 });
         }
 
+        function addRelType() {
+            const input = document.getElementById('reltypeCustomInput');
+            const grid = document.getElementById('reltypeGrid');
+            if (!input || !grid) { return; }
+            const type = String(input.value || '').trim().toLowerCase();
+            if (!type) { return; }
+            const alreadyExists = Array.from(document.querySelectorAll('.reltype-checkbox'))
+                .some(function(cb) { return String(cb.value).trim().toLowerCase() === type; });
+            if (alreadyExists) { input.value = ''; return; }
+
+            const row = document.createElement('div');
+            row.className = 'reltype-box';
+            const emoji = document.createElement('span');
+            emoji.className = 'rt-emoji';
+            emoji.textContent = '•';
+            row.appendChild(emoji);
+            const name = document.createElement('span');
+            name.className = 'rt-name section-header';
+            name.textContent = type.charAt(0).toUpperCase() + type.slice(1);
+            row.appendChild(name);
+            [
+                ['reltype-checkbox', 'Eligible'],
+                ['reltype-nonromantic-checkbox', 'Keep non-romantic'],
+            ].forEach(function(choice) {
+                const label = document.createElement('label');
+                label.className = 'reltype-choice';
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = choice[0];
+                checkbox.value = type;
+                label.appendChild(checkbox);
+                const text = document.createElement('span');
+                text.textContent = choice[1];
+                label.appendChild(text);
+                row.appendChild(label);
+            });
+            grid.appendChild(row);
+            input.value = '';
+        }
+
         // Save Settings
         function saveRelTypes() {
             const eligible = [];
             document.querySelectorAll('.reltype-checkbox:checked').forEach(function(cb) { eligible.push(cb.value); });
+            const nonRomantic = [];
+            document.querySelectorAll('.reltype-nonromantic-checkbox:checked').forEach(function(cb) { nonRomantic.push(cb.value); });
             const formData = new FormData();
             formData.append('enabled', document.getElementById('reltypeEnabled').checked);
+            formData.append('use_intimacy_arrangements', document.getElementById('reltypeUseIntimacyArrangements').checked);
             formData.append('eligible_types', JSON.stringify(eligible));
+            formData.append('non_romantic_types', JSON.stringify(nonRomantic));
             formData.append('prompt_friendly', document.getElementById('reltypePromptFriendly').value);
             formData.append('prompt_fond', document.getElementById('reltypePromptFond').value);
             formData.append('prompt_devoted', document.getElementById('reltypePromptDevoted').value);

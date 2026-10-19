@@ -8,6 +8,10 @@
 
 require_once __DIR__ . "/common.php";
 
+if (function_exists('aiagentNsfwBeginIntimacyArrangementOfferReadCache')) {
+    aiagentNsfwBeginIntimacyArrangementOfferReadCache();
+}
+
 $actorName = $GLOBALS["HERIKA_NAME"] ?? "";
 
 // HARD CHILD/EXCLUSION TOOL STRIP. The child frame below is behavioral guidance; this is the
@@ -63,6 +67,16 @@ if ($actorName !== "" && isset($GLOBALS["ENABLED_FUNCTIONS"]) && is_array($GLOBA
     if (!$rtStripIsNpcScene && !$rtStripSlave && !$rtStripProstitute && !$rtStripSkooma
         && !aiagentNsfwRelTypeSexEligible($actorName)) {
         $rtStrip = ["ExtCmdStartSex","ExtCmdStartBlowJob","ExtCmdStartAnalSex","ExtCmdStartMassage","ExtCmdStartThreesome","ExtCmdStartHandJobSex","ExtCmdStartTitfuck","ExtCmdStartSelfMasturbation","ExtCmdSexCommand","ExtCmdAcceptSex","ExtCmdQuickenPace","ExtCmdSlowPace","ExtCmdRemoveClothes","ExtCmdDrinkBloodSex"];
+        $rtNpcStartCodes = array_values(array_diff(aiagentNsfwSexStartActionCodes(), ["ExtCmdStartThreesome"]));
+        foreach ($rtNpcStartCodes as $startCode) {
+            $targets = aiagentNsfwSexStartTargetOptions($actorName, (array)$rtStripIntimacy, $startCode);
+            if (array_filter($targets, function ($target) { return strcasecmp($target, (string)($GLOBALS['PLAYER_NAME'] ?? '')) !== 0; }) !== []) {
+                $rtStrip = array_values(array_diff($rtStrip, [$startCode]));
+            }
+        }
+        if (aiagentNsfwSexStartTargetOptions($actorName, (array)$rtStripIntimacy, 'ExtCmdStartThreesome') !== []) {
+            $rtStrip = array_values(array_diff($rtStrip, ['ExtCmdStartThreesome']));
+        }
 
         // 1) ENABLED_FUNCTIONS (code names) - keep every downstream ENABLED_FUNCTIONS reader consistent.
         $GLOBALS["ENABLED_FUNCTIONS"] = array_values(array_filter((array)$GLOBALS["ENABLED_FUNCTIONS"], function ($f) use ($rtStrip) { return !in_array($f, $rtStrip, true); }));
@@ -95,6 +109,16 @@ if ($actorName !== "" && isset($GLOBALS["ENABLED_FUNCTIONS"]) && is_array($GLOBA
     $cbIntimacy = function_exists('getIntimacyForActor') ? getIntimacyForActor($actorName) : [];
     if (empty($cbIntimacy["is_npc_scene"])) {
         $cbStrip = ["ExtCmdHug","ExtCmdHoldHands","ExtCmdKiss","ExtCmdStartSex","ExtCmdStartBlowJob","ExtCmdStartAnalSex","ExtCmdStartMassage","ExtCmdStartThreesome","ExtCmdStartHandJobSex","ExtCmdStartTitfuck","ExtCmdStartSelfMasturbation","ExtCmdSexCommand","ExtCmdAcceptSex","ExtCmdRemoveClothes","ExtCmdDrinkBloodSex"];
+        $cbNpcStartCodes = array_values(array_diff(aiagentNsfwSexStartActionCodes(), ["ExtCmdStartThreesome"]));
+        foreach ($cbNpcStartCodes as $startCode) {
+            $targets = aiagentNsfwSexStartTargetOptions($actorName, (array)$cbIntimacy, $startCode);
+            if (array_filter($targets, function ($target) { return strcasecmp($target, (string)($GLOBALS['PLAYER_NAME'] ?? '')) !== 0; }) !== []) {
+                $cbStrip = array_values(array_diff($cbStrip, [$startCode]));
+            }
+        }
+        if (aiagentNsfwSexStartTargetOptions($actorName, (array)$cbIntimacy, 'ExtCmdStartThreesome') !== []) {
+            $cbStrip = array_values(array_diff($cbStrip, ['ExtCmdStartThreesome']));
+        }
         $GLOBALS["ENABLED_FUNCTIONS"] = array_values(array_filter((array)$GLOBALS["ENABLED_FUNCTIONS"], function ($f) use ($cbStrip) { return !in_array($f, $cbStrip, true); }));
         if (isset($GLOBALS["FUNC_LIST"]) && is_array($GLOBALS["FUNC_LIST"]) && function_exists('getFunctionCodeName')) {
             $GLOBALS["FUNC_LIST"] = array_values(array_filter($GLOBALS["FUNC_LIST"], function ($n) use ($cbStrip) { return !in_array(getFunctionCodeName($n), $cbStrip, true); }));
@@ -109,6 +133,126 @@ if ($actorName !== "" && isset($GLOBALS["ENABLED_FUNCTIONS"]) && is_array($GLOBA
     }
 }
 
+// Reconcile the final start-action surfaces after the Player relationship and combat gates.
+// The schema and captured plain-action prose expose the same exact recipient list. Threesome keeps its
+// existing comma-separated group form; one NPC still adds Player in the native consumer.
+if ($actorName !== '' && isset($GLOBALS['ENABLED_FUNCTIONS']) && is_array($GLOBALS['ENABLED_FUNCTIONS'])
+    && function_exists('aiagentNsfwSexStartTargetOptions') && function_exists('getFunctionCodeName')) {
+    $__nrStartCodes = aiagentNsfwSexStartActionCodes();
+    $__nrIntimacy = function_exists('getIntimacyForActor') ? getIntimacyForActor($actorName) : [];
+    $__nrStartTargets = [];
+    $__nrStartNotes = [];
+    $__nrCleanStartDescription = static function ($description) {
+        $description = (string)$description;
+        foreach (['Use one exact listed name, without a RefID suffix', 'Allowed recipient for this action:', 'Allowed recipients for this action:', 'Allowed group members for this action:'] as $marker) {
+            $position = strpos($description, $marker);
+            if ($position !== false) { $description = rtrim(substr($description, 0, $position)); }
+        }
+        return $description;
+    };
+
+    foreach ($__nrStartCodes as $__nrCode) {
+        $__nrTargets = aiagentNsfwSexStartTargetOptions($actorName, (array)$__nrIntimacy, $__nrCode);
+        $__nrAvailable = in_array($__nrCode, $GLOBALS['ENABLED_FUNCTIONS'], true)
+            && aiagentNsfwSexStartActionAvailable($__nrCode)
+            && $__nrTargets !== [];
+        if ($__nrCode === 'ExtCmdStartThreesome') {
+            $__nrNpcTargets = array_values(array_filter($__nrTargets, function ($target) {
+                return strcasecmp($target, (string)($GLOBALS['PLAYER_NAME'] ?? '')) !== 0;
+            }));
+            $__nrPlayerAllowed = in_array((string)($GLOBALS['PLAYER_NAME'] ?? ''), $__nrTargets, true);
+            $__nrAvailable = $__nrAvailable && ($__nrPlayerAllowed || count($__nrNpcTargets) >= 2);
+        }
+        if (!$__nrAvailable) {
+            $GLOBALS['ENABLED_FUNCTIONS'] = array_values(array_filter($GLOBALS['ENABLED_FUNCTIONS'], function ($code) use ($__nrCode) { return $code !== $__nrCode; }));
+        }
+        $__nrStartTargets[$__nrCode] = $__nrAvailable ? $__nrTargets : [];
+        $__nrNames = $__nrStartTargets[$__nrCode];
+        if ($__nrNames !== []) { $__nrStartNotes[$__nrCode] = aiagentNsfwSexStartTargetNote($__nrCode, $__nrNames); }
+    }
+
+    foreach ((array)($GLOBALS['FUNCTIONS'] ?? []) as $__nrIndex => $__nrFunction) {
+        if (!is_array($__nrFunction) || empty($__nrFunction['name'])) { continue; }
+        $__nrCode = getFunctionCodeName($__nrFunction['name']);
+        if (!in_array($__nrCode, $__nrStartCodes, true)
+            || !isset($GLOBALS['FUNCTIONS'][$__nrIndex]['parameters']['properties']['target'])) { continue; }
+        $__nrNote = $__nrStartNotes[$__nrCode] ?? '';
+        if ($__nrCode === 'ExtCmdStartThreesome') {
+            $GLOBALS['FUNCTIONS'][$__nrIndex]['parameters']['properties']['target']['type'] = 'string';
+            unset($GLOBALS['FUNCTIONS'][$__nrIndex]['parameters']['properties']['target']['enum']);
+        } else {
+            $GLOBALS['FUNCTIONS'][$__nrIndex]['parameters']['properties']['target']['enum'] = $__nrStartTargets[$__nrCode] ?? [];
+        }
+        $GLOBALS['FUNCTIONS'][$__nrIndex]['parameters']['properties']['target']['description'] = trim(
+            $__nrCleanStartDescription($GLOBALS['FUNCTIONS'][$__nrIndex]['parameters']['properties']['target']['description'] ?? '')
+            . ($__nrNote === '' ? '' : ' ' . $__nrNote)
+        );
+        $GLOBALS['FUNCTIONS'][$__nrIndex]['description'] = trim(
+            $__nrCleanStartDescription($GLOBALS['FUNCTIONS'][$__nrIndex]['description'] ?? '')
+            . ($__nrNote === '' ? '' : ' ' . $__nrNote)
+        );
+    }
+
+    if (isset($GLOBALS['FUNC_LIST']) && is_array($GLOBALS['FUNC_LIST'])) {
+        $GLOBALS['FUNC_LIST'] = array_values(array_filter($GLOBALS['FUNC_LIST'], function ($display) use ($__nrStartCodes, $__nrStartTargets) {
+            $code = getFunctionCodeName($display);
+            return !in_array($code, $__nrStartCodes, true) || !empty($__nrStartTargets[$code]);
+        }));
+        if (isset($GLOBALS['responseTemplate']['action'])) {
+            $GLOBALS['responseTemplate']['action'] = implode('|', $GLOBALS['FUNC_LIST']);
+        }
+        if (isset($GLOBALS['structuredOutputTemplate']['json_schema']['schema']['properties']['action']['enum'])) {
+            $GLOBALS['structuredOutputTemplate']['json_schema']['schema']['properties']['action']['enum'] = array_values($GLOBALS['FUNC_LIST']);
+        }
+    }
+
+    if (isset($GLOBALS['actionsList']) && is_string($GLOBALS['actionsList'])) {
+        $__nrPromptGateCodes = array_values(array_unique(array_merge($__nrStartCodes, [
+            'ExtCmdStartSelfMasturbation', 'ExtCmdSexCommand', 'ExtCmdQuickenPace', 'ExtCmdSlowPace',
+            'ExtCmdRemoveClothes', 'ExtCmdAcceptSex', 'ExtCmdKiss', 'ExtCmdHug', 'ExtCmdHoldHands',
+        ])));
+        $__nrPromptGateDisplays = [];
+        foreach ($__nrPromptGateCodes as $__nrCode) {
+            $__nrDisplay = trim((string)($GLOBALS['F_NAMES'][$__nrCode] ?? ''));
+            if ($__nrDisplay !== '') { $__nrPromptGateDisplays[$__nrDisplay] = $__nrCode; }
+        }
+        foreach ((array)($GLOBALS['FUNCTIONS'] ?? []) as $__nrFunction) {
+            if (!is_array($__nrFunction) || empty($__nrFunction['name'])) { continue; }
+            $__nrCode = getFunctionCodeName($__nrFunction['name']);
+            if (in_array($__nrCode, $__nrPromptGateCodes, true)) {
+                $__nrPromptGateDisplays[(string)$__nrFunction['name']] = $__nrCode;
+            }
+        }
+        $lines = explode("\n", str_replace("\r\n", "\n", $GLOBALS['actionsList']));
+        $keptLines = [];
+        foreach ($lines as $line) {
+            $matchedCode = null;
+            $matchedDisplay = null;
+            foreach ($__nrPromptGateDisplays as $__nrDisplay => $__nrCode) {
+                if (strpos($line, 'AVAILABLE ACTION: ' . $__nrDisplay . ' (') === 0) {
+                    $matchedCode = $__nrCode;
+                    $matchedDisplay = $__nrDisplay;
+                    break;
+                }
+            }
+            if ($matchedCode !== null) {
+                if (!in_array($matchedCode, (array)($GLOBALS['ENABLED_FUNCTIONS'] ?? []), true)
+                    || !in_array($matchedDisplay, (array)($GLOBALS['FUNC_LIST'] ?? []), true)) { continue; }
+                if (in_array($matchedCode, $__nrStartCodes, true)) {
+                    if (empty($__nrStartTargets[$matchedCode])) { continue; }
+                    $prefix = 'AVAILABLE ACTION: ' . $matchedDisplay . ' (';
+                    if (strpos($line, $prefix) === 0 && substr($line, -1) === ')') {
+                        $description = substr($line, strlen($prefix), -1);
+                        $description = $__nrCleanStartDescription($description);
+                        $line = $prefix . rtrim($description) . '; ' . $__nrStartNotes[$matchedCode] . ')';
+                    }
+                }
+            }
+            $keptLines[] = $line;
+        }
+        $GLOBALS['actionsList'] = implode("\n", $keptLines);
+    }
+}
 // ============================================================
 // TAKE_GOLD AMOUNT ROUTING (tester report 2026-07-04): on structured-JSON connectors there is no
 // tool-args object - the ONLY field that becomes the command parameter is 'target', and nothing told
@@ -238,6 +382,18 @@ if (!empty($GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY']) && isset($GLOBALS['HERIK
     }
 }
 
+// Arrangement-only offers need a cue when the ordinary Fond+ autonomy nudge does not apply.
+// The arrangement records the speaker's stance; it never supplies evidence of the recipient's consent.
+if (!empty($GLOBALS['AIAGENTNSFW_ARRANGEMENT_INITIATION'])
+    && empty($GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY'])
+    && isset($GLOBALS['HERIKA_PERS'])) {
+    $__arx = function_exists('getIntimacyForActor') ? getIntimacyForActor($actorName) : [];
+    if ((int)($__arx['level'] ?? 0) < 1 && empty($__arx['sex_started']) && (int)($__arx['intensity_tier'] ?? 0) < 3) {
+        $__arp = trim((string)($GLOBALS['PLAYER_NAME'] ?? 'your partner'));
+        $GLOBALS['HERIKA_PERS'] .= "\n\n<directed_intimacy_arrangement>Your current directed intimacy arrangement records your own stance toward {$__arp}. You may decide whether to act on it in this moment. It does not establish {$__arp}'s willingness or current consent, and it creates no obligation to initiate. Respect any refusal and the current scene and safety rules.</directed_intimacy_arrangement>";
+    }
+}
+
 // COURTSHIP NUDGE: Fond+ but rel type not eligible - she may express affection (which can flip
 // her type to crush), nothing more. Without this the affection toolset was granted silently.
 if (!empty($GLOBALS['AIAGENTNSFW_AFFECTION_AUTONOMY']) && isset($GLOBALS['HERIKA_PERS'])) {
@@ -254,6 +410,26 @@ if (!empty($GLOBALS['AIAGENTNSFW_AFFECTION_AUTONOMY']) && isset($GLOBALS['HERIKA
     }
 }
 
+// Only use arrangement wording for exact NPCs present in the final current start-target map.
+$__nnArrangementTargetKinds = [];
+$__nnPlayerName = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
+if ($actorName !== '' && function_exists('aiagentNsfwIntimacyArrangementAllowsSexPair')
+    && function_exists('aiagentNsfwReadIntimacyArrangement')) {
+    foreach ((array)($__nrStartTargets ?? []) as $__nnActionTargets) {
+        foreach ((array)$__nnActionTargets as $__nnTarget) {
+            if (!is_string($__nnTarget) || trim($__nnTarget) === ''
+                || strcasecmp(trim($__nnTarget), $__nnPlayerName) === 0
+                || strcasecmp(trim($__nnTarget), 'Player') === 0
+                || !aiagentNsfwIntimacyArrangementAllowsSexPair($actorName, trim($__nnTarget))) { continue; }
+            $__nnProjection = aiagentNsfwReadIntimacyArrangement($actorName, trim($__nnTarget));
+            if (($__nnProjection['state'] ?? null) === 'active'
+                && in_array($__nnProjection['kind'] ?? null, ['casual', 'romantic'], true)) {
+                $__nnArrangementTargetKinds[trim($__nnTarget)] = $__nnProjection['kind'];
+            }
+        }
+    }
+}
+
 // NPC-TO-NPC SCENE AUTONOMY (user directive 2026-07-05): an NPC who ALREADY holds the sex-initiation toolset
 // (player-eligible autonomy, or a prostitute) may point it at ANOTHER nearby NPC instead of the player - the
 // server validates A->B eligibility (affinity + rel type; prostitute bypass; slave player-only) when she calls
@@ -261,6 +437,7 @@ if (!empty($GLOBALS['AIAGENTNSFW_AFFECTION_AUTONOMY']) && isset($GLOBALS['HERIKA
 // else is actually present. UI-editable key npc_scene_autonomy_nudge.
 if (isset($GLOBALS['HERIKA_PERS'])
     && (!empty($GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY'])
+        || $__nnArrangementTargetKinds !== []
         || (function_exists('isProstitute') && isProstitute($actorName))
         || (function_exists('aiagentNsfwIsSlutNpc') && aiagentNsfwIsSlutNpc($actorName)))   // promiscuous mark: she thinks of others too
     && (!function_exists('isNpcSlave') || !isNpcSlave($actorName))) {
@@ -273,12 +450,39 @@ if (isset($GLOBALS['HERIKA_PERS'])
     if (!empty($__nnOthers) && (int)($__nnx['level'] ?? 0) < 1 && empty($__nnx['sex_started']) && (int)($__nnx['intensity_tier'] ?? 0) < 3) {
         $__nnNudge = function_exists('getGlobalPrompt') ? trim((string)getGlobalPrompt('npc_scene_autonomy_nudge')) : '';
         if ($__nnNudge === '') {
-            $__nnNudge = "Others are here besides #PLAYER_NAME#. If you are genuinely close to another person present - and in the kind of relationship where intimacy fits - you may start intimacy with THEM instead of #PLAYER_NAME#, on your own initiative, by naming that person as the target of the scene action. Only do so when it truly fits your bond with them.";
+            if ($__nnArrangementTargetKinds !== []) {
+                $__nnNames = implode(', ', array_keys($__nnArrangementTargetKinds));
+                $__nnNudge = "Others are here besides #PLAYER_NAME#. You may choose to initiate intimacy with an exact named target when an available scene action lists them. Your own current directed arrangement report with {$__nnNames} can coexist with dislike or without romance; it does not establish their present willingness or consent. Respect any refusal and the current scene and safety rules.";
+            } else {
+                $__nnNudge = "Others are here besides #PLAYER_NAME#. If you are genuinely close to another person present - and in the kind of relationship where intimacy fits - you may start intimacy with THEM instead of #PLAYER_NAME#, on your own initiative, by naming that person as the target of the scene action. Only do so when it truly fits your bond with them.";
+            }
         }
         $__nnNudge = str_replace(['#PLAYER_NAME#', '#NPC_NAME#'], [$__nnPlayerNm !== '' ? $__nnPlayerNm : 'the player', $actorName], $__nnNudge);
         $GLOBALS['HERIKA_PERS'] .= "\n\n<npc_scene_autonomy>\n" . $__nnNudge . "\n</npc_scene_autonomy>";
         error_log("[AIAGENTNSFW] NPC-SCENE AUTONOMY NUDGE injected for {$actorName} (" . count($__nnOthers) . " other(s) present)");
     }
+}
+
+// The target's record is the speaker's report, never the other person's agreement or current consent.
+$__nnArrangementStatus = function_exists('getIntimacyForActor') ? getIntimacyForActor($actorName) : [];
+$__nnArrangementPendingDecision = (($__nnArrangementStatus['scene_phase'] ?? '') === 'tier_prompt')
+    && (int)($__nnArrangementStatus['intensity_tier'] ?? 0) >= 3
+    && empty($__nnArrangementStatus['accepted_sex']);
+if (isset($GLOBALS['HERIKA_PERS']) && $__nnArrangementTargetKinds !== []
+    && (int)($__nnArrangementStatus['level'] ?? 0) < 1
+    && empty($__nnArrangementStatus['sex_started'])
+    && (int)($__nnArrangementStatus['intensity_tier'] ?? 0) < 3
+    && !$__nnArrangementPendingDecision
+    && empty($__nnArrangementStatus['refused_until_scene_end'])
+    && empty($__nnArrangementStatus['refusal_expressed'])
+    && (($__nnArrangementStatus['scene_phase'] ?? '') !== 'rejected')) {
+    $__nnArrangementLines = [];
+    foreach ($__nnArrangementTargetKinds as $__nnArrangementTarget => $__nnArrangementKind) {
+        $__nnArrangementLines[] = "- You have reported a current {$__nnArrangementKind} intimacy arrangement with {$__nnArrangementTarget}.";
+    }
+    $GLOBALS['HERIKA_PERS'] .= "\n\n<directed_npc_intimacy_arrangement>\n"
+        . implode("\n", $__nnArrangementLines)
+        . "\nThese reports are your own perspective and can exist without affection or romance. They do not establish anyone else's agreement, present willingness, or consent. If you choose to initiate, use only an exact target listed by the available scene action; respect refusals and the current scene and safety rules.\n</directed_npc_intimacy_arrangement>";
 }
 
 // AROUSAL RECEPTIVENESS (arousal enabled only): colors HOW arousal builds in conversation by relationship

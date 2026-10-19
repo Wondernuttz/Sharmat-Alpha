@@ -603,8 +603,11 @@ class NsfwOstimHandler {
 	                }));
 	                $playerName = $GLOBALS["PLAYER_NAME"] ?? "";
 	                $priorPartnerMatches = ($priorAcceptPartner === "" || strcasecmp($priorAcceptPartner, $playerName) === 0 || in_array($priorAcceptPartner, $orderedActorList, true));
-	                $recentAcceptedSex = $priorAcceptedSex
-	                    && (!function_exists('aiagentNsfwRelTypeSexEligible') || aiagentNsfwRelTypeSexEligible($actor)) // eligibility required to carry acceptance (fix 2026-07-01j)
+                $recentAcceptedSex = $priorAcceptedSex
+                    && (!function_exists('aiagentNsfwRelTypeSexEligible')
+                        || aiagentNsfwRelTypeSexEligible($actor)
+                        || (function_exists('aiagentNsfwAcceptedPlayerArrangementEligible')
+                            && aiagentNsfwAcceptedPlayerArrangementEligible($actor, $intimacyStatus, $orderedActorList))) // arrangement supplements only a current accepted Player pair
 	                    && $sceneTier >= 3
 	                    && $consentCarryoverSeconds > 0
 	                    && $priorAcceptTime > 0
@@ -1785,9 +1788,9 @@ class NsfwOstimHandler {
         }
 
         // Log the invite event for narrative purposes
-        $contextMsg = "{$domActor} is approaching {$subActor} with romantic intent.";
+        $contextMsg = "{$domActor} is inviting {$subActor} to an intimate scene. This is only an invitation; it does not establish acceptance or that a scene has started.";
         if ($thirdActor) {
-            $contextMsg = "{$domActor} is approaching {$subActor} and {$thirdActor} with romantic intent.";
+            $contextMsg = "{$domActor} is inviting {$subActor} and {$thirdActor} to an intimate scene. This is only an invitation; it does not establish acceptance or that a scene has started.";
         }
 
         $GLOBALS["gameRequest"][3] = $contextMsg;
@@ -2597,7 +2600,10 @@ class NsfwOstimHandler {
         // refusal even once she consensually re-engages, which mislabeled a normal climax as non-consent ("negative
         // orgasm prompt after she started"). scene_phase is authoritative: refuse -> refusal prompt; else -> normal.
         $sceneRejected = (($intimacyStatus["scene_phase"] ?? null) === "rejected") && !$serviceJustCompleted;
-        $sceneConsent = (!empty($intimacyStatus["accepted_sex"]) && (!function_exists('aiagentNsfwRelTypeSexEligible') || aiagentNsfwRelTypeSexEligible($actor))) // eligibility required to HOLD acceptance (fix 2026-07-01j)
+        $sceneConsent = (!empty($intimacyStatus["accepted_sex"]) && (!function_exists('aiagentNsfwRelTypeSexEligible')
+            || aiagentNsfwRelTypeSexEligible($actor)
+            || (function_exists('aiagentNsfwAcceptedPlayerArrangementEligible')
+                && aiagentNsfwAcceptedPlayerArrangementEligible($actor, $intimacyStatus)))) // arrangement supplements only a current accepted Player pair
             || !empty($intimacyStatus["npc_is_slave"])
             || (!empty($intimacyStatus["npc_is_prostitute"]) && (!empty($intimacyStatus["payment_confirmed"]) || $serviceJustCompleted))
             || (!empty($intimacyStatus["is_npc_scene"]) && !empty($intimacyStatus["npc_affinity_gate_disabled"]))
@@ -3016,7 +3022,10 @@ class NsfwOstimHandler {
         // continuation) yields the refusal prompt; stale refusal_expressed / request_scene_stop no longer count, so
         // a consensual climax after an earlier decline gets the normal positive cue. Mirrors handleClimax above.
         $sceneRejected = (($intimacyStatus["scene_phase"] ?? null) === "rejected") && !$serviceJustCompleted;
-        $sceneConsent = (!empty($intimacyStatus["accepted_sex"]) && (!function_exists('aiagentNsfwRelTypeSexEligible') || aiagentNsfwRelTypeSexEligible($actor))) // eligibility required to HOLD acceptance (fix 2026-07-01j)
+        $sceneConsent = (!empty($intimacyStatus["accepted_sex"]) && (!function_exists('aiagentNsfwRelTypeSexEligible')
+            || aiagentNsfwRelTypeSexEligible($actor)
+            || (function_exists('aiagentNsfwAcceptedPlayerArrangementEligible')
+                && aiagentNsfwAcceptedPlayerArrangementEligible($actor, $intimacyStatus)))) // arrangement supplements only a current accepted Player pair
             || !empty($intimacyStatus["npc_is_slave"])
             // Paid prostitute stays consented even after the client's orgasm consumed payment_confirmed.
             || (!empty($intimacyStatus["npc_is_prostitute"]) && (!empty($intimacyStatus["payment_confirmed"]) || $serviceJustCompleted))
