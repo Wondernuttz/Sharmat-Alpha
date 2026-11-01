@@ -1,4 +1,4 @@
-SHARMAT 3.1.9.11 - Action Confirmations and Scene Data Fixes
+SHARMAT 3.1.0 - Action Confirmations and Scene Data Fixes
 
 INSTALL / UPDATE
 1. Fully exit Skyrim.
@@ -12,7 +12,7 @@ Requires CHIM and its normal dependencies, plus the enabled OStim or SexLab
 framework and suitable installed animations. Those frameworks and animation
 packs are separate downloads.
 
-CHANGES IN 3.1.9.11
+CHANGES IN 3.1.0
 SHARMAT actions now use CHIM's existing Require Confirmation setting. Affection
 and scene-start actions ask by default, with existing explicit choices preserved.
 Set the checkbox for each action in CHIM's Actions editor. Allow runs the action;
@@ -25,7 +25,7 @@ intensity detection from OStim action types, and kink-template defaults/saving.
 The Scenes page accepts JSON or TSV imports and keeps existing entries by default.
 
 These fixes are server-side. All six game scripts are unchanged from 3.1.9.10.
-The full ZIP includes the matching 3.1.9.11 embedded server component and retains
+The full ZIP includes the matching 3.1.0 embedded server component and retains
 the Plugin Page discovery and complete-download fixes.
 
 The included game scripts fix scene-event registration when only OStim or only SexLab is
@@ -68,3 +68,8 @@ If you customized this pack in OAR, back up your configuration and merge the
 SHARMAT condition into your custom configuration instead of overwriting it.
 A user.json override may take precedence over this packaged config.json.
 The Animated Inebriation alternate main file has not been validated here.
+
+3.1.0 renumbers the 3.1.9.11 release and retains its fixes. Existing 3.1.9.11
+installations already have these gameplay changes. Update Live or SHARMAT's
+Info-page updater can install this version even when an older Plugin Manager
+does not show an update badge for the lower number.

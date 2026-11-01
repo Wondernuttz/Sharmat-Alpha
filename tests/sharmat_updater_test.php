@@ -196,6 +196,8 @@ try {
     updaterAssert(!file_exists($testRoot . '/incomplete-mod.zip'), 'incomplete mod is not offered as an archive');
     rename($sceneEnginePath . '.missing', $sceneEnginePath);
 
+    updaterWrite($extractedRoot . '/mod/version.txt', '3.1.0');
+    updaterAssert(_sharmatBuildModArchive($extractedRoot . '/mod', $testRoot . '/renumbered-mod.zip') === 12, 'renumbered 3.1.0 includes both adapters');
     foreach (['AIAgentNSFWOStim.pex', 'AIAgentNSFWSexLab.pex'] as $adapter) {
         $adapterPath = $extractedRoot . '/mod/Scripts/' . $adapter;
         rename($adapterPath, $adapterPath . '.missing');

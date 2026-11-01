@@ -577,9 +577,10 @@ function _sharmatBuildModArchive($modDir, $archivePath)
     if (!preg_match('/^[0-9]+(?:\.[0-9]+)*$/', $version)) {
         throw new RuntimeException('Game mod directory has an invalid version marker');
     }
-    // The shared scene engine delegates to these adapters starting with 3.1.9.8.
-    // Require both so a partial install falls back to the complete release ZIP.
-    if (version_compare($version, '3.1.9.8', '>=')) {
+    // The three-part 3.1.0 series continues the layout from four-part 3.1.9.8+.
+    // Require both adapters after the renumbering as well as in those releases.
+    $threePartRelease = substr_count($version, '.') === 2 && version_compare($version, '3.1.0', '>=');
+    if ($threePartRelease || version_compare($version, '3.1.9.8', '>=')) {
         $runtimeFiles[] = 'Scripts/AIAgentNSFWOStim.pex';
         $runtimeFiles[] = 'Scripts/AIAgentNSFWSexLab.pex';
     }
