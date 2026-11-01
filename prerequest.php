@@ -129,8 +129,6 @@ function aiagentNsfwClearNpcSceneRuntimeForPrerequest($actorName, $intimacyStatu
             "my_role_tags" => [],
             "current_primary_partner" => null,
             "is_active_participant" => false,
-            "show_normal_kinks" => false,
-            "show_secret_kinks" => false,
             "is_transaction" => false,
             "transaction_client" => null,
             "negotiation_phase" => false,
@@ -1227,8 +1225,6 @@ if ($isNpcSceneGateDisabled && !$isPillowTalkMode) {
 
     $intimacyStatus["npc_affinity_gate_disabled"] = true;
     $intimacyStatus["accepted_sex"] = true;
-    $intimacyStatus["show_normal_kinks"] = true;
-    $intimacyStatus["show_secret_kinks"] = true;
     $intimacyStatus["sex_started"] = true;
     $intimacyStatus["had_sex_in_scene"] = true;
     $intimacyStatus["refusal_expressed"] = false;
@@ -2095,15 +2091,9 @@ if ($scenePhase === "affection") {
         if (!empty($intimacyStatus["accepted_sex"]) || $isSlave || $isNpcSceneGateDisabled || ($isProstitute && !empty($intimacyStatus["payment_confirmed"])) || $modelDrivenConsent) {
             $intimacyStatus["scene_phase"] = "accepted";
             $intimacyStatus["accepted_sex"] = true;  // record consent so downstream + orgasm handlers don't force-refuse
-            // KINK UNLOCK (was done by the removed AcceptSex FUNCSERV): affinity-gated kinks must still enable on
-            // consent or speech styles + kinks stay blocked. Fond+ (>=56) normal, Devoted+ (>=76) secret. Prostitutes
-            // reveal no personal kinks (business only), so leave theirs alone.
-            if (!$isProstitute) {
-                $intimacyStatus["show_normal_kinks"] = ($consentAffinity >= 56);
-                $intimacyStatus["show_secret_kinks"] = ($consentAffinity >= 76);
-            }
+            // Kink prompts use this NPC's unlock settings during prompt generation.
             $scenePhase = "accepted";
-            error_log("[AIAGENTNSFW] Consent present (explicit or model-driven implicit) -> accepted for $actorName (aff={$consentAffinity}, reachedSex=" . ($sceneReachedSex ? 'Y' : 'N') . ", kinks N=" . (($consentAffinity>=56)?'Y':'N') . "/S=" . (($consentAffinity>=76)?'Y':'N') . ")");
+            error_log("[AIAGENTNSFW] Consent present -> accepted for $actorName (aff={$consentAffinity}, reachedSex=" . ($sceneReachedSex ? 'Y' : 'N') . "; kink prompts use the NPC unlock settings)");
 	        } else {
 	            // stay at tier_prompt - do NOT advance, do NOT grant consent. Nothing but the model accepts.
 	            error_log("[AIAGENTNSFW] tier_prompt HELD - waiting on model AcceptSex/RefuseSex (no implicit consent) for $actorName");

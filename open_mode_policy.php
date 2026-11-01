@@ -136,8 +136,6 @@ function aiagentNsfwApplyOpenModeAcceptedState($intimacyStatus, $affinity)
     $intimacyStatus['tier_prompt_sent'] = true;
     $intimacyStatus['request_scene_stop'] = false;
     $intimacyStatus['arousal_pacing_decline_pending'] = false;
-    $intimacyStatus['show_normal_kinks'] = ($affinity >= 56);
-    $intimacyStatus['show_secret_kinks'] = ($affinity >= 76);
 
     return $intimacyStatus;
 }

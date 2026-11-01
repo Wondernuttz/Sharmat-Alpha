@@ -1,6 +1,6 @@
 # SHARMAT Alpha - Skyrim mod download
 
-**[Download the complete SHARMAT 3.1.9.10 ZIP](https://github.com/Wondernuttz/Sharmat-Alpha/releases/download/v3.1.9.10/SHARMAT-3.1.9.10.zip)**
+**[Download the complete SHARMAT 3.1.9.11 ZIP](https://github.com/Wondernuttz/Sharmat-Alpha/releases/download/v3.1.9.11/SHARMAT-3.1.9.11.zip)**
 
 Install the ZIP in MO2 or Vortex over your existing SHARMAT mod. Keep
 `AIAgentNSFW.esp` enabled. Update the server through SHARMAT's Info page as well.
@@ -13,17 +13,26 @@ and the standard **Drunk animations 1.6.1** main file from
 Let SHARMAT win the animation pack's `config.json` conflict. Custom OAR overrides
 need the SHARMAT condition merged into them. No animation assets are bundled.
 
-Version 3.1.9.10 restores the Plugin Page link after GitHub Plugin Manager installs
-by including the standard `index.php` entry point in both server package formats.
-The original `config_manager.php` address remains available. It retains the
-3.1.9.9 complete-download fix and matching Download Game Mod button styling.
-The game scripts are unchanged from the complete 3.1.9.8 GitHub release.
+Version 3.1.9.11 adds CHIM action confirmations and fixes scene IDs, actor
+placeholders, imports, repeat migrations, intensity detection and prompt defaults.
+NPC autonomy prompts now name only eligible partners who are present.
+
+In CHIM's Actions editor, each SHARMAT game action has a **Require Confirmation**
+checkbox on CHIM versions with action-confirmation support. Affection and scene
+starts ask by default; existing explicit choices are preserved. Allow runs the
+action and Cancel discards it. This uses CHIM's existing game-side confirmation
+UI, so the CHIM server and game plugin must both support confirmation commands.
+
+These fixes are server-side. The complete ZIP retains all six game scripts from
+3.1.9.10 and includes the matching 3.1.9.11 embedded server package. Existing
+3.1.9.10 game installations only need the server update for these fixes.
+The Plugin Page entry point and complete-download fixes are retained.
 Ensure SHARMAT wins conflicts for `Scripts/AIAgentNSFW*.pex` in your mod manager.
 
 The included game scripts isolate optional framework dependencies so missing SexLab scripts
 cannot disable OStim event registration, and the shared scripts do not require
 OStim-specific types on SexLab-only setups. Both frameworks remain supported
-together. The full ZIP contains the rebuilt game scripts and matching server package.
+together. The full ZIP contains these game scripts and the matching server package.
 
 Restart Skyrim and load a save after installing. No new save, quest reset, or
 animation-cache deletion is needed. Preserve custom scene-framework settings.

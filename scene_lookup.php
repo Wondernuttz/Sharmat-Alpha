@@ -91,14 +91,22 @@ $GLOBALS['OSTIM_ACTION_DESCRIPTIONS'] = [
 // Scene intensity tier: 1=innocent affection (hug/hold), 2=romantic (kiss/cuddle/foreplay), 3=sexual (default)
 // Covers BOTH OStim action tags and SexLab Animation.GetTags(); affection routes to non-explicit prompts.
 function nsfwSceneIntensityTier($tags = [], $sceneName = '', $sceneId = null) {
+    $ovScene = null;
     // Per-scene override wins (set via the scenes manager 'tier' field)
     if ($sceneId !== null && class_exists('NsfwData')) {
-        $ovScene = NsfwData::getScene($sceneId);
+        $ovScene = NsfwData::getSceneForLookup($sceneId);
         if (is_array($ovScene) && isset($ovScene['tier']) && in_array((int)$ovScene['tier'], [1, 2, 3], true)) {
             return (int)$ovScene['tier'];
         }
     }
     $tagSet = array_map('strtolower', array_map('trim', (array)$tags));
+    // OStim may supply action types without scene tags. They carry stronger
+    // evidence than ambiguous pose names such as "Holding" or "Idle".
+    foreach ((array)($ovScene['actions'] ?? []) as $action) {
+        if (is_array($action) && is_string($action['type'] ?? null)) {
+            $tagSet[] = strtolower(trim($action['type']));
+        }
+    }
     $name = strtolower((string)$sceneName);
     // Explicit ACT tags force tier 3 (exact match, OStim + SexLab vocab). Positions (standing/spooning/missionary/etc) are NOT here - ambiguous, handled below.
     $explicitTags = [
@@ -209,20 +217,28 @@ function buildSceneIndex() {
  * Get scene data from JSON by scene ID
  */
 function getSceneData($sceneId) {
+    $sceneId = trim((string)$sceneId);
+    if ($sceneId === '') return null;
     $index = buildSceneIndex();
 
     if (isset($index[$sceneId])) {
         return $index[$sceneId]['data'];
     }
 
-    // Try partial match (some scene IDs may have suffixes)
-    foreach ($index as $id => $info) {
-        if (strpos($id, $sceneId) === 0 || strpos($sceneId, $id) === 0) {
-            return $info['data'];
-        }
+    if (preg_match('/_A1$/', $sceneId) && isset($index[substr($sceneId, 0, -3)])) {
+        return $index[substr($sceneId, 0, -3)]['data'];
     }
 
-    return null;
+    // Retain legacy partial lookup only when it identifies a single scene.
+    // An arbitrary sibling's actor layout must not describe a different pose.
+    $match = null;
+    foreach ($index as $id => $info) {
+        if (strpos($id, $sceneId) === 0 || strpos($sceneId, $id) === 0) {
+            if ($match !== null) return null;
+            $match = $info['data'];
+        }
+    }
+    return $match;
 }
 
 /**
@@ -270,8 +286,16 @@ function buildDescriptionWithPlaceholders($sceneData) {
  * Replace placeholders with actual actor names
  */
 function buildActorDescriptions($description, $actorNames) {
-    if (!$description || !$actorNames) {
+    if (!$description) {
         return $description;
+    }
+    $description = NsfwData::normalizeActorPlaceholders($description);
+    $actorNames = array_values((array)$actorNames);
+    if (NsfwData::sceneDescriptionIssues($description, count($actorNames))) {
+        // Keep the stored customization intact for editing. Do not guess a
+        // partner or send broken placeholders to the dialogue model.
+        error_log('[NSFW-SceneLookup] Invalid actor placeholders; using neutral scene context');
+        return 'An intimate scene is happening';
     }
 
     // Replace {actor0}, {actor1}, etc. with real names

@@ -494,11 +494,11 @@
                         </p>
                         <div class="form-group">
                             <label>Normal Kinks Template</label>
-                            <textarea id="promptNormalKinks" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">Your kinks are: #KINKS#. You may ask #PRIMARY_PARTNER# to do these things during intimacy.</textarea>
+                            <textarea id="promptNormalKinks" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"><?php echo htmlspecialchars(NsfwData::getDefaultKinkTemplates()['normal_kinks_template'], ENT_QUOTES, 'UTF-8'); ?></textarea>
                         </div>
                         <div class="form-group">
                             <label>Secret Kinks Template</label>
-                            <textarea id="promptSecretKinks" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;">Your deepest, secret desires are: #SECRET_KINKS#. You trust #PLAYER_NAME# enough now to ask for these in this moment.</textarea>
+                            <textarea id="promptSecretKinks" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"><?php echo htmlspecialchars(NsfwData::getDefaultKinkTemplates()['secret_kinks_template'], ENT_QUOTES, 'UTF-8'); ?></textarea>
                         </div>
                     </div>
 

@@ -308,7 +308,7 @@ class NsfwOstimHandler {
         $infoSexSceneParts = explode("/", $gameRequest[3]);
         $sexSceneName      = $infoSexSceneParts[0];
         $sexTags           = explode(",", strtolower($infoSexSceneParts[1]));
-        $sexStageName      = strtr($infoSexSceneParts[2], ["_A1" => ""]);
+        $sexStageName      = trim($infoSexSceneParts[2]);
         $actorInfosRaw     = array_slice($infoSexSceneParts, 3);
 
         // Parse actor data — new format includes per-actor role tags:
@@ -1542,8 +1542,6 @@ class NsfwOstimHandler {
                 $intimacyStatus["npc_affinity_gate_disabled"] = !$npcAffinityGateEnabled;
                 $intimacyStatus["accepted_sex"] = !$npcAffinityGateEnabled;
                 $intimacyStatus["accepted_affection"] = false;
-                $intimacyStatus["show_normal_kinks"] = !$npcAffinityGateEnabled;
-                $intimacyStatus["show_secret_kinks"] = !$npcAffinityGateEnabled;
                 $intimacyStatus["sex_started"] = !$npcAffinityGateEnabled;
                 $intimacyStatus["had_sex_in_scene"] = !$npcAffinityGateEnabled;
                 $intimacyStatus["tier_prompt_sent"] = null;
@@ -1667,8 +1665,6 @@ class NsfwOstimHandler {
                     $intimacyStatus["npc_affinity_gate_disabled"] = true;
                     $intimacyStatus["scene_phase"] = ($intimacyStatus["scene_phase"] === "engaged") ? "engaged" : "accepted";
                     $intimacyStatus["accepted_sex"] = true;
-                    $intimacyStatus["show_normal_kinks"] = true;
-                    $intimacyStatus["show_secret_kinks"] = true;
                     $intimacyStatus["sex_started"] = true;
                     $intimacyStatus["had_sex_in_scene"] = true;
                     $intimacyStatus["refusal_expressed"] = false;
@@ -2357,8 +2353,6 @@ class NsfwOstimHandler {
                 "scene_actors" => null,
                 "current_primary_partner" => null,
                 "is_active_participant" => false,
-                "show_normal_kinks" => false,
-                "show_secret_kinks" => false,
                 "is_transaction" => false,
                 "transaction_client" => null,
                 "negotiation_phase" => false,
@@ -2425,8 +2419,6 @@ class NsfwOstimHandler {
             "scene_actors" => null,
             "current_primary_partner" => null,
             "is_active_participant" => false,
-            "show_normal_kinks" => false,
-            "show_secret_kinks" => false,
             "is_transaction" => false,
             "transaction_client" => null,
             "negotiation_phase" => false,
@@ -3505,7 +3497,7 @@ class NsfwOstimHandler {
                 if (empty($normalKinksTemplate)) {
                     // Code fallback (matches speak_style_template / sex_personality_template) so kinks still
                     // inject when the UI template key is missing from the store - otherwise kinks silently vanish.
-                    $normalKinksTemplate = "Your kinks are: #KINKS#. During sex, actively ask #PRIMARY_PARTNER# for at least one of these: pick ONE at random when the moment feels natural and request it in your own voice. Do not recite the whole list.";
+                    $normalKinksTemplate = NsfwData::getDefaultKinkTemplates()['normal_kinks_template'];
                 }
                 $kinksOutput = str_replace('#KINKS#', $kinksList, $normalKinksTemplate);
                 if (function_exists('aiagentNsfwResolveScenePlaceholders')) {
@@ -3523,7 +3515,7 @@ class NsfwOstimHandler {
                 $secretKinksTemplate = $prompts['secret_kinks_template'] ?? '';
                 if (empty($secretKinksTemplate)) {
                     // Code fallback so secret kinks still inject when the UI template key is missing.
-                    $secretKinksTemplate = "Your deepest, darkest desires are: #SECRET_KINKS#. You only reveal these to someone you truly trust. With such a partner, choose ONE at random during sex and dare to ask for it when the moment feels right.";
+                    $secretKinksTemplate = NsfwData::getDefaultKinkTemplates()['secret_kinks_template'];
                 }
                 $secretKinksOutput = str_replace('#SECRET_KINKS#', $secretKinksList, $secretKinksTemplate);
                 if (function_exists('aiagentNsfwResolveScenePlaceholders')) {

@@ -42,7 +42,7 @@ if ($tableCount == 0) {
 }
 
 // Run migration
-echo "Starting migration...\n";
+echo "Adding missing legacy scenes; existing JSONB scenes and customizations are preserved.\n";
 $result = NsfwData::migrateFromTable();
 
 if ($result['success']) {

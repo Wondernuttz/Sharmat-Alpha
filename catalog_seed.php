@@ -106,6 +106,87 @@ function aiagent_nsfw_action_params($code)
     }
 }
 
+// Use CHIM's existing action confirmation queue and editor. No second consent
+// setting is needed in the game scripts; the command reaches them only after Allow.
+function aiagent_nsfw_action_confirmation_metadata($code, $metadata = [])
+{
+    if (!function_exists('herikaActionCatalogGetConfirmationCommandChannel')) {
+        return $metadata;
+    }
+
+    $askByDefault = [
+        'ExtCmdHug', 'ExtCmdHoldHands', 'ExtCmdKiss', 'ExtCmdStartSex',
+        'ExtCmdStartBlowJob', 'ExtCmdStartAnalSex', 'ExtCmdStartMassage',
+        'ExtCmdStartThreesome', 'ExtCmdStartHandJobSex', 'ExtCmdStartTitfuck',
+        'ExtCmdDrinkBloodSex', 'ExtCmdStartSelfMasturbation', 'ExtCmdAcceptSex',
+    ];
+    $policy = $metadata['confirmation']['default_policy'] ?? null;
+    if (!in_array($policy, ['ask', 'automatic'], true)) {
+        $policy = in_array($code, $askByDefault, true) ? 'ask' : 'automatic';
+        $metadata['confirmation']['default_policy'] = $policy;
+    }
+
+    // Older editors stored an explicit "default" selector. CHIM's checkbox
+    // resolver treats that as false, although dispatch inherits the default.
+    // Removing only the inherit-default value keeps both interpretations aligned.
+    $customConfig = $metadata['custom_config'] ?? [];
+    if (is_array($customConfig) && !array_key_exists('confirmation_required', $customConfig)
+        && isset($customConfig['confirmation_policy'])
+        && strtolower(trim((string)$customConfig['confirmation_policy'])) === 'default') {
+        unset($metadata['custom_config']['confirmation_policy']);
+    }
+
+    // CHIM's generic editor derives its default from built-in code names, which
+    // do not include ExtCmd aliases. Supply the same default that dispatch uses.
+    $fields = is_array($metadata['editor_fields'] ?? null) ? $metadata['editor_fields'] : [];
+    foreach ($fields as $field) {
+        if (($field['key'] ?? '') === 'confirmation_required') {
+            return $metadata;
+        }
+    }
+    $fields[] = [
+        'key' => 'confirmation_required',
+        'label' => 'Require Confirmation',
+        'type' => 'boolean',
+        'default' => $policy === 'ask',
+        'help' => 'Ask before this action executes. Allow performs the action; Cancel discards it.',
+    ];
+    $metadata['editor_fields'] = $fields;
+    return $metadata;
+}
+
+// A saved Actions edit shadows the base row completely. Upgrade only its
+// dispatch classification and missing confirmation metadata, preserving edits.
+function aiagent_nsfw_upgrade_custom_action_confirmation($actions)
+{
+    $codes = array_map(function ($action) { return herikaActionCatalogSqlText($action['code']); }, $actions);
+    try {
+        $rows = $GLOBALS['db']->fetchAll('SELECT code_name, metadata, game_function, script_proxy_program
+            FROM public.core_action_custom WHERE code_name IN (' . implode(',', $codes) . ')');
+        foreach ($rows as $row) {
+            $before = is_array($row['metadata']) ? $row['metadata'] : json_decode($row['metadata'], true);
+            if (!is_array($before)
+                || ($before['dispatch'] ?? 'plugin_command') !== 'plugin_command'
+                || !empty($row['script_proxy_program'])) {
+                continue;
+            }
+            $metadata = aiagent_nsfw_action_confirmation_metadata($row['code_name'], $before);
+            if (herikaActionCatalogToBool($row['game_function']) && $metadata === $before) {
+                continue;
+            }
+            // Compare-and-swap avoids overwriting an Actions edit saved while
+            // this request was loading the catalog. A later request can retry.
+            $GLOBALS['db']->execQuery('UPDATE public.core_action_custom SET game_function = TRUE,
+                metadata = ' . herikaActionCatalogSqlJson($metadata) . ', updated_at = NOW()
+                WHERE code_name = ' . herikaActionCatalogSqlText($row['code_name']) . '
+                AND metadata = ' . herikaActionCatalogSqlJson($before) . '
+                AND game_function = ' . herikaActionCatalogSqlBool(herikaActionCatalogToBool($row['game_function'])));
+        }
+    } catch (Exception $e) {
+        error_log('[aiagent_nsfw] custom action confirmation upgrade failed: ' . $e->getMessage());
+    }
+}
+
 function aiagent_nsfw_seed_action_catalog()
 {
     if (!empty($GLOBALS['AIAGENT_NSFW_CATALOG_SEEDED'])) {
@@ -174,6 +255,7 @@ function aiagent_nsfw_seed_action_catalog()
                 'prompt'   => $followupPromptDefault,
             ],
         ];
+        $metadata = aiagent_nsfw_action_confirmation_metadata($a['code'], $metadata);
 
         $sql = "INSERT INTO public.core_action (
                 code_name, action_name, description, return_message,
@@ -191,7 +273,7 @@ function aiagent_nsfw_seed_action_catalog()
                 " . herikaActionCatalogSqlBool(true) . ",
                 " . herikaActionCatalogSqlJson(aiagent_nsfw_action_params($a['code'])) . ",
                 " . herikaActionCatalogSqlJson($metadata) . ",
-                " . herikaActionCatalogSqlBool(false) . ",
+                " . herikaActionCatalogSqlBool(true) . ",
                 1,
                 " . herikaActionCatalogSqlJson(null, true) . "
             )
@@ -200,6 +282,7 @@ function aiagent_nsfw_seed_action_catalog()
                 description     = EXCLUDED.description,
                 parameters_json = EXCLUDED.parameters_json,
                 metadata        = EXCLUDED.metadata,
+                game_function   = EXCLUDED.game_function,
                 updated_at      = NOW()";
 
         try {
@@ -208,6 +291,11 @@ function aiagent_nsfw_seed_action_catalog()
             error_log('[aiagent_nsfw] catalog seed failed for ' . $a['code'] . ': ' . $e->getMessage());
         }
     }
+    if (function_exists('herikaActionCatalogGetConfirmationCommandChannel')) {
+        aiagent_nsfw_upgrade_custom_action_confirmation($actions);
+    }
+    // Extensions may load after CHIM has cached the base catalog.
+    unset($GLOBALS['HERIKA_ACTION_CATALOG_ROWS_BY_CODE']);
 }
 
 aiagent_nsfw_seed_action_catalog();

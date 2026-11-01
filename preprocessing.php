@@ -261,8 +261,6 @@ function aiagentNsfwClearStaleNpcScenesForPreprocess($staleSeconds = null)
                     'my_role_tags', jsonb_build_array(),
                     'current_primary_partner', NULL,
                     'is_active_participant', false,
-                    'show_normal_kinks', false,
-                    'show_secret_kinks', false,
                     'is_transaction', false,
                     'payment_confirmed', false,
                     'service_completed', false,

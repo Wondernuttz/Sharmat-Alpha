@@ -379,11 +379,113 @@ class NsfwData {
         return self::getItem(self::KEY_SCENES, $stageId);
     }
 
+    // Exact IDs always win. Older player events appended an actor suffix; only
+    // fall back to that legacy key if the actual ID has no stored entry.
+    public static function getSceneForLookup($stageId) {
+        $scene = self::getScene($stageId);
+        if ($scene !== null) return $scene;
+        if (preg_match('/_A1$/', (string)$stageId)) {
+            return self::getScene(substr($stageId, 0, -3));
+        }
+        return null;
+    }
+
+    public static function normalizeActorPlaceholders($text) {
+        return preg_replace_callback('/\{(actor(?:0|[1-9][0-9]*)?|target)\}/i',
+            static function ($match) { return '{' . strtolower($match[1]) . '}'; }, (string)$text);
+    }
+
+    public static function sceneDescriptionIssues($text, $actorCount = null) {
+        $text = self::normalizeActorPlaceholders($text);
+        preg_match_all('/\{\s*(?:actor|target)[^{}\r\n]*(?:\}|(?=[{\r\n]|$))/i', $text, $matches);
+        $issues = [];
+        foreach ($matches[0] as $token) {
+            if (!preg_match('/^\{(actor(0|[1-9][0-9]*)?|target)\}$/', $token, $parts)) {
+                $issues[] = 'Use actor placeholders such as {actor0}, {actor1}, {actor}, or {target} with matching braces.';
+                continue;
+            }
+            $index = $parts[1] === 'target' ? 1 : (int)($parts[2] ?? 0);
+            if ($actorCount !== null && $index >= $actorCount) {
+                $issues[] = 'An actor placeholder refers to a slot outside this scene\'s actor count.';
+            }
+        }
+        return array_values(array_unique($issues));
+    }
+
+    public static function validateSceneData($data, $existing = []) {
+        if (is_string($data)) $data = ['description' => $data];
+        if (!is_array($data)) throw new InvalidArgumentException('Each scene must contain a description or a scene object.');
+        $merged = array_replace(is_array($existing) ? $existing : [], $data);
+        $actorCount = isset($merged['actors']) && is_array($merged['actors']) ? count($merged['actors']) : null;
+        if (isset($merged['actor_count']) && is_int($merged['actor_count']) && $merged['actor_count'] >= 0) {
+            $actorCount = $merged['actor_count'];
+        }
+        foreach (['description', 'description_es', 'description_en'] as $field) {
+            if (!array_key_exists($field, $data) || $data[$field] === null) continue;
+            if (!is_string($data[$field])) throw new InvalidArgumentException('Scene descriptions must be text.');
+            $data[$field] = self::normalizeActorPlaceholders($data[$field]);
+            $issues = self::sceneDescriptionIssues($data[$field], $actorCount);
+            if ($issues) throw new InvalidArgumentException(implode(' ', $issues));
+        }
+        return $data;
+    }
+
+    public static function parseSceneImport($contents) {
+        $contents = preg_replace('/^\xEF\xBB\xBF/', '', $contents);
+        if (trim($contents) === '') throw new InvalidArgumentException('The import file is empty.');
+        if (strlen($contents) > 16 * 1024 * 1024) throw new InvalidArgumentException('Scene imports must be at most 16 MB.');
+        $scenes = [];
+        $first = ltrim($contents)[0];
+        if ($first === '{' || $first === '[') {
+            $decoded = json_decode($contents, true, 64, JSON_THROW_ON_ERROR);
+            if (!is_array($decoded)) throw new InvalidArgumentException('Expected a JSON scene map or an array of scene records.');
+            foreach ($decoded as $key => $data) {
+                $stage = is_int($key) && is_array($data) ? ($data['stage'] ?? $data['id'] ?? '') : $key;
+                if (!is_string($stage) || trim($stage) === '') throw new InvalidArgumentException('Every imported scene needs a stage ID.');
+                if (isset($scenes[$stage])) throw new InvalidArgumentException('The import contains duplicate stage IDs.');
+                $scenes[$stage] = self::validateSceneData($data);
+            }
+        } else {
+            $stream = fopen('php://temp', 'r+');
+            try {
+                fwrite($stream, $contents); rewind($stream);
+                $headers = fgetcsv($stream, 0, "\t", '"', '');
+                $headers = array_map('trim', $headers ?: []);
+                if (!in_array('stage', $headers, true) || count(array_unique($headers)) !== count($headers)) {
+                    throw new InvalidArgumentException('TSV files need a unique header row including stage and description.');
+                }
+                $line = 1;
+                while (($values = fgetcsv($stream, 0, "\t", '"', '')) !== false) {
+                    ++$line;
+                    if ($values === [null]) continue;
+                    if (count($values) !== count($headers)) throw new InvalidArgumentException('Wrong column count in TSV record ' . $line . '.');
+                    $row = array_combine($headers, $values);
+                    $stage = trim($row['stage']);
+                    if ($stage === '' || isset($scenes[$stage])) throw new InvalidArgumentException('Missing or duplicate stage ID in TSV record ' . $line . '.');
+                    $data = [];
+                    foreach (['description', 'description_es', 'description_en', 'i_desc'] as $field) {
+                        if (array_key_exists($field, $row)) $data[$field] = in_array($row[$field], ['\\N', 'NULL', 'null'], true) ? null : $row[$field];
+                    }
+                    $scenes[$stage] = self::validateSceneData($data);
+                }
+            } finally { fclose($stream); }
+        }
+        if (!$scenes) throw new InvalidArgumentException('The import contains no scenes.');
+        return $scenes;
+    }
+
+    public static function getDefaultKinkTemplates() {
+        return [
+            'normal_kinks_template' => 'Your kinks are: #KINKS#. During sex, actively ask #PRIMARY_PARTNER# for at least one of these: pick ONE at random when the moment feels natural and request it in your own voice. Do not recite the whole list.',
+            'secret_kinks_template' => 'Your deepest, darkest desires are: #SECRET_KINKS#. You only reveal these to someone you truly trust. With such a partner, choose ONE at random during sex and dare to ask for it when the moment feels right.',
+        ];
+    }
+
     /**
      * Get scene description with language fallback
      */
     public static function getSceneDescription($stageId, $lang = null) {
-        $scene = self::getScene($stageId);
+        $scene = self::getSceneForLookup($stageId);
         if (!$scene) {
             return null;
         }
@@ -418,7 +520,9 @@ class NsfwData {
             $sceneData['i_desc'] = $iDesc;
         }
 
-        return self::setItem(self::KEY_SCENES, $stageId, $sceneData);
+        $existing = self::getScene($stageId) ?: [];
+        $sceneData = self::validateSceneData($sceneData, $existing);
+        return self::setItem(self::KEY_SCENES, $stageId, array_replace($existing, $sceneData));
     }
 
     /**
@@ -439,7 +543,8 @@ class NsfwData {
     public static function updateSceneDescription($stageId, $description) {
         $scene = self::getItem(self::KEY_SCENES, $stageId);
         if (!is_array($scene)) $scene = [];
-        $scene['description'] = $description;
+        $validated = self::validateSceneData(['description' => $description], $scene);
+        $scene['description'] = $validated['description'];
         return self::setItem(self::KEY_SCENES, $stageId, $scene);
     }
 
@@ -459,6 +564,42 @@ class NsfwData {
     // All default descriptions {stageId: description} from the shipped file
     public static function getAllSceneDefaults() {
         return self::defaultsFromFile();
+    }
+
+    // Repair only exact copies of the two defective shipped descriptions.
+    // Authored overrides, translations and other scene metadata remain intact.
+    public static function repairShippedSceneDescriptions() {
+        $marker = 'aiagent_nsfw_catalog_repairs';
+        $version = '3.1.9.11';
+        if (!empty(self::getBlob($marker)[$version])) return 0;
+        if (!self::acquireLock(self::KEY_SCENES)) return 0;
+        try {
+            self::clearCache($marker);
+            $done = self::getBlob($marker);
+            if (!empty($done[$version])) return 0;
+            self::clearCache(self::KEY_SCENES);
+            $scenes = self::getBlob(self::KEY_SCENES);
+            $known = [
+                'Nck30Cowgirl2-1' => '6c4e16fe34cc70b67ed85b406ca4c5752217de635d9745265b60f666ef669e34',
+                'AnubsMisionary-1' => '73e3c2b04f2bc8e32c20629b800972a22e7937c9c26e8c5bfa8aa7358bd0cab1',
+            ];
+            $changed = 0;
+            foreach ($known as $stage => $oldHash) {
+                $fixed = self::getSceneDefault($stage);
+                if ($fixed === null) continue;
+                foreach (['description', 'description_en', 'description_es'] as $field) {
+                    $text = $scenes[$stage][$field] ?? null;
+                    if (is_string($text) && hash('sha256', $text) === $oldHash) {
+                        $scenes[$stage][$field] = $fixed;
+                        ++$changed;
+                    }
+                }
+            }
+            if ($changed && !self::saveBlob(self::KEY_SCENES, $scenes)) return 0;
+            $done[$version] = true;
+            self::saveBlob($marker, $done);
+            return $changed;
+        } finally { self::releaseLock(self::KEY_SCENES); }
     }
 
     // Get one scene's default description string, or null if none
@@ -531,11 +672,15 @@ class NsfwData {
                     $skipped++;
                     continue;
                 }
-                $existing[$stageId] = $data;
+                if (!is_string($stageId) || trim($stageId) === '') throw new InvalidArgumentException('Every imported scene needs a stage ID.');
+                $data = self::validateSceneData($data, $existing[$stageId] ?? []);
+                $existing[$stageId] = array_replace(is_array($existing[$stageId] ?? null) ? $existing[$stageId] : [], $data);
                 $imported++;
             }
 
-            self::saveBlob(self::KEY_SCENES, $existing);
+            if (!self::saveBlob(self::KEY_SCENES, $existing)) {
+                return ['imported' => 0, 'skipped' => 0, 'error' => 'Could not save the imported scenes.'];
+            }
 
             return ['imported' => $imported, 'skipped' => $skipped];
         } finally {
@@ -574,24 +719,32 @@ class NsfwData {
             }
 
             // Convert to JSONB format
-            $scenes = [];
+            self::clearCache(self::KEY_SCENES);
+            $scenes = self::getBlob(self::KEY_SCENES);
+            $migrated = 0;
+            $skipped = 0;
             foreach ($rows as $row) {
                 $stageId = $row['stage'];
+                if (array_key_exists($stageId, $scenes)) { ++$skipped; continue; }
                 $scenes[$stageId] = [
                     'description' => $row['description'] ?? '',
                     'description_es' => $row['description_es'] ?? '',
                     'description_en' => $row['description_en'] ?? '',
                     'i_desc' => $row['i_desc'] ?? ''
                 ];
+                ++$migrated;
             }
 
             // Save as JSONB
-            self::saveBlob(self::KEY_SCENES, $scenes);
+            if (!self::saveBlob(self::KEY_SCENES, $scenes)) {
+                return ['success' => false, 'error' => 'Could not save migrated scenes.'];
+            }
 
             return [
                 'success' => true,
-                'migrated' => count($scenes),
-                'message' => 'Migrated ' . count($scenes) . ' scenes to JSONB'
+                'migrated' => $migrated,
+                'skipped' => $skipped,
+                'message' => 'Added ' . $migrated . ' missing scenes to JSONB; preserved ' . $skipped . ' existing entries'
             ];
 
         } catch (Exception $e) {
@@ -2046,6 +2199,7 @@ function nsfw_auto_init() {
         }
 
         if ($seedFlag && ($seedFlag['value'] ?? '') === $seedVersion && count($present) === count($requiredSeedKeys)) {
+            $runtimeChanged += NsfwData::repairShippedSceneDescriptions();
             if ($runtimeChanged > 0) {
                 error_log("[NSFW-AutoInit] Runtime prompt/style normalization updated $runtimeChanged conf_opts rows.");
             }
@@ -2054,6 +2208,7 @@ function nsfw_auto_init() {
 
         error_log("[NSFW-AutoInit] Seeding/repairing NSFW database defaults...");
         $changed = nsfw_seed_database_defaults();
+        $changed += NsfwData::repairShippedSceneDescriptions();
         $changed += $runtimeChanged;
 
         $GLOBALS['db']->execQuery(

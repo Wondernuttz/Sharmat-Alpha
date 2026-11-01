@@ -95,8 +95,8 @@ checkOpenModePolicy(!array_key_exists('last_accept_sex_time', $acceptedLow), 'di
 checkOpenModePolicy(!array_key_exists('payment_confirmed', $acceptedLow), 'direct state acceptance must not fake payment');
 
 $acceptedHigh = aiagentNsfwApplyOpenModeAcceptedState($base, 80);
-checkOpenModePolicy(!empty($acceptedHigh['show_normal_kinks']), 'Devoted affinity should unlock normal kinks');
-checkOpenModePolicy(!empty($acceptedHigh['show_secret_kinks']), 'Devoted affinity should unlock secret kinks');
+checkOpenModePolicy(!array_key_exists('show_normal_kinks', $acceptedHigh), 'state transitions must not calculate a second normal-kink gate');
+checkOpenModePolicy(!array_key_exists('show_secret_kinks', $acceptedHigh), 'state transitions must not calculate a second secret-kink gate');
 
 $prompt = aiagentNsfwBuildOpenModeScenePrompt('Fruki', 'Yoshua', 42, 'Friendly');
 checkOpenModePolicy(strpos($prompt, 'do not call AcceptSex') !== false, 'Open Mode prompt must suppress the redundant decision tool');

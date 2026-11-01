@@ -27,6 +27,19 @@
                 to fill the internal description field more quickly using voice.
             </p>
 
+            <div class="card" style="margin-top: 20px;">
+                <h3 class="section-header">Import Scene Descriptions</h3>
+                <p class="legend">Import a JSON scene map or a tab-separated file with stage and description columns. Existing scenes are kept unless you choose to update matching IDs. Other scenes are never removed.</p>
+                <div class="form-group">
+                    <label for="importFile">Scene file (JSON or TSV, up to 16 MB)</label>
+                    <input type="file" id="importFile" accept=".json,.tsv,.txt,application/json,text/tab-separated-values">
+                </div>
+                <div class="settings-checkbox-group">
+                    <label for="importOverwrite"><input type="checkbox" id="importOverwrite"> Update matching scene IDs</label>
+                </div>
+                <div class="button-group"><button type="button" class="btn-primary npc-action-btn" onclick="importScenes()">Import Scenes</button></div>
+            </div>
+
             <h2 class="section-header" style="margin: 30px 0 20px; display: flex; align-items: center; gap: 10px;"><img src="images/ChimNSFWsoulgem.png" style="width: 32px; height: 32px; vertical-align: middle; position: relative; top: -5px;"> Existing Scenes</h2>
             <!-- Scene Filters -->
             <div class="row" style="margin-bottom: 20px; gap: 15px; align-items: flex-end;">

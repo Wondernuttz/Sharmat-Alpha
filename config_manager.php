@@ -217,131 +217,27 @@
     function handleImportData()
     {
         try {
+            if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') throw new Exception('Use POST to import scenes.');
             if (!isset($_FILES['importFile']) || $_FILES['importFile']['error'] !== UPLOAD_ERR_OK) {
-                throw new Exception('No file uploaded or upload error');
+                throw new Exception('Upload failed. Check the file size and your server upload limit.');
             }
-
             $file = $_FILES['importFile']['tmp_name'];
-            if (!is_readable($file)) {
-                throw new Exception('Cannot read uploaded file');
-            }
-
-            $lines = file($file, FILE_SKIP_EMPTY_LINES);
-            if (empty($lines)) {
-                throw new Exception('File is empty');
-            }
-
-            // Parse header row
-            $headerLine = trim($lines[0]);
-            $headers = str_getcsv($headerLine, "\t", '"');
-            $headers = array_map('trim', $headers);
-
-            if (empty($headers) || !in_array('stage', $headers)) {
-                throw new Exception('Invalid file format: missing "stage" field in header');
-            }
-
-            $importedCount = 0;
-            $skippedCount = 0;
-            $errors = [];
-
-            // Process data rows
-            for ($i = 1; $i < count($lines); $i++) {
-                try {
-                    $dataLine = trim($lines[$i]);
-                    if (empty($dataLine)) {
-                        continue;
-                    }
-
-                    $values = str_getcsv($dataLine, "\t", '"');
-                    $values = array_map('trim', $values);
-
-                    if (count($values) !== count($headers)) {
-                        $skippedCount++;
-                        continue;
-                    }
-
-                    // Create associative array
-                    $row = array_combine($headers, $values);
-
-                    // Handle \N as NULL
-                    foreach ($row as $key => $value) {
-                        if ($value === '\N' || $value === 'NULL' || $value === 'null') {
-                            $row[$key] = null;
-                        }
-                    }
-
-                    if (empty($row['stage'])) {
-                        $skippedCount++;
-                        continue;
-                    }
-
-                    // Only include valid columns
-                    $validColumns = ['stage', 'description', 'description_es', 'description_en', 'i_desc'];
-                    $insertData = [];
-                    foreach ($validColumns as $col) {
-                        if (isset($row[$col])) {
-                            $insertData[$col] = $row[$col];
-                        }
-                    }
-
-                    // Insert or update the row
-                    try {
-                        $GLOBALS["db"]->insert('ext_aiagentnsfw_scenes', $insertData);
-                        $importedCount++;
-                    } catch (Exception $insertError) {
-                        // Check if it's a duplicate key error, if so try updating
-                        if (strpos($insertError->getMessage(), 'duplicate') !== false || 
-                            strpos($insertError->getMessage(), 'unique') !== false ||
-                            strpos($insertError->getMessage(), 'already exists') !== false) {
-                            
-                            $set = [];
-                            foreach (['description', 'description_es', 'description_en', 'i_desc'] as $col) {
-                                if (isset($insertData[$col])) {
-                                    $val = is_null($insertData[$col]) ? 'NULL' : "'" . $GLOBALS["db"]->escape($insertData[$col]) . "'";
-                                    $set[] = "$col=$val";
-                                }
-                            }
-
-                            if (!empty($set)) {
-                                $setStr = implode(', ', $set);
-                                $where = "stage='" . $GLOBALS["db"]->escape($insertData['stage']) . "'";
-                                $GLOBALS["db"]->update('ext_aiagentnsfw_scenes', $setStr, $where);
-                                $importedCount++;
-                            } else {
-                                $skippedCount++;
-                            }
-                        } else {
-                            throw $insertError;
-                        }
-                    }
-                } catch (Exception $rowError) {
-                    $errors[] = "Row " . ($i + 1) . ": " . $rowError->getMessage();
-                }
-            }
-
-            $message = "Import completed. Imported/Updated: $importedCount, Skipped: $skippedCount";
-            if (!empty($errors)) {
-                $message .= ". Errors: " . implode("; ", array_slice($errors, 0, 5));
-                if (count($errors) > 5) {
-                    $message .= " (and " . (count($errors) - 5) . " more)";
-                }
-            }
-
+            if (!is_readable($file) || filesize($file) > 16 * 1024 * 1024) throw new Exception('Cannot read file or file exceeds 16 MB.');
+            $scenes = NsfwData::parseSceneImport(file_get_contents($file));
+            $overwrite = ($_POST['overwrite'] ?? '0') === '1';
+            $result = NsfwData::importScenes($scenes, $overwrite);
+            if (!empty($result['error'])) throw new Exception($result['error']);
             echo json_encode([
                 'success' => true,
-                'message' => $message,
-                'imported' => $importedCount,
-                'skipped' => $skippedCount,
-                'errors' => $errors,
+                'message' => 'Imported ' . $result['imported'] . ' scenes; kept ' . $result['skipped'] . ' existing entries.',
+                'data' => $result,
             ]);
-        } catch (Exception $e) {
-            echo json_encode([
-                'success' => false,
-                'error'   => $e->getMessage(),
-            ]);
+        } catch (Throwable $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
         exit;
     }
+
     function handleGenerateTable()
     {
         try {
@@ -428,7 +324,7 @@ SQL;
             }
 
             // Create with description only
-            NsfwData::updateSceneDescription($stage, $description);
+            if (!NsfwData::updateSceneDescription($stage, $description)) throw new Exception('Could not save the scene.');
 
             echo json_encode([
                 'success' => true,
@@ -454,7 +350,7 @@ SQL;
             }
 
             // Update only the description; preserves any hidden es/i_desc fields
-            NsfwData::updateSceneDescription($stage, $description);
+            if (!NsfwData::updateSceneDescription($stage, $description)) throw new Exception('Could not save the scene.');
 
             echo json_encode([
                 'success' => true,
@@ -3031,6 +2927,8 @@ PROMPT;
                 'kink_satisfied' => $_POST['kink_satisfied'] ?? '',
                 'kink_unsatisfied' => $_POST['kink_unsatisfied'] ?? '',
                 'kinks_template' => $_POST['kinks_template'] ?? '',
+                'normal_kinks_template' => $_POST['normal_kinks_template'] ?? NsfwData::getPrompt('normal_kinks_template') ?? NsfwData::getDefaultKinkTemplates()['normal_kinks_template'],
+                'secret_kinks_template' => $_POST['secret_kinks_template'] ?? NsfwData::getPrompt('secret_kinks_template') ?? NsfwData::getDefaultKinkTemplates()['secret_kinks_template'],
 
                 // Regular NPC Tier Prompts (11 tiers)
                 'tier_hostile' => $_POST['tier_hostile'] ?? '',
@@ -3373,6 +3271,8 @@ PROMPT;
     function getDefaultPromptSettings()
     {
         $settings = [
+            'normal_kinks_template' => NsfwData::getDefaultKinkTemplates()['normal_kinks_template'],
+            'secret_kinks_template' => NsfwData::getDefaultKinkTemplates()['secret_kinks_template'],
             // Section 1: NSFW Framework Global
             'profanity_1' => "Tender/Romantic - Use soft, intimate language. Words like: beautiful, love, feels good, want you, need you, together, closer, gentle, sweet.\nExample: \"You feel so good... I love being close to you like this.\"",
             'profanity_2' => "Passionate/Heated - Moderately explicit, building intensity. Words like: harder, faster, more, yes, god yes, so good, don't stop, fuck (sparingly).\nExample: \"Yes... right there... don't stop, that feels amazing.\"",
@@ -3450,7 +3350,7 @@ PROMPT;
             'arousal_recep_bonded' => 'You and #PLAYER_NAME# are bonded - your desire for them lives close to the surface. A look, a touch, a low word can light you up, and you are open about wanting them. You warm fast and you make it known, in your own voice, without waiting to be coaxed.',
             'arousal_recep_courtship' => 'You have grown fond of #PLAYER_NAME#, and there is a flutter you have not named yet. Their warmth affects you more than you let on - you might blush, linger, or lose your words a little. Nothing beyond affection is on the table; let the feeling build at its own pace.',
             'redress_nudge' => 'You are still undressed and the intimate moment has passed. When it feels natural - the talk winds down, you move to leave, someone could walk in - get dressed again by calling the Put_On_Clothes action. Do not stay naked through ordinary conversation unless you have a reason to.',
-            'npc_scene_autonomy_nudge' => 'Others are here besides #PLAYER_NAME#. If you are genuinely close to another person present - and in the kind of relationship where intimacy fits - you may start intimacy with THEM instead of #PLAYER_NAME#, on your own initiative, by naming that person as the target of the scene action. Only do so when it truly fits your bond with them.',
+            'npc_scene_autonomy_nudge' => 'You may initiate intimacy with an eligible person present when it fits your bond and the moment. Name that person as the target of the scene action. Initiating is your choice; you do not have to act.',
             'gaze_eyes' => 'You have caught #PLAYER_NAME# gazing into your eyes for a long moment. React the way YOUR feelings for them (#TIER#) dictate: a stranger or someone you dislike finds the staring intense or unsettling; a friend finds it curious, warm, or a little flustering; if you love or desire #PLAYER_NAME#, this is a charged, tender, romantic moment. Respond in character - do not start a scene.',
             'gaze_tits' => 'You have caught #PLAYER_NAME# openly staring at your chest. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or calls it out sharply; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or lean into it. Do NOT start a scene - just react to being ogled.',
             'gaze_ass' => 'You have caught #PLAYER_NAME# openly staring at your backside. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or snaps at them; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or playful about it. Do NOT start a scene - just react to being ogled.',
@@ -6900,19 +6800,22 @@ PROMPT;
         }
 
         // Import Scenes from File
-        function importScenes() {
+        async function importScenes() {
             const fileInput = document.getElementById('importFile');
             if (!fileInput.files || fileInput.files.length === 0) {
                 showAlert('sceneErrorAlert', 'Please select a file to import', 'error');
                 return;
             }
 
-            if (!confirm('Import scenes from file? Duplicate scenes will be updated.')) {
+            const overwrite = document.getElementById('importOverwrite').checked;
+            if (overwrite && !await showThemedConfirm('Update Matching Scenes',
+                '<p>Imported descriptions will replace matching scene descriptions. Scenes not in the file are kept.</p>', 'Import and Update', 'Cancel')) {
                 return;
             }
 
             const formData = new FormData();
             formData.append('importFile', fileInput.files[0]);
+            formData.append('overwrite', overwrite ? '1' : '0');
 
             showProcessing();
             fetch('<?php echo $_SERVER['PHP_SELF']; ?>?action=importData', {
@@ -10962,8 +10865,8 @@ PROMPT;
         profanity_2: 'Passionate/Heated - Moderately explicit, building intensity. Words like: harder, faster, more, yes, god yes, so good, don\'t stop, fuck (sparingly).\nExample: "Yes... right there... don\'t stop, that feels amazing."',
         profanity_3: 'Explicit/Dirty - Freely crude and vulgar. Words like: fuck, cock, pussy, wet, hard, cum, take it, give it to me.\nExample: "Fuck me harder... I want to feel every inch of you."',
         profanity_4: 'Filthy/Degrading - Maximum explicitness, no limits. Words like: slut, whore, use me, breed me, fill me, choke, own, ruin.\nExample: "Use me like the slut I am... I\'m yours to ruin."',
-        normal_kinks_template: 'Your kinks are: #KINKS#. You may ask #PRIMARY_PARTNER# to do these things during intimacy.',
-        secret_kinks_template: 'Your deepest, darkest desires are: #SECRET_KINKS#. You only reveal these to someone you truly trust.',
+        normal_kinks_template: <?php echo json_encode(NsfwData::getDefaultKinkTemplates()['normal_kinks_template'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>,
+        secret_kinks_template: <?php echo json_encode(NsfwData::getDefaultKinkTemplates()['secret_kinks_template'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>,
         scene_context_instruction: 'This scene is for context only. React emotionally to what\'s happening - don\'t describe or narrate the physical actions. Show, don\'t tell.',
 
         // Regular NPC Tier Prompts (11 tiers)
@@ -11016,7 +10919,7 @@ PROMPT;
         arousal_recep_bonded: 'You and #PLAYER_NAME# are bonded - your desire for them lives close to the surface. A look, a touch, a low word can light you up, and you are open about wanting them. You warm fast and you make it known, in your own voice, without waiting to be coaxed.',
         arousal_recep_courtship: 'You have grown fond of #PLAYER_NAME#, and there is a flutter you have not named yet. Their warmth affects you more than you let on - you might blush, linger, or lose your words a little. Nothing beyond affection is on the table; let the feeling build at its own pace.',
         redress_nudge: 'You are still undressed and the intimate moment has passed. When it feels natural - the talk winds down, you move to leave, someone could walk in - get dressed again by calling the Put_On_Clothes action. Do not stay naked through ordinary conversation unless you have a reason to.',
-        npc_scene_autonomy_nudge: 'Others are here besides #PLAYER_NAME#. If you are genuinely close to another person present - and in the kind of relationship where intimacy fits - you may start intimacy with THEM instead of #PLAYER_NAME#, on your own initiative, by naming that person as the target of the scene action. Only do so when it truly fits your bond with them.',
+        npc_scene_autonomy_nudge: 'You may initiate intimacy with an eligible person present when it fits your bond and the moment. Name that person as the target of the scene action. Initiating is your choice; you do not have to act.',
         gaze_eyes: 'You have caught #PLAYER_NAME# gazing into your eyes for a long moment. React the way YOUR feelings for them (#TIER#) dictate: a stranger or someone you dislike finds the staring intense or unsettling; a friend finds it curious, warm, or a little flustering; if you love or desire #PLAYER_NAME#, this is a charged, tender, romantic moment. Respond in character - do not start a scene.',
         gaze_tits: 'You have caught #PLAYER_NAME# openly staring at your chest. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or calls it out sharply; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or lean into it. Do NOT start a scene - just react to being ogled.',
         gaze_ass: 'You have caught #PLAYER_NAME# openly staring at your backside. React per how you feel about them (#TIER#): a stranger or someone you dislike is uncomfortable, offended, or snaps at them; a friend is awkward, teasing, or amused; if you desire #PLAYER_NAME#, you might be flustered, flattered, or playful about it. Do NOT start a scene - just react to being ogled.',

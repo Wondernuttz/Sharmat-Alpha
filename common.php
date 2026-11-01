@@ -2962,6 +2962,22 @@ function aiagentNsfwArousalNum($key, $default) {
 // A's rel TYPE toward B is one of the UI-checked eligible types (unless the rel-type gate is disabled in UI).
 // Fails CLOSED for a normal NPC pair with no qualifying bond (strangers default to neutral/0). This is the
 // OUTBOUND-initiation gate only; it does NOT revive the removed inbound isNpcAffinityGatingEnabled toggle.
+function aiagentNsfwPlayerPresentForAutonomy() {
+    // Direct player speech establishes presence even on older clients whose
+    // private audience list contains only the listening NPC.
+    if (in_array($GLOBALS['gameRequest'][0] ?? '', ['inputtext', 'inputtext_s', 'ginputtext', 'ginputtext_s'], true)) {
+        return true;
+    }
+    $player = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
+    foreach (explode('|', (string)($GLOBALS['CACHE_PEOPLE'] ?? '')) as $person) {
+        $person = trim($person);
+        if (strcasecmp($person, 'player') === 0 || ($player !== '' && strcasecmp($person, $player) === 0)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function aiagentNsfwNpcToNpcSexEligible($npcA, $npcB) {
     $npcA = trim((string)$npcA); $npcB = trim((string)$npcB);
     if ($npcA === '' || $npcB === '' || strcasecmp($npcA, $npcB) === 0) { return false; }

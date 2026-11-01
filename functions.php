@@ -228,10 +228,6 @@ if (!function_exists('aiagentNsfwMarkNpcInitiatedSexConsent')) {
         $st["last_accept_sex_partner"] = $targetName;
         $st["scene_type"] = "personal";
         $aff = function_exists('getNpcAffinity') ? (int)getNpcAffinity($npcName, $targetName) : 0;
-        if (!(function_exists('isNpcSlave') && isNpcSlave($npcName))) {
-            $st["show_normal_kinks"] = ($aff >= 56);
-            $st["show_secret_kinks"] = ($aff >= 76);
-        }
         updateIntimacyForActor($npcName, $st);
         error_log("[AIAGENTNSFW] NPC-initiated sex -> auto-accept (she started it = consent) for {$npcName} with {$targetName} (aff={$aff})");
     }
@@ -944,8 +940,6 @@ $GLOBALS["FUNCSERV"]["ExtCmdAcceptSex"]=function() {
         $intimacyStatus["scene_type"] = "transaction";
 
         // Transactions: NO personal kinks are revealed - business only
-        $intimacyStatus["show_normal_kinks"] = false;
-        $intimacyStatus["show_secret_kinks"] = false;
 
         updateIntimacyForActor($npcName, $intimacyStatus);
 
@@ -979,15 +973,8 @@ $GLOBALS["FUNCSERV"]["ExtCmdAcceptSex"]=function() {
 	            $intimacyStatus["had_sex_in_scene"] = true;
 	        }
 
-        // Kink unlocks based on affinity
-        // Normal kinks: Fond 56+
-        // Secret kinks: Devoted 76+
-        $intimacyStatus["show_normal_kinks"] = ($affinity >= 56);
-        $intimacyStatus["show_secret_kinks"] = ($affinity >= 76);
-
         updateIntimacyForActor($npcName, $intimacyStatus);
-
-        error_log("[AcceptSex] {$npcName} accepted personal sex with {$targetName}. Affinity: {$affinity}, Normal kinks: " . ($intimacyStatus["show_normal_kinks"] ? 'yes' : 'no') . ", Secret kinks: " . ($intimacyStatus["show_secret_kinks"] ? 'yes' : 'no'));
+        error_log("[AcceptSex] {$npcName} accepted personal sex with {$targetName}. Affinity: {$affinity}; kink prompts use the NPC unlock settings at prompt generation.");
         aiagentNsfwInstantCrush($npcName, 'AcceptSex', $targetName);
     }
 
@@ -1040,8 +1027,6 @@ $GLOBALS["FUNCSERV"]["ExtCmdRefuseSex"]=function() {
     // scene-tick rebuild can auto-release the lock after the cap even without a clean scene-end.
     $intimacyStatus["refused_until_scene_end_time"] = time();
     $intimacyStatus["sex_started"] = false;  // Ensure sex prompts don't fire
-    $intimacyStatus["show_normal_kinks"] = false;
-    $intimacyStatus["show_secret_kinks"] = false;
     $intimacyStatus["is_transaction"] = false;
     $intimacyStatus["sex_partner"] = null;
     $intimacyStatus["last_accept_sex_time"] = null;

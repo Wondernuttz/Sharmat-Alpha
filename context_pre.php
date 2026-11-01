@@ -220,7 +220,8 @@ if ($actorName === "" || !function_exists('getDrunkStageForActor')) { return; }
 // INITIATION NUDGE (OStim audit fix 1, 2026-07-02): the Fond+/eligible autonomy lane granted the sex toolset
 // SILENTLY - no prompt ever told the NPC she may initiate, so models never called the tools spontaneously.
 // Injected into the character block on NORMAL turns only (never mid-scene/decision). UI-overridable.
-if (!empty($GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY']) && isset($GLOBALS['HERIKA_PERS'])) {
+$__autonomyPlayerPresent = aiagentNsfwPlayerPresentForAutonomy();
+if ($__autonomyPlayerPresent && !empty($GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY']) && isset($GLOBALS['HERIKA_PERS'])) {
     $__inx = function_exists('getIntimacyForActor') ? getIntimacyForActor($actorName) : [];
     if ((int)($__inx['level'] ?? 0) < 1 && empty($__inx['sex_started']) && (int)($__inx['intensity_tier'] ?? 0) < 3) {
         $__nudge = function_exists('getGlobalPrompt') ? trim((string)getGlobalPrompt('intimacy_autonomy_nudge')) : '';
@@ -240,7 +241,7 @@ if (!empty($GLOBALS['AIAGENTNSFW_INITIATION_AUTONOMY']) && isset($GLOBALS['HERIK
 
 // COURTSHIP NUDGE: Fond+ but rel type not eligible - she may express affection (which can flip
 // her type to crush), nothing more. Without this the affection toolset was granted silently.
-if (!empty($GLOBALS['AIAGENTNSFW_AFFECTION_AUTONOMY']) && isset($GLOBALS['HERIKA_PERS'])) {
+if ($__autonomyPlayerPresent && !empty($GLOBALS['AIAGENTNSFW_AFFECTION_AUTONOMY']) && isset($GLOBALS['HERIKA_PERS'])) {
     $__cnx = function_exists('getIntimacyForActor') ? getIntimacyForActor($actorName) : [];
     if ((int)($__cnx['level'] ?? 0) < 1 && empty($__cnx['sex_started']) && (int)($__cnx['intensity_tier'] ?? 0) < 3) {
         $__cnudge = function_exists('getGlobalPrompt') ? trim((string)getGlobalPrompt('affection_autonomy_nudge')) : '';
@@ -254,7 +255,7 @@ if (!empty($GLOBALS['AIAGENTNSFW_AFFECTION_AUTONOMY']) && isset($GLOBALS['HERIKA
     }
 }
 
-// NPC-TO-NPC SCENE AUTONOMY (user directive 2026-07-05): an NPC who ALREADY holds the sex-initiation toolset
+// NPC-TO-NPC SCENE AUTONOMY: an NPC who already holds the sex-initiation toolset
 // (player-eligible autonomy, or a prostitute) may point it at ANOTHER nearby NPC instead of the player - the
 // server validates A->B eligibility (affinity + rel type; prostitute bypass; slave player-only) when she calls
 // it. Without this cue the model never thinks to target another NPC. Normal turns only, and only when someone
@@ -267,15 +268,19 @@ if (isset($GLOBALS['HERIKA_PERS'])
     $__nnPeople = (string)($GLOBALS['CACHE_PEOPLE'] ?? '');
     $__nnPlayerNm = trim((string)($GLOBALS['PLAYER_NAME'] ?? ''));
     $__nnOthers = array_filter(array_map('trim', explode('|', $__nnPeople)), function($p) use ($actorName, $__nnPlayerNm) {
-        return $p !== '' && strcasecmp($p, $actorName) !== 0 && ($__nnPlayerNm === '' || strcasecmp($p, $__nnPlayerNm) !== 0);
+        return $p !== '' && strcasecmp($p, $actorName) !== 0 && strcasecmp($p, 'player') !== 0
+            && ($__nnPlayerNm === '' || strcasecmp($p, $__nnPlayerNm) !== 0)
+            && aiagentNsfwNpcToNpcSexEligible($actorName, $p);
     });
     $__nnx = function_exists('getIntimacyForActor') ? getIntimacyForActor($actorName) : [];
     if (!empty($__nnOthers) && (int)($__nnx['level'] ?? 0) < 1 && empty($__nnx['sex_started']) && (int)($__nnx['intensity_tier'] ?? 0) < 3) {
         $__nnNudge = function_exists('getGlobalPrompt') ? trim((string)getGlobalPrompt('npc_scene_autonomy_nudge')) : '';
-        if ($__nnNudge === '') {
-            $__nnNudge = "Others are here besides #PLAYER_NAME#. If you are genuinely close to another person present - and in the kind of relationship where intimacy fits - you may start intimacy with THEM instead of #PLAYER_NAME#, on your own initiative, by naming that person as the target of the scene action. Only do so when it truly fits your bond with them.";
+        $__nnLegacyDefault = "Others are here besides #PLAYER_NAME#. If you are genuinely close to another person present - and in the kind of relationship where intimacy fits - you may start intimacy with THEM instead of #PLAYER_NAME#, on your own initiative, by naming that person as the target of the scene action. Only do so when it truly fits your bond with them.";
+        if ($__nnNudge === '' || $__nnNudge === $__nnLegacyDefault) {
+            $__nnNudge = "You may initiate intimacy with an eligible person present when it fits your bond and the moment. Name that person as the target of the scene action. Initiating is your choice; you do not have to act.";
         }
         $__nnNudge = str_replace(['#PLAYER_NAME#', '#NPC_NAME#'], [$__nnPlayerNm !== '' ? $__nnPlayerNm : 'the player', $actorName], $__nnNudge);
+        $__nnNudge .= "\nEligible partners for this turn: " . implode(', ', $__nnOthers) . ". Choose only from these partners.";
         $GLOBALS['HERIKA_PERS'] .= "\n\n<npc_scene_autonomy>\n" . $__nnNudge . "\n</npc_scene_autonomy>";
         error_log("[AIAGENTNSFW] NPC-SCENE AUTONOMY NUDGE injected for {$actorName} (" . count($__nnOthers) . " other(s) present)");
     }
@@ -284,7 +289,7 @@ if (isset($GLOBALS['HERIKA_PERS'])
 // AROUSAL RECEPTIVENESS (arousal enabled only): colors HOW arousal builds in conversation by relationship
 // depth - flavor only, gates unchanged. Fond/Devoted/Bonded by affinity; courtship variant when the type
 // is not yet sex-eligible. Slaves/prostitutes excluded (their lanes don't run on arousal). Normal turns only.
-if (function_exists('isSexDisposalEnabled') && isSexDisposalEnabled() && isset($GLOBALS['HERIKA_PERS'])
+if ($__autonomyPlayerPresent && function_exists('isSexDisposalEnabled') && isSexDisposalEnabled() && isset($GLOBALS['HERIKA_PERS'])
     && function_exists('getNpcAffinity') && function_exists('getIntimacyForActor')
     && (!function_exists('isNpcSlave') || !isNpcSlave($actorName))
     && (!function_exists('isProstitute') || !isProstitute($actorName))) {

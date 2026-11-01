@@ -1,4 +1,4 @@
-SHARMAT 3.1.9.10 - Plugin Page Discovery Fix
+SHARMAT 3.1.9.11 - Action Confirmations and Scene Data Fixes
 
 INSTALL / UPDATE
 1. Fully exit Skyrim.
@@ -12,19 +12,29 @@ Requires CHIM and its normal dependencies, plus the enabled OStim or SexLab
 framework and suitable installed animations. Those frameworks and animation
 packs are separate downloads.
 
-This update restores the Plugin Page link after GitHub Plugin Manager installs
-by supplying the standard index.php entry point. The existing configuration
-page remains available at ext/aiagent_nsfw/config_manager.php on your server.
-It includes the 3.1.9.9 complete-download fix for both framework adapters.
-The game scripts are unchanged from the complete 3.1.9.8 GitHub release.
+CHANGES IN 3.1.9.11
+SHARMAT actions now use CHIM's existing Require Confirmation setting. Affection
+and scene-start actions ask by default, with existing explicit choices preserved.
+Set the checkbox for each action in CHIM's Actions editor. Allow runs the action;
+Cancel discards it. Both the CHIM server and game plugin need support for action
+confirmation commands to display the existing game-side confirmation UI.
+
+Fixes NPC autonomy cues for absent or ineligible partners, exact scene-ID lookup,
+invalid actor placeholders, scene import and repeat migration data preservation,
+intensity detection from OStim action types, and kink-template defaults/saving.
+The Scenes page accepts JSON or TSV imports and keeps existing entries by default.
+
+These fixes are server-side. All six game scripts are unchanged from 3.1.9.10.
+The full ZIP includes the matching 3.1.9.11 embedded server component and retains
+the Plugin Page discovery and complete-download fixes.
 
 The included game scripts fix scene-event registration when only OStim or only SexLab is
 installed. The shared scripts no longer require types from the absent framework.
 Both frameworks can also be installed together. Existing scene selection, roles,
 transitions and cleanup remain supported. No new save or quest reset is needed.
 
-The fix requires the updated game scripts. The matching server update supplies
-the current version and game-download link; a server-only update is insufficient.
+If updating from 3.1.9.10, the server update supplies these fixes. When updating
+from an older installation, install the full ZIP to obtain all framework adapters.
 
 The Sharmat web updater updates the SERVER component. After updating, use
 Download Game Mod on the Info page to obtain the matching game files.
