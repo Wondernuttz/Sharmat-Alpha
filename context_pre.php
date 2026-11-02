@@ -9,6 +9,9 @@
 require_once __DIR__ . "/common.php";
 
 $actorName = $GLOBALS["HERIKA_NAME"] ?? "";
+sharmatDeviceApplyTools();
+$ddContext = sharmatDeviceContext($actorName);
+if ($ddContext !== "") { $GLOBALS["HERIKA_PERS"] = ($GLOBALS["HERIKA_PERS"] ?? "") . "\n\n#CURRENT DEVICES\n" . $ddContext; }
 
 // HARD CHILD/EXCLUSION TOOL STRIP. The child frame below is behavioral guidance; this is the
 // deterministic boundary. Strip all affection/sexual commands from every representation consumed

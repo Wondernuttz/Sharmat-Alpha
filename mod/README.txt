@@ -1,75 +1,32 @@
-SHARMAT 3.1.0 - Action Confirmations and Scene Data Fixes
+SHARMAT 3.1.1 - Feature Update: Devious Devices Integration
+
+UPDATE BOTH THE SHARMAT SERVER AND GAME MOD.
+The new device actions need the updated game scripts; a server-only update is not enough.
 
 INSTALL / UPDATE
-1. Fully exit Skyrim.
-2. Install the complete release ZIP into your existing SHARMAT mod in MO2 or Vortex.
-   Ensure this mod wins conflicts for Scripts/AIAgentNSFW*.pex.
-3. Keep AIAgentNSFW.esp enabled. Preserve any custom values in
-   SKSE/Plugins/StorageUtilData/SHARMAT_scene_framework.json.
-4. Restart Skyrim and load a save.
+1. Exit Skyrim, then install this complete ZIP into your existing SHARMAT mod in MO2 or Vortex.
+2. Ensure it wins conflicts for Scripts/AIAgentNSFW*.pex. Keep AIAgentNSFW.esp enabled.
+3. Preserve your settings in SKSE/Plugins/StorageUtilData/SHARMAT_scene_framework.json.
+4. Update the matching SHARMAT server extension. This ZIP includes its embedded installer package.
+5. Restart Skyrim and load your save. No new save or quest reset is needed.
 
-Requires CHIM and its normal dependencies, plus the enabled OStim or SexLab
-framework and suitable installed animations. Those frameworks and animation
-packs are separate downloads.
+Requires CHIM, its normal dependencies, and the OStim or SexLab framework you use.
+Frameworks, animations and Devious Devices are separate downloads.
 
-CHANGES IN 3.1.0
-SHARMAT actions now use CHIM's existing Require Confirmation setting. Affection
-and scene-start actions ask by default, with existing explicit choices preserved.
-Set the checkbox for each action in CHIM's Actions editor. Allow runs the action;
-Cancel discards it. Both the CHIM server and game plugin need support for action
-confirmation commands to display the existing game-side confirmation UI.
+OPTIONAL DEVIOUS DEVICES ACTIONS
+Enable awareness and lock/unlock under SHARMAT Prompts > Devices & Wearables.
+Device actions require DD 5.2 NG APIs. CHIM's Actions editor controls LockDevice
+and UnlockDevice, including its existing Require Confirmation checkbox.
+Allow performs the action; Cancel discards it. Both CHIM server and game plugin
+must support confirmation commands. Device actions are disabled by default.
 
-Fixes NPC autonomy cues for absent or ineligible partners, exact scene-ID lookup,
-invalid actor placeholders, scene import and repeat migration data preservation,
-intensity detection from OStim action types, and kink-template defaults/saving.
-The Scenes page accepts JSON or TSV imports and keeps existing entries by default.
+Put one device variant of the requested category in the wearer's inventory.
+Unlocking needs the correct number of matching keys, held by the acting NPC or
+the wearer. Locking respects the target relationship; helping remove a device
+does not require romance. Existing speaking styles and role settings are retained.
 
-These fixes are server-side. All six game scripts are unchanged from 3.1.9.10.
-The full ZIP includes the matching 3.1.0 embedded server component and retains
-the Plugin Page discovery and complete-download fixes.
-
-The included game scripts fix scene-event registration when only OStim or only SexLab is
-installed. The shared scripts no longer require types from the absent framework.
-Both frameworks can also be installed together. Existing scene selection, roles,
-transitions and cleanup remain supported. No new save or quest reset is needed.
-
-If updating from 3.1.9.10, the server update supplies these fixes. When updating
-from an older installation, install the full ZIP to obtain all framework adapters.
-
-The Sharmat web updater updates the SERVER component. After updating, use
-Download Game Mod on the Info page to obtain the matching game files.
-The web updater alone does not replace the Papyrus scripts in your game.
-
-Release ZIPs also include a matching server component under CHIM/server-plugins.
-CHIM versions supporting embedded server packages install it on save load.
-
-SCENE FRAMEWORK SETTINGS
-SKSE/Plugins/StorageUtilData/SHARMAT_scene_framework.json defaults to:
-  { "ostim": 1, "sexlab": 1 }
-Set a value to 0 to disable that framework's game-side hooks, then reload a save.
-These settings are independent of the web Detect OStim / Detect SexLab options.
-
-DRUNK ANIMATION COMPATIBILITY
-Install Open Animation Replacer and the standard "Drunk animations" 1.6.1
-main file from https://www.nexusmods.com/skyrimspecialedition/mods/62191.
-Let SHARMAT win the config.json conflict with that animation pack in MO2/Vortex.
-SHARMAT supplies a compatibility condition only; SamuelGA24's animations remain
-a separate dependency. This configuration retains the pack's original triggers
-and priority, adding SHARMAT's Variable10 values 5 through 10 as another trigger.
-Stages 1-4 do not activate this animation pack through SHARMAT.
-
-Enable Track Drunk Status and Enable Drunk Animations / Physics in SHARMAT.
-Changes to drunkenness and the animation toggle synchronize on an NPC context
-turn. Existing CACO/other-mod triggers continue working independently, including
-when SHARMAT's animation option is off. A higher-priority eligible OAR animation
-can still win; SHARMAT does not raise the animation pack's priority.
-
-If you customized this pack in OAR, back up your configuration and merge the
-SHARMAT condition into your custom configuration instead of overwriting it.
-A user.json override may take precedence over this packaged config.json.
-The Animated Inebriation alternate main file has not been validated here.
-
-3.1.0 renumbers the 3.1.9.11 release and retains its fixes. Existing 3.1.9.11
-installations already have these gameplay changes. Update Live or SHARMAT's
-Info-page updater can install this version even when an older Plugin Manager
-does not show an update badge for the lower number.
+Quest devices, special locks, conflicting equipment and active scenes are not
+overridden. An unverified operation reports pending, not success. If that happens,
+check the device state in DD before repeating an action. Binding automation and
+Leash Framework are outside this integration. DD is optional; existing scene
+framework routing, animations and VR touch handling remain in place.

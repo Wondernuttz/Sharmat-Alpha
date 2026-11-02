@@ -4,6 +4,8 @@
         error_log("[AIAGENTNSFW] Request received: action=" . $_GET['action'] . " method=" . $_SERVER['REQUEST_METHOD']);
     }
 
+    require_once __DIR__ . '/device_integration.php';
+
     // Common Includes
     $enginePath = __DIR__ . DIRECTORY_SEPARATOR . ".." . DIRECTORY_SEPARATOR . ".." . DIRECTORY_SEPARATOR;
     require_once $enginePath . "conf" . DIRECTORY_SEPARATOR . "conf.sample.php"; // beta: provides DBDRIVER default before conf.php overrides
@@ -3114,6 +3116,8 @@ PROMPT;
                 'device_gag' => $_POST['device_gag'] ?? '',
                 'device_beg' => $_POST['device_beg'] ?? '',
                 'device_refuse' => $_POST['device_refuse'] ?? '',
+                'device_actions' => $_POST['device_actions'] ?? NsfwData::getPrompt('device_actions') ?? sharmatDevicePromptDefaults()['device_actions'],
+                'device_release' => $_POST['device_release'] ?? NsfwData::getPrompt('device_release') ?? sharmatDevicePromptDefaults()['device_release'],
                 'skooma_level_1' => $_POST['skooma_level_1'] ?? '',
                 'skooma_level_2' => $_POST['skooma_level_2'] ?? '',
                 'skooma_level_3' => $_POST['skooma_level_3'] ?? '',
@@ -3502,6 +3506,8 @@ PROMPT;
             'drunk_stage_10' => "You have absolutely lost all inhibition and are completely incoherent. You have fallen to the floor, you can't get up, and you cannot communicate a single articulable word or sentence.\nExample Format: IsH BAR-GUN gun finsd!!! FaTsH Flooorsh!! SWAS THiNK...KiNg....CA.....Canth getOp!! OsTh Welth!! Iz wha itfh iZ!! Iwatht...hothboa nod...der drinth!!!",
             'device_aware' => "You are restrained by locked devices you cannot simply remove. Acknowledge them naturally - they limit your movement and what you can do, and color your mood (helpless, defiant, aroused, embarrassed - according to your personality).",
             'device_player_aware' => "React to the fact that they are restrained - their bondage limits what they can do and say. Respond according to your personality and relationship: protective and freeing them, teasing, taking advantage, or indifferent.",
+            'device_actions' => sharmatDevicePromptDefaults()['device_actions'],
+            'device_release' => sharmatDevicePromptDefaults()['device_release'],
             'dd_enabled_devices' => 'belt,bra,gag,collar,armbinder,yoke,elbowtie,straitjacket,blindfold,hobbleskirt,armcuffs,legcuffs,ankleshackles,plugvaginal,pluganal,clamps,corset,hood,harness,gloves,suit,piercingsnipple,piercingsvaginal',
             'device_gag' => "You are gagged and cannot speak clearly. Write your dialogue as muffled, garbled gag-speak (mmph, mmf, muffled sounds); your meaning is hard to make out.",
             'device_beg' => "You are locked in a restraint you want out of. You may plead with #PLAYER_NAME# to free you or fetch the key, in your own voice and according to how you feel about them.",
@@ -11088,6 +11094,8 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         drunk_stage_8: "You are wasted - barely stringing words together, mumbling, mangling most of what you say, laughing or tearing up for no reason, losing the thread completely.\nExample Format: \"Noooo no no lishen... lisshen tooo me... yer... yer GREAT!!! SHF!!! I kno...WAIT!!. Iss... whas happenin? Why's it... everythin's....you kno'...I likth ithere, you likth ithere?! Suth a grath placth, this placth!! an' warm an'...oooooooo.\"",
         drunk_stage_9: "You are nearly blacked out - mostly incoherent, half-finished thoughts, slumping and mumbling, can barely hold your head up, words almost gone.\nExample Format: \"...mmnh... 's you... 's that... whozzat... I'sh finth. M'totally... totally f... where'd th'... mmn. Ish ju thinkin tha....whassa...whassa??? Oo nevthminsh! I goththis!\"",
         drunk_stage_10: "You have absolutely lost all inhibition and are completely incoherent. You have fallen to the floor, you can't get up, and you cannot communicate a single articulable word or sentence.\nExample Format: IsH BAR-GUN gun finsd!!! FaTsH Flooorsh!! SWAS THiNK...KiNg....CA.....Canth getOp!! OsTh Welth!! Iz wha itfh iZ!! Iwatht...hothboa nod...der drinth!!!",
+        device_actions: <?php echo json_encode(sharmatDevicePromptDefaults()['device_actions']); ?>,
+        device_release: <?php echo json_encode(sharmatDevicePromptDefaults()['device_release']); ?>,
         device_aware: 'You are restrained by locked devices you cannot simply remove. Acknowledge them naturally - they limit your movement and what you can do, and color your mood (helpless, defiant, aroused, embarrassed - according to your personality).',
         device_player_aware: 'React to the fact that they are restrained - their bondage limits what they can do and say. Respond according to your personality and relationship: protective and freeing them, teasing, taking advantage, or indifferent.',
         dd_enabled_devices: 'belt,bra,gag,collar,armbinder,yoke,elbowtie,straitjacket,blindfold,hobbleskirt,armcuffs,legcuffs,ankleshackles,plugvaginal,pluganal,clamps,corset,hood,harness,gloves,suit,piercingsnipple,piercingsvaginal',
@@ -11350,6 +11358,8 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
                     setPromptValue('promptDeviceGag', s.device_gag, 'device_gag');
                     setPromptValue('promptDeviceBeg', s.device_beg, 'device_beg');
                     setPromptValue('promptDeviceRefuse', s.device_refuse, 'device_refuse');
+                    setPromptValue('promptDeviceRelease', s.device_release, 'device_release');
+                    setPromptValue('promptDeviceActions', s.device_actions, 'device_actions');
 
                     // SECTION 2A: Marriage spouse prompts (11 tiers)
                     setPromptValue('promptMarriageSpouseHostile', s.marriage_spouse_hostile, 'marriage_spouse_hostile');
@@ -11676,6 +11686,8 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         formData.append('device_gag', getVal('promptDeviceGag'));
         formData.append('device_beg', getVal('promptDeviceBeg'));
         formData.append('device_refuse', getVal('promptDeviceRefuse'));
+        formData.append('device_release', getVal('promptDeviceRelease'));
+        formData.append('device_actions', getVal('promptDeviceActions'));
 
         // SECTION 2A: Marriage spouse prompts (11 tiers)
         formData.append('marriage_spouse_hostile', getVal('promptMarriageSpouseHostile'));
@@ -11992,6 +12004,8 @@ Your feelings toward these clients affect your pricing and enthusiasm. Favorable
         resetVal('promptDeviceGag', 'device_gag');
         resetVal('promptDeviceBeg', 'device_beg');
         resetVal('promptDeviceRefuse', 'device_refuse');
+        resetVal('promptDeviceRelease', 'device_release');
+        resetVal('promptDeviceActions', 'device_actions');
 
         // SECTION 2A: Marriage spouse prompts (11 tiers)
         resetVal('promptMarriageSpouseHostile', 'marriage_spouse_hostile');

@@ -2967,6 +2967,9 @@ if (isset($GLOBALS["gameRequest"]) && $GLOBALS["gameRequest"][0] != "instruction
     }
 }
 
+sharmatDeviceApplyTools(true);
+$GLOBALS["action_post_process_fnct_ex"][] = 'sharmatDeviceFilterActions';
+
 // Restore standard behaviour
 if ($GLOBALS["HERIKA_NAME"]=="Character") {
     $GLOBALS["HERIKA_NAME"]="The Narrator";

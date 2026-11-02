@@ -6,7 +6,7 @@ $server = rtrim($argv[1] ?? '', '/');
 if (!is_file($server . '/lib/core/action_catalog.php')) {
     throw new RuntimeException('Pass a CHIM server source directory');
 }
-$admin = pg_connect('host=/var/run/postgresql dbname=postgres', PGSQL_CONNECT_FORCE_NEW);
+$admin = pg_connect('host=' . (getenv('SHARMAT_TEST_PG_SOCKET') ?: '/var/run/postgresql') . ' dbname=postgres', PGSQL_CONNECT_FORCE_NEW);
 if (!$admin) { throw new RuntimeException('Local PostgreSQL connection failed'); }
 $database = 'sharmat_confirmation_test_' . bin2hex(random_bytes(6));
 $identifier = pg_escape_identifier($admin, $database);
@@ -23,6 +23,7 @@ class ConfirmationTestDb {
     public function fetchAll($query) { return pg_fetch_all($this->execQuery($query)) ?: []; }
     public function fetchOne($query) { return pg_fetch_assoc($this->execQuery($query)) ?: []; }
     public function escapeLiteral($value) { return pg_escape_literal($this->connection, $value); }
+    public function escape($value) { return pg_escape_string($this->connection, $value); }
 }
 $checks = 0;
 function checkConfirmation($condition, $message) {
@@ -38,7 +39,7 @@ function confirmationRow($code) {
     return herikaGetActionCatalogRow($code);
 }
 try {
-    $connection = pg_connect('host=/var/run/postgresql dbname=' . $database, PGSQL_CONNECT_FORCE_NEW);
+    $connection = pg_connect('host=' . (getenv('SHARMAT_TEST_PG_SOCKET') ?: '/var/run/postgresql') . ' dbname=' . $database, PGSQL_CONNECT_FORCE_NEW);
     checkConfirmation(pg_dbname($connection) === $database, 'Only the newly created test database is used');
     $db = $GLOBALS['db'] = new ConfirmationTestDb($connection);
     // Use the installed schema for the two tables and the custom-over-base view.
@@ -53,7 +54,7 @@ try {
     $GLOBALS['HERIKA_ACTION_CATALOG_DB_READY'] = true;
     require dirname(__DIR__) . '/catalog_seed.php';
 
-    $starts = ['Hug', 'HoldHands', 'Kiss', 'StartSex', 'StartBlowJob', 'StartAnalSex', 'StartMassage',
+    $starts = ['LockDevice', 'UnlockDevice', 'Hug', 'HoldHands', 'Kiss', 'StartSex', 'StartBlowJob', 'StartAnalSex', 'StartMassage',
         'StartThreesome', 'StartHandJobSex', 'StartTitfuck', 'DrinkBloodSex', 'StartSelfMasturbation', 'AcceptSex'];
     foreach ($starts as $suffix) {
         $code = 'ExtCmd' . $suffix;
@@ -129,6 +130,37 @@ try {
     checkConfirmation($filter(['Test Speaker|confirmcommand|ExtCmdKiss@Excluded Actor']) === [], 'Exclusions still enforced before confirmation');
     $GLOBALS['test_legacy_affection'] = true;
     checkConfirmation($filter(["Test Speaker|confirmcommand|ExtCmdKiss@Test Player\r\n"])[0] === 'Test Speaker|confirmcommand|ExtCmdKiss@Test Player@legacy', 'Legacy animation flag retains confirmation channel');
+    // New device actions pass through the actual catalog, serializer and both post-filters.
+    require dirname(__DIR__) . '/device_integration.php';
+    class NsfwNpcData {
+        public static array $data = [];
+        public static function get($name) { return self::$data[$name] ?? []; }
+        public static function save($name, $data) { self::$data[$name] = $data; }
+    }
+    function getGlobalPrompt($key) { return $key === 'dd_lock_unlock' ? '1' : ''; }
+    function getNormalizedNearbyDialogueListenerNames($flag) { return ['Test Speaker']; }
+    function aiagentNsfwPlayerPresentForAutonomy() { return true; }
+    function aiagentNsfwPlayerConflictActive() { return false; }
+    function getIntimacyForActor($name) { return []; }
+    function isNpcSlave($name) { return false; }
+    function isProstitute($name) { return false; }
+    function aiagentNsfwOpenMode() { return false; }
+    function aiagentNsfwOrientationAllowsPlayer($name) { return true; }
+    function getNpcAffinity($name, $target) { return 80; }
+    function aiagentNsfwSceneCallFloorFor($name) { return 56; }
+    function aiagentNsfwRelTypeSexEligible($name) { return true; }
+    $db->execQuery('CREATE TABLE conf_opts(id text PRIMARY KEY, value text)');
+    sharmatDeviceReceive('ext_nsfw_ddsession', '2^123.456^1');
+    sharmatDeviceReceive('ext_nsfw_devices', 'Test Player^collar^2^123.456^belt^collar');
+    foreach (['ExtCmdLockDevice' => 'belt', 'ExtCmdUnlockDevice' => 'collar'] as $code => $type) {
+        checkConfirmation(confirmationRow($code)['parameters_json']['required'] === ['target'], 'Catalog retains required device selection');
+        $buffer = $sent = [];
+        $context = ['action_name' => $code, 'function_found' => true, 'function_code_name' => $code,
+            'parameter_string' => 'Test Player / ' . $type, 'missing_required' => []];
+        checkConfirmation(queueFunctionExecutionCommand($buffer, $sent, $context, 'test'), 'Device command queued through CHIM');
+        $result = sharmatDeviceFilterActions($filter($buffer));
+        checkConfirmation(count($result) === 1 && trim($result[0]) === "Test Speaker|confirmcommand|{$code}@Test Player / {$type}", 'Device action preserves confirmation and exact selection through both filters');
+    }
     echo "PASS: {$checks} action confirmation checks, using CHIM catalog/serializer and SHARMAT filter in a disposable database.\n";
 } finally {
     if (isset($connection) && $connection) { pg_close($connection); }

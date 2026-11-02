@@ -1,8 +1,9 @@
 <?php
+require_once dirname(__DIR__) . '/device_integration.php';
 // Run as a local PostgreSQL role allowed to create disposable databases.
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 $root = dirname(__DIR__);
-$admin = pg_connect('host=/var/run/postgresql dbname=postgres');
+$admin = pg_connect('host=' . (getenv('SHARMAT_TEST_PG_SOCKET') ?: '/var/run/postgresql') . ' dbname=postgres');
 if (!$admin) throw new RuntimeException('Cannot connect to local PostgreSQL');
 $database = 'sharmat_scene_test_' . bin2hex(random_bytes(6));
 $quoted = pg_escape_identifier($admin, $database);
@@ -23,7 +24,7 @@ function loadSceneFunction($source, $name) {
     eval($m[0]);
 }
 try {
-    $connection = pg_connect('host=/var/run/postgresql dbname=' . $database, PGSQL_CONNECT_FORCE_NEW);
+    $connection = pg_connect('host=' . (getenv('SHARMAT_TEST_PG_SOCKET') ?: '/var/run/postgresql') . ' dbname=' . $database, PGSQL_CONNECT_FORCE_NEW);
     checkScene(pg_dbname($connection) === $database, 'Test uses its newly created database');
     $db = $GLOBALS['db'] = new SceneTestDb($connection);
     $db->execQuery('CREATE TABLE conf_opts(id text PRIMARY KEY, value text)');
@@ -125,6 +126,12 @@ try {
     NsfwData::saveBlob(NsfwData::KEY_PROMPTS,['normal_kinks_template'=>'Saved normal','secret_kinks_template'=>'Saved secret']);
     $_POST=[]; eval(substr($ui,$start,$end-$start));
     checkScene($settings['normal_kinks_template']==='Saved normal' && $settings['secret_kinks_template']==='Saved secret', 'Older form submissions preserve stored templates');
+    $_POST = ['device_actions' => 'Custom action context', 'device_release' => 'Custom release context'];
+    eval(substr($ui,$start,$end-$start));
+    checkScene($settings['device_actions'] === $_POST['device_actions'] && $settings['device_release'] === $_POST['device_release'], 'Device prompt save preserves submitted text');
+    NsfwData::saveBlob(NsfwData::KEY_PROMPTS, ['device_actions'=>'Saved action context','device_release'=>'Saved release context']);
+    $_POST = []; eval(substr($ui,$start,$end-$start));
+    checkScene($settings['device_actions'] === 'Saved action context' && $settings['device_release'] === 'Saved release context', 'Older forms preserve customized device prompts');
     checkScene(str_contains($handler,"NsfwData::getDefaultKinkTemplates()['normal_kinks_template']") && str_contains($ui,"NsfwData::getDefaultKinkTemplates()['normal_kinks_template']"), 'Runtime and UI use shared defaults');
     echo "PASS: {$checks} scene data, import, migration, intensity and template checks.\n";
 } finally {

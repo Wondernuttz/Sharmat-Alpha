@@ -12,6 +12,7 @@ require_once __DIR__ . "/nsfw_relationship.php";  // Tier-based relationship pro
 require_once __DIR__ . "/nsfw_npc_scene.php";  // NPC-to-NPC scene handling
 require_once __DIR__ . "/nsfw_physics.php";  // VR touch/physics handling
 require_once __DIR__ . "/nsfw_ostim_handler.php";  // OStim scene handling
+require_once __DIR__ . "/device_integration.php";
 require_once __DIR__ . "/catalog_seed.php";  // Register Sharmat actions in core_action so action_rework's funcret gate doesn't suppress them
 
 /**

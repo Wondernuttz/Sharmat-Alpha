@@ -21,7 +21,7 @@ def function(cls, name):
 
 def framework_types(source):
     declarations = re.findall(r'\.(?:local|param|variable)\s+\S+\s+(\S+)|\.return\s+(\S+)',source)
-    return {a or b for a,b in declarations if re.match(r'(?:sexlab|ssl|osexintegration)',a or b,re.I)}
+    return {a or b for a,b in declarations if re.match(r'(?:sexlab|ssl|osexintegration|zad)',a or b,re.I)}
 
 assert not framework_types(scripts['aiagentnsfwsceneengine']), 'shared global script has optional framework types'
 assert not framework_types(scripts['aiagentnsfw']), 'shared quest/command script has optional framework types'

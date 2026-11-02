@@ -584,6 +584,9 @@ function _sharmatBuildModArchive($modDir, $archivePath)
         $runtimeFiles[] = 'Scripts/AIAgentNSFWOStim.pex';
         $runtimeFiles[] = 'Scripts/AIAgentNSFWSexLab.pex';
     }
+    if ($threePartRelease && version_compare($version, '3.1.1', '>=')) {
+        $runtimeFiles[] = 'Scripts/AIAgentNSFWDevices.pex';
+    }
     foreach ($runtimeFiles as $marker) {
         $path = $modDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $marker);
         if (!is_file($path)) {
@@ -780,6 +783,9 @@ function _sharmatValidateStagedRuntime($stageRoot)
         'npc_plugin_data.php',
         'config_section_defeat.php',
     ];
+    if (strpos((string)@file_get_contents($stageRoot . '/config_manager.php'), 'device_integration.php') !== false) {
+        $required[] = 'device_integration.php';
+    }
     foreach ($required as $relative) {
         $path = $stageRoot . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relative);
         if (!is_file($path) || is_link($path)) {

@@ -2091,7 +2091,25 @@ EXAMPLE SPEECH FORMAT: WHOOOOOOOOOOAAAAA.......IMMA..........YEAH..........isit?
                                 <input type="checkbox" id="ddLockUnlock">
                                 <span>Allow AI to Lock / Unlock Devices</span>
                             </label>
-                            <p class="legend">Lets an NPC lock a device onto, or unlock one off, the player or another NPC (needs the key). Reserved for a later phase.</p>
+                            <p class="legend">Allows confirmed lock/unlock actions on the player or nearby NPCs. Requires the updated SHARMAT game mod and Devious Devices 5.2 NG APIs. Locking uses the existing relationship gates; release does not require romance. Put the device in the wearer's inventory first. Multiple different devices of the same category are not auto-selected. Special locks and quest devices stay under their own mod's control. Configure Require Confirmation for LockDevice and UnlockDevice in CHIM Actions.</p>
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-bottom: 20px;">
+                        <h3 class="section-header">Device Action Context</h3>
+                        <p class="legend">Used only when eligible device actions are available. Existing relationship thresholds, action controls and speaking styles still apply.</p>
+                        <div class="form-group">
+                            <label for="promptDeviceActions">Device Action Context Prompt</label>
+                            <textarea id="promptDeviceActions" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"><?php echo htmlspecialchars(sharmatDevicePromptDefaults()['device_actions'], ENT_QUOTES, 'UTF-8'); ?></textarea>
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-bottom: 20px;">
+                        <h3 class="section-header">Helping Remove Devices</h3>
+                        <p class="legend">Used only when eligible device actions are available. Existing relationship thresholds, action controls and speaking styles still apply.</p>
+                        <div class="form-group">
+                            <label for="promptDeviceRelease">Helping Remove Devices Prompt</label>
+                            <textarea id="promptDeviceRelease" class="auto-resize" style="min-height: 48px; width: 100%; resize: none; overflow: hidden;"><?php echo htmlspecialchars(sharmatDevicePromptDefaults()['device_release'], ENT_QUOTES, 'UTF-8'); ?></textarea>
                         </div>
                     </div>
 

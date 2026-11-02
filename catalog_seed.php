@@ -27,6 +27,9 @@ function aiagent_nsfw_action_params($code)
         ];
     };
     switch ($code) {
+        case 'ExtCmdLockDevice':
+        case 'ExtCmdUnlockDevice':
+            return $target('Exact offered actor / device category, for example Lydia / collar.');
         case 'ExtCmdSexCommand':
             return $target('Sexual act/position/practice (e.g. blowjob, boobjob, analsex, vaginalsex)');
         case 'ExtCmdStartThreesome':
@@ -115,6 +118,7 @@ function aiagent_nsfw_action_confirmation_metadata($code, $metadata = [])
     }
 
     $askByDefault = [
+        'ExtCmdLockDevice', 'ExtCmdUnlockDevice',
         'ExtCmdHug', 'ExtCmdHoldHands', 'ExtCmdKiss', 'ExtCmdStartSex',
         'ExtCmdStartBlowJob', 'ExtCmdStartAnalSex', 'ExtCmdStartMassage',
         'ExtCmdStartThreesome', 'ExtCmdStartHandJobSex', 'ExtCmdStartTitfuck',
@@ -207,6 +211,8 @@ function aiagent_nsfw_seed_action_catalog()
     $followupPromptDefault = 'Reply with one short in-character line reacting to the action result below. Do not ask follow-up questions.';
 
     $actions = [
+        ['code' => 'ExtCmdLockDevice', 'name' => 'LockDevice', 'desc' => 'Lock an existing device from the target inventory. Use an offered actor / device category.', 'arg' => 'target'],
+        ['code' => 'ExtCmdUnlockDevice', 'name' => 'UnlockDevice', 'desc' => 'Unlock a generic worn device with a matching key held by you or the wearer. Use an offered actor / device category.', 'arg' => 'target'],
         ['code' => 'ExtCmdHug',                   'name' => 'GiveHug',                   'desc' => 'Embrace the target affectionately.',                  'arg' => 'target'],
         ['code' => 'ExtCmdHoldHands',             'name' => 'HoldHands',                 'desc' => 'Hold the target actor\'s hand affectionately.',        'arg' => 'target'],
         ['code' => 'ExtCmdRemoveClothes',         'name' => 'RemoveClothes',        'desc' => 'Remove your own or target\'s clothing.',              'arg' => 'target'],

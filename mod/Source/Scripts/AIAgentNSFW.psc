@@ -140,137 +140,110 @@ string ACTOR_KEY = "ActorName"
 string ACTORREF_KEY = "ActorRef"
 string GENITAL_COLLISION_KEY = "GenitalCollision"
 
-; Devious Devices integration (soft dependency - no master required)
-; Grab the zadLibs quest by its one FormID, read keyword props off it.
-zadLibs libs
+; Optional Devious Devices bridge. No DD script types in this shared quest.
 bool hasDeviousDevices = false
+string deviceSession = ""
+bool deviceCommandBusy = false
+Actor devicePendingActor
+string devicePendingCategory = ""
+bool devicePendingLock = false
+float lastDeviceSnapshot = 0.0
 
-; ============================================
-; DEVIOUS DEVICES INTEGRATION
-; ============================================
-; Initialize the DD library at runtime (soft - no ESP master needed)
 Function InitDeviousDevices()
-	hasDeviousDevices = false
-	libs = None
-
-	if (Game.GetModByName("Devious Devices - Integration.esm") == 255)
-		Debug.Trace("[CHIM-NSFW] Devious Devices not installed")
-		return
-	endif
-
-	libs = Game.GetFormFromFile(0x00F624, "Devious Devices - Integration.esm") as zadLibs
-	if (libs)
-		hasDeviousDevices = true
-		Debug.Trace("[CHIM-NSFW] Devious Devices integration enabled")
-	else
-		Debug.Trace("[CHIM-NSFW] Devious Devices zadLibs not found")
-	endif
+    hasDeviousDevices = Game.GetModByName("Devious Devices - Integration.esm") != 255
+    deviceSession = Utility.RandomInt(1, 2147480000) + "." + (Utility.GetCurrentRealTime() as int)
+    deviceCommandBusy = false
+    devicePendingActor = None
+    AIAgentFunctions.logMessage("2^" + deviceSession + "^" + (hasDeviousDevices as int), "ext_nsfw_ddsession")
 EndFunction
 
-; Build a CSV of the locked device types the actor is wearing (server maps these to prose)
 string Function GetWornDevicesCSV(Actor akActor)
-	if (!hasDeviousDevices || !akActor || !libs)
-		return ""
-	endif
-	string csv = ""
-	if (akActor.WornHasKeyword(libs.zad_DeviousBelt))
-		csv += "belt,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousBra))
-		csv += "bra,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousGag) || akActor.WornHasKeyword(libs.zad_DeviousGagPanel) || akActor.WornHasKeyword(libs.zad_DeviousGagLarge))
-		csv += "gag,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousCollar))
-		csv += "collar,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousArmbinder))
-		csv += "armbinder,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousYoke))
-		csv += "yoke,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousElbowTie))
-		csv += "elbowtie,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousStraitJacket))
-		csv += "straitjacket,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousBlindfold))
-		csv += "blindfold,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousHobbleSkirt))
-		csv += "hobbleskirt,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousArmCuffs))
-		csv += "armcuffs,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousLegCuffs))
-		csv += "legcuffs,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousAnkleShackles))
-		csv += "ankleshackles,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousPlugVaginal))
-		csv += "plugvaginal,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousPlugAnal))
-		csv += "pluganal,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousClamps))
-		csv += "clamps,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousCorset))
-		csv += "corset,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousHood))
-		csv += "hood,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousHarness))
-		csv += "harness,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousGloves))
-		csv += "gloves,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousSuit) || akActor.WornHasKeyword(libs.zad_DeviousPetSuit))
-		csv += "suit,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousPiercingsNipple))
-		csv += "piercingsnipple,"
-	endif
-	if (akActor.WornHasKeyword(libs.zad_DeviousPiercingsVaginal))
-		csv += "piercingsvaginal,"
-	endif
-	return csv
+    if hasDeviousDevices && akActor
+        return AIAgentNSFWDevices.WornCSV(akActor)
+    endif
+    return ""
 EndFunction
 
-; Push the actor's current device list to the server (fires on equip/remove)
 Function SendDeviceState(Actor akActor)
-	if (!hasDeviousDevices || !akActor)
-		return
-	endif
-	AIAgentFunctions.logMessage(akActor.GetDisplayName() + "^" + GetWornDevicesCSV(akActor), "ext_nsfw_devices")
+    if !hasDeviousDevices || !akActor || AIAgentNSFWSceneEngine.IsProtectedMinorActor(akActor)
+        return
+    endif
+    string name = akActor.GetDisplayName()
+    AIAgentFunctions.logMessage(name + "^" + GetWornDevicesCSV(akActor) + "^2^" + deviceSession + "^" + AIAgentNSFWDevices.Choices(akActor, true) + "^" + AIAgentNSFWDevices.Choices(akActor, false), "ext_nsfw_devices")
+EndFunction
+
+Function RefreshNearbyDevices()
+    if !hasDeviousDevices
+        return
+    endif
+    SendDeviceState(Game.GetPlayer())
+    Actor[] nearby = AIAgentFunctions.findAllNearbyActors(true)
+    int i = 0
+    while i < nearby.Length
+        if nearby[i] && nearby[i] != Game.GetPlayer()
+            SendDeviceState(nearby[i])
+        endif
+        i += 1
+    endwhile
 EndFunction
 
 Event OnDDDeviceChanged(Form inventoryDevice, Form deviceKeyword, Form akActor)
-	SendDeviceState(akActor as Actor)
+    ; DD events can precede the final rendered-armor change.
+    Utility.Wait(0.5)
+    SendDeviceState(akActor as Actor)
 EndEvent
 
-; Check if actor is wearing chastity belt
 bool Function IsWearingChastityBelt(Actor akActor)
-	if (!hasDeviousDevices || !akActor || !libs)
-		return false
-	endif
-	return akActor.WornHasKeyword(libs.zad_DeviousBelt)
+    return hasDeviousDevices && akActor && AIAgentNSFWDevices.WearsCategory(akActor, "belt")
 EndFunction
 
-; Check if actor is wearing chastity bra
 bool Function IsWearingChastityBra(Actor akActor)
-	if (!hasDeviousDevices || !akActor || !libs)
-		return false
-	endif
-	return akActor.WornHasKeyword(libs.zad_DeviousBra)
+    return hasDeviousDevices && akActor && AIAgentNSFWDevices.WearsCategory(akActor, "bra")
+EndFunction
+
+Function DeviceCommand(Actor npc, string npcName, string command, string parameter)
+    string result = "error: Devious Devices is unavailable"
+    if hasDeviousDevices
+        if devicePendingActor
+            bool nowWorn = AIAgentNSFWDevices.WearsCategory(devicePendingActor, devicePendingCategory)
+            if nowWorn == devicePendingLock
+                devicePendingActor = None
+            else
+                AIAgentFunctions.logMessageForActor("command@" + command + "@" + parameter + "@pending: previous device change is still unresolved; check Devious Devices before trying again", "funcret", npcName)
+                return
+            endif
+        endif
+        if deviceCommandBusy
+            result = "error: another device action is still running"
+        else
+            deviceCommandBusy = true
+            int separator = StringUtil.Find(parameter, " / ")
+            if separator <= 0 || StringUtil.Find(parameter, " / ", separator + 3) >= 0
+                result = "error: expected an exact actor / device category"
+            else
+                string targetName = StringUtil.Substring(parameter, 0, separator)
+                string category = StringUtil.Substring(parameter, separator + 3)
+                Actor target
+                if targetName == Game.GetPlayer().GetDisplayName()
+                    target = Game.GetPlayer()
+                else
+                    target = AIAgentFunctions.getAgentByName(targetName)
+                    if target && target.GetDisplayName() != targetName
+                        target = None
+                    endif
+                endif
+                result = AIAgentNSFWDevices.Execute(npc, target, category, command == "ExtCmdLockDevice")
+                if StringUtil.Find(result, "pending:") == 0
+                    devicePendingActor = target
+                    devicePendingCategory = category
+                    devicePendingLock = command == "ExtCmdLockDevice"
+                endif
+                SendDeviceState(target)
+            endif
+            deviceCommandBusy = false
+        endif
+    endif
+    AIAgentFunctions.logMessageForActor("command@" + command + "@" + parameter + "@" + result, "funcret", npcName)
 EndFunction
 
 ; ============================================
@@ -895,12 +868,7 @@ function DoRegister()
 	RegisterForModEvent("DDI_DeviceEquipped", "OnDDDeviceChanged")
 	RegisterForModEvent("DDI_DeviceRemoved", "OnDDDeviceChanged")
 
-	; DD BASELINE SYNC (fix 2026-07-02, SexLab audit #3): the equip/remove events only cover changes made
-	; AFTER this registration - devices already worn at load (or after a server DB reset) stayed invisible
-	; until the next change. Push the player's current device state now; NPCs refresh on their next change.
-	if (hasDeviousDevices)
-		SendDeviceState(Game.GetPlayer())
-	endif
+	InitDeviousDevices()
 
 	UnRegisterForModEvent("FertilityModeImpregnate")
 	RegisterForModEvent("FertilityModeImpregnate", "FertilityImpregnated")
@@ -956,7 +924,6 @@ function DoRegister()
 
 	; CBPC Physics Touch Detection
 	playerRef = Game.GetPlayer()
-	InitDeviousDevices()  ; Initialize DD soft dependency
 	InitHIGGS()           ; Initialize HIGGS soft dependency
 	if grabCorrelationWindow < 1.25
 		grabCorrelationWindow = 1.25
@@ -1025,6 +992,8 @@ function DoRegister()
 	; If Ostim scene not initiated by NPC via AI action, this is never inited
 	noFacialExpressionsFaction = Game.GetFormFromFile(0xD92, "OStim.esp") as Faction ; SexCommand mouth-wait relies on this
 
+	; Refresh after every event handler has been registered.
+	RefreshNearbyDevices()
 EndFunction
 
 ; Initialize body node definitions for CBPC collision detection
@@ -1638,6 +1607,10 @@ Event HelperSpeechStart(Form npc)
 EndEvent
 
 Event HelperSpeechStop(Form npc)
+	if hasDeviousDevices && Utility.GetCurrentRealTime() - lastDeviceSnapshot >= 15.0
+		lastDeviceSnapshot = Utility.GetCurrentRealTime()
+		RefreshNearbyDevices()
+	endif
 
 	Debug.Trace("[CHIM NSFW] HelperSpeechStop")
 	StorageUtil.SetIntValue(npc, "IS_SPEAKING", 0)
@@ -1708,7 +1681,11 @@ Event CommandManager(String npcname,String  command, String parameter)
 		Debug.Notification(readableCommand)
 	endif
 	Debug.Trace("[CHIM NSFW] External command "+command+ " received for "+npcname+" parameter="+parameter)
-	Actor npc=AIAgentFunctions.getAgentByName(npcname);
+	Actor npc=AIAgentFunctions.getAgentByName(npcname)
+	if command == "ExtCmdLockDevice" || command == "ExtCmdUnlockDevice"
+		DeviceCommand(npc, npcname, command, parameter)
+		return
+	endif;
 
 	; Game-side defense in depth. The server owns the full configurable exclusion list, while this
 	; blocks child actors (and the reported adult-bodied Runa replacement) if a stale/forged command

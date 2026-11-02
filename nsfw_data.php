@@ -1293,6 +1293,8 @@ class NsfwNpcData {
                     'aiagent_nsfw_sap_last_processed_action',
                     'aiagent_nsfw_prompt_skooma_level',
                     'aiagent_nsfw_payment_ledger',
+                    'aiagent_nsfw_devices',
+                    'aiagent_nsfw_device_state',
                 ];
                 foreach ($runtimeKeys as $runtimeKey) {
                     if (!array_key_exists($runtimeKey, $data) && array_key_exists($runtimeKey, $existingData)) {

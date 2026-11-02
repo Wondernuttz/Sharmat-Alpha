@@ -50,7 +50,8 @@ function updaterBuildPackage($root)
         'version' => '9.9.9',
         'server' => ['mutable_paths' => ['conf/conf.php', 'cmd/conf/conf.php']],
     ]));
-    updaterWrite($root . '/config_manager.php', "<?php require_once __DIR__ . '/sharmat_updater_lib.php';");
+    updaterWrite($root . '/config_manager.php', "<?php require_once __DIR__ . '/sharmat_updater_lib.php'; require_once __DIR__ . '/device_integration.php';");
+    updaterWrite($root . '/device_integration.php', '<?php // DD integration');
     updaterWrite($root . '/sharmat_updater_lib.php', '<?php // updater support');
     updaterWrite($root . '/scene_role_policy.php', '<?php // runtime role policy');
     updaterWrite($root . '/drunk_animation_bridge.php', '<?php // drunk animation bridge');
@@ -65,6 +66,7 @@ function updaterBuildPackage($root)
     updaterWrite($root . '/mod/Scripts/AIAgentNSFWSceneEngine.pex', 'test scene engine');
     updaterWrite($root . '/mod/Scripts/AIAgentNSFWOStim.pex', 'test OStim adapter');
     updaterWrite($root . '/mod/Scripts/AIAgentNSFWSexLab.pex', 'test SexLab adapter');
+    updaterWrite($root . '/mod/Scripts/AIAgentNSFWDevices.pex', 'test DD adapter');
     updaterWrite($root . '/mod/Scripts/AIAgentVRItems.pex', 'test VR script');
     updaterWrite($root . '/mod/Seq/AIAgentNSFW.seq', 'test sequence');
     updaterWrite($root . '/mod/SKSE/Plugins/StorageUtilData/SHARMAT_scene_framework.json', '{"ostim":1,"sexlab":1}');
@@ -119,6 +121,12 @@ try {
     updaterAssert(in_array('cmd/conf/conf.php', $mutable, true), 'command configuration is mutable');
     _sharmatValidateStagedRuntime($extractedRoot);
     updaterAssert(true, 'required runtime files are present');
+    rename($extractedRoot . '/device_integration.php', $extractedRoot . '/device_integration.missing');
+    $missingDevicesRejected = false;
+    try { _sharmatValidateStagedRuntime($extractedRoot); }
+    catch (RuntimeException $error) { $missingDevicesRejected = strpos($error->getMessage(), 'device_integration.php') !== false; }
+    finally { rename($extractedRoot . '/device_integration.missing', $extractedRoot . '/device_integration.php'); }
+    updaterAssert($missingDevicesRejected, 'Missing DD server module prevents partial installation');
     rename($extractedRoot . '/drunk_animation_bridge.php', $extractedRoot . '/drunk_animation_bridge.missing');
     $missingDrunkBridgeRejected = false;
     try {
@@ -158,7 +166,7 @@ try {
 
     $modArchivePath = $testRoot . '/game-mod.zip';
     $modFileCount = _sharmatBuildModArchive($extractedRoot . '/mod', $modArchivePath);
-    updaterAssert($modFileCount === 12, 'game-mod archive contains the complete runtime payload');
+    updaterAssert($modFileCount === 13, 'game-mod archive contains the complete runtime payload');
     $modArchive = new ZipArchive();
     updaterAssert($modArchive->open($modArchivePath) === true, 'game-mod archive opens');
     updaterAssert($modArchive->locateName('meshes/actors/character/animations/OpenAnimationReplacer/Drunk animations/Drunk animations/config.json') !== false, 'game-mod archive contains the drunk compatibility condition');
@@ -213,6 +221,16 @@ try {
         updaterAssert(!file_exists($testRoot . '/missing-adapter.zip'), 'missing adapter does not produce an incomplete archive');
     }
 
+    updaterWrite($extractedRoot . '/mod/version.txt', '3.1.1');
+    updaterAssert(_sharmatBuildModArchive($extractedRoot . '/mod', $testRoot . '/devices-mod.zip') === 13, '3.1.1 includes DD adapter');
+    $ddPath = $extractedRoot . '/mod/Scripts/AIAgentNSFWDevices.pex';
+    rename($ddPath, $ddPath . '.missing');
+    $missingDd = false;
+    try { _sharmatBuildModArchive($extractedRoot . '/mod', $testRoot . '/missing-dd.zip'); }
+    catch (RuntimeException $e) { $missingDd = strpos($e->getMessage(), 'AIAgentNSFWDevices.pex') !== false; }
+    finally { rename($ddPath . '.missing', $ddPath); }
+    updaterAssert($missingDd && !file_exists($testRoot . '/missing-dd.zip'), 'Missing DD adapter cannot produce a partial update');
+
     // Older game mods predate the adapters and must remain downloadable.
     updaterWrite($extractedRoot . '/mod/version.txt', '3.1.9.7');
     foreach (['AIAgentNSFWOStim.pex', 'AIAgentNSFWSexLab.pex'] as $adapter) {
@@ -229,7 +247,7 @@ try {
     updaterWrite($extractedRoot . '/mod/CHIM/server-plugins/aiagent_nsfw/9.9.9.dwpkg', 'matching server package');
     updaterWrite($extractedRoot . '/mod/CHIM/server-plugins/aiagent_nsfw/1.0.0.dwpkg', 'stale server package');
     $embeddedArchivePath = $testRoot . '/game-mod-embedded.zip';
-    updaterAssert(_sharmatBuildModArchive($extractedRoot . '/mod', $embeddedArchivePath) === 13, 'matching embedded package is included');
+    updaterAssert(_sharmatBuildModArchive($extractedRoot . '/mod', $embeddedArchivePath) === 14, 'matching embedded package is included');
     updaterAssert($modArchive->open($embeddedArchivePath) === true, 'embedded mod archive opens');
     updaterAssert($modArchive->locateName('CHIM/server-plugins/aiagent_nsfw/9.9.9.dwpkg') !== false, 'current embedded package is present');
     updaterAssert($modArchive->locateName('CHIM/server-plugins/aiagent_nsfw/1.0.0.dwpkg') === false, 'stale embedded package is excluded');

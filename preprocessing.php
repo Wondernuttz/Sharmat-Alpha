@@ -40,7 +40,8 @@ if (isset($GLOBALS["gameRequest"][0]) && in_array($GLOBALS["gameRequest"][0], ['
 
 // Only VR item events and fertility notifications stay as fast commands (silent processing)
 $GLOBALS["external_fast_commands"][]="fertility_notification";
-$GLOBALS["external_fast_commands"][]="ext_nsfw_devices";    // Devious Devices worn-device state (silent store)
+$GLOBALS["external_fast_commands"][]="ext_nsfw_devices";
+$GLOBALS["external_fast_commands"][]="ext_nsfw_ddsession";    // Devious Devices worn-device state (silent store)
 $GLOBALS["external_fast_commands"][]="ext_nsfw_player_drink"; // player consumed a drink/potion (silent: track alcohol + roll whiskey dick)
 $GLOBALS["external_fast_commands"][]="ext_nsfw_vampire";      // Papyrus reports an NPC's vampire race-keyword status (silent: store is_vampire)
 $GLOBALS["external_fast_commands"][]="ext_nsfw_defeat";       // Acheron defeat report -> auto-enslave (silent: set is_slave)
@@ -1008,17 +1009,8 @@ if (isset($GLOBALS["gameRequest"])) {
         }
     }
 
-    // Devious Devices: silently store the actor's current worn-device list (payload "ActorName^csv")
-    if ($currentEvent === "ext_nsfw_devices") {
-        $ddParts = explode("^", $GLOBALS["gameRequest"][3] ?? '');
-        $ddActor = trim($ddParts[0] ?? '');
-        if ($ddActor !== '') {
-            require_once __DIR__ . "/nsfw_data.php";
-            $ddData = NsfwNpcData::get($ddActor);
-            $ddData["aiagent_nsfw_devices"] = trim($ddParts[1] ?? '');
-            NsfwNpcData::save($ddActor, $ddData);
-            error_log("[AIAGENTNSFW] Stored devices for {$ddActor}: " . $ddData["aiagent_nsfw_devices"]);
-        }
+    if (in_array($currentEvent, ['ext_nsfw_devices', 'ext_nsfw_ddsession'], true)) {
+        sharmatDeviceReceive($currentEvent, (string)($GLOBALS['gameRequest'][3] ?? ''));
     }
 
     // WHISKEY DICK: the player consumed a drink/potion (payload "PLAYER_DRINK^<item name>"). Record it (alcohol only)
@@ -1125,7 +1117,7 @@ if (isset($GLOBALS["gameRequest"])) {
     // model read a raw "VAMPIRE^Name^0" row as if it were lore. Purge prior rows on every request;
     // the current request's row is inserted after preprocessing and gets swept on the next one.
     try {
-        $GLOBALS["db"]->delete("eventlog", "type in ('ext_nsfw_vampire','ext_nsfw_physics_raw','physics_raw','ext_nsfw_player_drink','ext_nsfw_devices','ext_nsfw_defeat','ext_nsfw_vrstatus','ext_nsfw_player_body')");
+        $GLOBALS["db"]->delete("eventlog", "type in ('ext_nsfw_vampire','ext_nsfw_physics_raw','physics_raw','ext_nsfw_player_drink','ext_nsfw_devices','ext_nsfw_ddsession','ext_nsfw_defeat','ext_nsfw_vrstatus','ext_nsfw_player_body')");
     } catch (Exception $e) { /* non-fatal */ }
 
     // BACKLOG FIX — Scene end early detection.
